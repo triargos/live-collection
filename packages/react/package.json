@@ -1,0 +1,31 @@
+{
+  "name": "@triargos/live-collection-react",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "React bindings for @triargos/live-collection: useLiveCollection hook and runtime provider. Optional adapter so the core stays framework-neutral.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "typecheck": "tsc -b",
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "dependencies": {
+    "@tanstack/react-db": "^0.1.85",
+    "@triargos/live-collection": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "react": "^19.2.6"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@triargos/live-collection-protocol",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Shared contract kit for the live-collection sync system: wire schemas, sync-group grammar, the squasher, expected interface types, and the /catchup request/response schemas. Imported by both the frontend library and the backend.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "effect": "^3.21.2"
+  }
+}
