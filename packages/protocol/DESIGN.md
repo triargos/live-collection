@@ -1,9 +1,15 @@
 # Bucket 0 — `@triargos/live-collection-protocol` design
 
-> **Status: LOCKED design (pre-implementation).** Signatures + `Schema` wiring only —
-> no implementation bodies until tests exist against this surface (design-first Phase 3).
-> Derived from [`live-sync-system.md`](../../live-sync-system.md) §3–§13 and
-> [`TASKS.md`](../../TASKS.md) Bucket 0 (0.1–0.6).
+> **Status: LOCKED + SHIPPED.** This is the as-built contract — every signature below exists in
+> `src/` with a body, exercised by 33 tests (`pnpm typecheck` and `vitest` both PASS). The
+> decisions log (DEC-1…DEC-12) is the canonical **design language** for the protocol; the
+> [`TASKS.md`](../../TASKS.md) Bucket 0 rows mirror it. Derived from
+> [`live-sync-system.md`](../../live-sync-system.md) §3–§13.
+>
+> Where the implementation diverged from the original task wording, the divergence *is* the design:
+> structural resync instead of `__all`/`__group:` sentinel codecs (DEC-9), `_tag` actions instead of
+> `I/U/D/R` (DEC-6), `intersects`+`isUnder` instead of a single `matches` (DEC-4), no `DispatchArgs`
+> (DEC-8), and catchup as request/response schemas instead of an `HttpApi` (DEC-7).
 
 ## What this package is
 
@@ -195,10 +201,10 @@ const hydratedBase = {
   createdAt:  Schema.Date,
 } as const
 
-export const HydratedInsert = <T, R>(e: Schema.Schema<T, any, R>) =>
-  Schema.TaggedStruct("Insert", { ...hydratedBase, data: e })
-export const HydratedUpdate = <T, R>(e: Schema.Schema<T, any, R>) =>
-  Schema.TaggedStruct("Update", { ...hydratedBase, data: e })
+export const HydratedInsert = <T, I, R>(entity: Schema.Schema<T, I, R>) =>
+  Schema.TaggedStruct("Insert", { ...hydratedBase, data: entity })
+export const HydratedUpdate = <T, I, R>(entity: Schema.Schema<T, I, R>) =>
+  Schema.TaggedStruct("Update", { ...hydratedBase, data: entity })
 export const HydratedDelete = Schema.TaggedStruct("Delete", hydratedBase)             // no data
 export const HydratedResync = Schema.TaggedStruct("Resync", {
   syncId: SyncId, target: ResyncTarget,
@@ -206,20 +212,22 @@ export const HydratedResync = Schema.TaggedStruct("Resync", {
 })
 
 // Full union the transport decodes (entity arms + cross-cutting resync):
-export const HydratedSyncEvent = <T, R>(e: Schema.Schema<T, any, R>) =>
-  Schema.Union(HydratedInsert(e), HydratedUpdate(e), HydratedDelete, HydratedResync)
+export const HydratedSyncEvent = <T, I, R>(entity: Schema.Schema<T, I, R>) =>
+  Schema.Union(HydratedInsert(entity), HydratedUpdate(entity), HydratedDelete, HydratedResync)
 
 // What a per-model dispatch handler receives, after Resync split off + modelName narrowed:
-export const HydratedEntityEvent = <T, R>(e: Schema.Schema<T, any, R>) =>
-  Schema.Union(HydratedInsert(e), HydratedUpdate(e), HydratedDelete)
+export const HydratedEntityEvent = <T, I, R>(entity: Schema.Schema<T, I, R>) =>
+  Schema.Union(HydratedInsert(entity), HydratedUpdate(entity), HydratedDelete)
 
 // Boundary decode where T is not yet known: validates the envelope, leaves data as JSON.
 export const HydratedSyncEventEnvelope = HydratedSyncEvent(Schema.Unknown)
 ```
 
-> `any` in `Schema.Schema<T, any, R>` is the schema's *Encoded* slot (Effect's own idiom for a
-> schema generic), **not** an IO cast — the CLAUDE.md "no `any`" rule targets IO results, which
-> this is not.
+> The hydrated constructors thread a proper `<T, I, R>` — the encoded slot `I` is a real generic,
+> not erased. The one remaining `Schema.Schema<T, any, R>` is `ModelDescriptor.schema` (below), where
+> `any` is the *Encoded* slot of a stored-but-not-yet-applied schema (Effect's own idiom for holding
+> a heterogeneous schema in a map) — **not** an IO cast. The CLAUDE.md "no `any`" rule targets IO
+> results, which this is not.
 
 ---
 

@@ -22,32 +22,36 @@ Legend: `[generic]` = reusable infra · `[per-entity]` = written once per model.
 
 1. **Lock Bucket 0** before the client read path (A.6/A.7) or server endpoints
    (C.8/C.9) — [§B names this the prerequisite dependency](live-sync-system.md#L1291-L1294).
+   ✅ **Done** — shipped + tested; design language locked in
+   [`packages/protocol/DESIGN.md`](packages/protocol/DESIGN.md) (DEC-1…DEC-12).
 2. **A.3 (the spike) is a hard gate** — [§A.1 "Do not roll out before this passes"](live-sync-system.md#L1227-L1234).
-3. **C.5 (`clientId` on `DomainEvent`) is the one invasive backend change**; settle the
-   `EventClient` metadata API first — [§16.1](live-sync-system.md#L1101-L1101),
-   [§clientId on DomainEvent](live-sync-system.md#L322-L345).
-4. **Build A.1/A.2 (registry + scoping) early** — [§22: scoping, not the persistence backend, is the lever for large data](live-sync-system.md#L1191-L1211).
-5. Backend C.1→C.6 can run in parallel with the client spike A.3; they converge only
+3. **Build A.1/A.2 (registry + scoping) early** — [§22: scoping, not the persistence backend, is the lever for large data](live-sync-system.md#L1191-L1211).
+4. Backend C.1→C.6 can run in parallel with the client spike A.3; they converge only
    at the contract (Bucket 0) and the read-path endpoints.
 
-**Settle before code** ([§16](live-sync-system.md#L1099-L1110)): `EventClient`
-per-publish metadata API · `MembershipChangedEvent` shape · where the permission
-resolver lives · Postgres/PgBouncer topology (affects prod bus swap, not the MVP).
-Open `TODO`: [pin & record the TanStack DB version](live-sync-system.md#L1185-L1186).
+**Settle before code** ([§16](live-sync-system.md#L1099-L1110)): `MembershipChangedEvent` shape ·
+where the permission resolver lives · Postgres/PgBouncer topology (affects prod bus swap, not the
+MVP). Open `TODO`: [pin & record the TanStack DB version](live-sync-system.md#L1185-L1186).
 
 ---
 
-## Bucket 0 — Shared contract kit (`@triargos/live-collection-protocol`)
+## Bucket 0 — Shared contract kit (`@triargos/live-collection-protocol`) ✅ shipped
 
-Published, imported by **both** the frontend lib and the backend. Pure — `effect` + Schema +
-`@effect/platform` only, zero I/O, zero server framework. Backend implements *against* this. Lock first.
+Published, imported by **both** the frontend lib and the backend. Pure — **`effect` only** (Schema
+included), zero I/O, zero server framework, **no `@effect/platform`** (the kit ships schemas, not an
+HTTP surface — DEC-7). Backend implements *against* this. **Locked + implemented**; the as-built
+design language is [`packages/protocol/DESIGN.md`](packages/protocol/DESIGN.md) (decisions
+DEC-1…DEC-12). 33 tests green — `typecheck` + `vitest` PASS.
 
-- [ ] **0.1** `SyncEvent` (at rest) + `HydratedSyncEvent<T>` schemas with `encode`/`decode` both directions — [§5 Sync event](live-sync-system.md#L136-L166)
-- [ ] **0.2** Sync-group grammar as functions — `deriveGroup`/`parseGroup`/`matches` (wildcards). Also drives the client's glob lifecycle keys — [§5 Sync group](live-sync-system.md#L166-L177)
-- [ ] **0.3** Action codes `I/U/D/R` + resync sentinel codecs (`__all`/`__group:<id>`/`__model:<Name>`) — [§9](live-sync-system.md#L556-L580)
-- [ ] **0.4** **Squasher** — pure §8 fold (moved here from backend C.6; both ends rely on it). **Property-test hard** (random sequences converge; `syncId` gap-tolerance). — [§8 Squashing](live-sync-system.md#L534-L556), [§12](live-sync-system.md#L599-L638)
-- [ ] **0.5** Expected interface **types** (no implementations) — `ModelDescriptor<T,R>`, `SyncContext`, `DispatchArgs`, permission-resolver signature — [§5 Model registry](live-sync-system.md#L177-L210), [§5 SyncContext](live-sync-system.md#L210-L225), [§7](live-sync-system.md#L401-L408)
-- [ ] **0.6** `/sync` + `/catchup?from=&group=` `HttpApi` definition → client derives a typed client, backend derives handler stubs — [§8](live-sync-system.md#L416-L556), [§13 group scoping](live-sync-system.md#L750-L772)
+Where these rows read differently than the original task wording, the difference is the locked
+design — see the linked decision after each.
+
+- [x] **0.1** Event families with `encode`/`decode` both directions: `PendingSyncEvent` (producer input) · `SyncEvent` (at rest, reference-only) · `HydratedSyncEvent<T>` (wire) + the opaque-`data` envelope. Action is the `_tag` (`Insert`/`Update`/`Delete`/`Resync`), and `data` presence is **structural** — present on `Insert`/`Update`, absent on `Delete` — not `Option<data>` (DEC-6). No `clientId` on any arm (DEC-11). — [§5 Sync event](live-sync-system.md#L136-L166)
+- [x] **0.2** Sync-group grammar as functions — `deriveGroup`/`parseGroup`, plus the two relations the old single `matches` conflated: `intersects` (literal set overlap — ACL-critical delivery) and `isUnder` (segment-prefix containment incl. equality — scope + resync matching). **Literal-only on the wire, no wildcards/regex** (DEC-4); subscriber brace-sugar deferred to a client builder (DEC-5). — [§5 Sync group](live-sync-system.md#L166-L177)
+- [x] **0.3** Resync as a **structural** tagged union `ResyncTarget` = `All` / `Group(group)` / `Model(model)`. The `__all`/`__group:<id>`/`__model:<Name>` sentinel codecs and single-char `I/U/D/R` action codes are **removed** — resync is structural, action is `_tag`-only (DEC-9, DEC-6). — [§9](live-sync-system.md#L556-L580)
+- [x] **0.4** **Squasher** — pure §8 fold (moved here from backend C.6; both ends rely on it). Folds on `(modelName, modelId, _tag, syncGroups, syncId)`, never entity data; resync overrides drop preceding events via `isUnder`; folded runs carry the latest `syncId`; idempotent. **Property-tested hard** (random sequences converge from any `from`; `syncId` gap-tolerance). — [§8 Squashing](live-sync-system.md#L534-L556), [§12](live-sync-system.md#L599-L638)
+- [x] **0.5** Expected interface **types** (no implementations, zero runtime cost) — `ModelDescriptor<Name,T,R>` (with optional batch `hydrateMany`), `SyncContext`, `GroupsFor` (permission-resolver signature) — plus the open→closed model-name seam: `defineModelRegistry` / `narrowModelName` / `UnknownModelError`. **No `DispatchArgs`**: producers build a complete `PendingSyncEvent` via the tagged constructors and the dispatcher accepts only that (DEC-8). — [§5 Model registry](live-sync-system.md#L177-L210), [§5 SyncContext](live-sync-system.md#L210-L225), [§7](live-sync-system.md#L401-L408)
+- [x] **0.6** `/catchup` **request/response schemas only** — `CatchupRequest { from }` + `CatchupResponse { events, lastSyncId }`. **Not an `HttpApi`**: the backend owns route/method/errors/headers/auth and wires the schemas in (DEC-7). **No `group` param** — the server resolves the caller's groups from permissions server-side (DEC-12). `/sync` SSE is a backend detail, deliberately absent from the contract. — [§8](live-sync-system.md#L416-L556), [§13 group scoping](live-sync-system.md#L750-L772)
 
 ---
 
@@ -66,7 +70,7 @@ Published, imported by **both** the frontend lib and the backend. Pure — `effe
 ### Tier 3 — sync transport + routing
 
 - [ ] **A.5** `[generic]` Sync dispatch registry — `Map<ModelName, DispatchHandler>` + entity-agnostic resolver (`get(modelName)?.(event)`) — [§14 dispatch registry](live-sync-system.md#L968-L1001) · _dep: 0.1_
-- [ ] **A.6** `[generic]` Client SSE service — Effect `Stream` decode, event queue, keep-alive/retry, echo suppression on `clientId`. Model after `client-sync-service.ts`. — [§8 GET /sync](live-sync-system.md#L479-L510), [§10](live-sync-system.md#L580-L589), [§B](live-sync-system.md#L1263-L1267) · _dep: 0.1, A.5_
+- [ ] **A.6** `[generic]` Client SSE service — Effect `Stream` decode, event queue, keep-alive/retry. Model after `client-sync-service.ts`. — [§8 GET /sync](live-sync-system.md#L479-L510), [§10](live-sync-system.md#L580-L589), [§B](live-sync-system.md#L1263-L1267) · _dep: 0.1, A.5_
 - [ ] **A.7** `[generic]` `lastSyncId` durable store (self-owned, **not** framework `staleTime`) + catchup service: fetch `/catchup?from=`, feed through the **synced-store write path**, advance `lastSyncId` after applying. Model after `client-sync-catchup-service.ts`. — [§8 catchup](live-sync-system.md#L456-L479), [§22 fixed constraints](live-sync-system.md#L1129-L1141), [§A.5](live-sync-system.md#L1245-L1247) · _dep: 0.1, 0.3, A.4_
 - [ ] **A.8** `[generic]` Resync handling — on `__all`/`__group`/`__model` clear matching collections (via `disposePattern`) and trigger rebootstrap — [§9](live-sync-system.md#L556-L580) · _dep: A.1, A.5_
 
@@ -100,14 +104,14 @@ generic/per-entity split, but lives in each app's backend.
 - [ ] **C.2** `[generic]` `SyncEventBus` interface + in-memory Effect `PubSub` (seam for Redis/LISTEN-NOTIFY later) — [§5 SyncEventBus](live-sync-system.md#L225-L241) · _§15.2, 0.5d_
 - [ ] **C.3** `[generic]` `SyncEventRepository` — append, query-by-groups, query-by-syncId — [§7](live-sync-system.md#L364-L416) · _§15.3, 1d_
 - [ ] **C.4** `[generic]` `SyncEventDispatcher` — thin: append row, best-effort bus publish — [§7](live-sync-system.md#L364-L416) · _§15.4, 0.5d_
-- [ ] **C.5** `[generic]` **`clientId` on `DomainEvent` + propagate through `EventClient.publish`** — invasive prerequisite for echo suppression — [§clientId on DomainEvent](live-sync-system.md#L322-L345) · _§15.5, 1d_
+- [x] **C.5** → **removed (DEC-11).** `clientId` / echo suppression is dropped for now — it conflicts with TanStack DB's optimistic-mutation reconciliation, and the wire shape never carried it. No `DomainEvent` or `EventClient.publish` change. If reintroduced, it belongs as a *client-side reconciliation key*, not a server filter — [DEC-11](CLAUDE.md), [`packages/protocol/DESIGN.md`](packages/protocol/DESIGN.md).
 
 ### Read path
 
 - [x] **C.6** → **moved to [0.4](#bucket-0--shared-contract-kit-triargoslive-collection-protocol)**. The squasher is contract behavior; it lives in `protocol` and the backend imports it. Backend work here = just wire it into `/catchup` (see C.8).
 - [ ] **C.7** `[generic]` `SyncPermissionResolver.groupsFor({userId})` — derives groups from real memberships — [§8 Permission resolver](live-sync-system.md#L418-L456) · _§15.8, 1d_
 - [ ] **C.8** `[generic]` `GET /catchup?from=&group=` — auth, resolve groups, retention check → inline `__all`, query, squash, **batched `hydrateMany`**, return `{events, lastSyncId}` — [§8 catchup](live-sync-system.md#L456-L479) · _§15.10, 2d_
-- [ ] **C.9** `[generic]` `GET /sync` SSE — bus subscribe, group+echo filter, hydrate, synthetic-delete on ACL loss, `Last-Event-ID` implicit catchup, per-connection `Scope` — [§8 GET /sync](live-sync-system.md#L479-L510) · _§15.11, 2d_
+- [ ] **C.9** `[generic]` `GET /sync` SSE — bus subscribe, group filter, hydrate, synthetic-delete on ACL loss, `Last-Event-ID` implicit catchup, per-connection `Scope` — [§8 GET /sync](live-sync-system.md#L479-L510) · _§15.11, 2d_
 - [ ] **C.10** `[generic]` Live-connection refresh via `MembershipChangedEvent` (settle its shape) — re-runs resolver, swaps cached group set — [§8 Live-connection refresh](live-sync-system.md#L510-L534) · _§15.12, 1d_
 - [ ] **C.11** `[generic]` Resync events — all three variants (per-model / per-group / global); membership removal emits per-group resync tagged `user:<id>` — [§9](live-sync-system.md#L556-L580) · _§15.13, 1d_
 
