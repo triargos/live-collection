@@ -74,6 +74,19 @@ describe("CollectionRegistry", () => {
       assert.isTrue(Option.isSome(yield* registry.getById(globalKey("user"))))
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
+  it.scoped("getByEntity returns every mounted collection for an entity across scopes", () =>
+    Effect.gen(function* () {
+      const registry = yield* CollectionRegistry
+      const wh1 = yield* registry.getOrCreate({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), make: tracked("wh1", []).make })
+      const wh2 = yield* registry.getOrCreate({ key: scopedKey({ entity: "Webhook", scope: "org-2" }), make: tracked("wh2", []).make })
+      yield* registry.getOrCreate({ key: globalKey("User"), make: tracked("user", []).make })
+
+      const webhooks = yield* registry.getByEntity("Webhook")
+      assert.deepStrictEqual([...webhooks], [wh1, wh2]) // both Webhook scopes, User excluded
+
+      assert.deepStrictEqual([...(yield* registry.getByEntity("Nope"))], []) // none mounted ⇒ empty
+    }).pipe(Effect.provide(CollectionRegistry.layer)))
+
   it.scoped("disposeAllScoped tears down every scoped collection and leaves globals", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry

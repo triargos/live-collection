@@ -24,6 +24,10 @@ export * from "./registry/collection-key.js"
 export * from "./registry/collection-registry.js"
 export * from "./registry/define-collection.js"
 
+// dispatch/ — entity-agnostic event routing (A.5)
+export * from "./dispatch/sync-write.js"
+export * from "./dispatch/sync-dispatcher.js"
+
 /**
  * The hero type. A TanStack DB collection that is locally persisted and kept
  * live-synced with the authoritative server. The factory `createCollection`

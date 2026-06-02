@@ -31,6 +31,12 @@ export interface CollectionRegistryShape {
   readonly getById: <A>(
     key: CollectionKey<A>,
   ) => Effect.Effect<Option.Option<A>>;
+  /**
+   * Every mounted collection for `entity`, across all scopes — one per workspace, plus the
+   * global instance if it's mounted. Empty when none are. Use this to fan an event out to a
+   * model rather than a single scope, e.g. applying a delete whose id may live in any scope.
+   */
+  readonly getByEntity: <A>(entity: string) => Effect.Effect<ReadonlyArray<A>>;
   /** Tear down and evict one collection. A no-op if it isn't mounted. */
   readonly dispose: (key: CollectionKey<unknown>) => Effect.Effect<void>;
   /** Tear down and evict every collection whose `scope` equals `scope` (globals untouched). */
@@ -95,6 +101,13 @@ const make: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
           : Option.some(existing.collection as A); // see getOrCreate note
       });
 
+    const getByEntity = <A>(entity: string): Effect.Effect<ReadonlyArray<A>> =>
+      Effect.sync(() =>
+        [...entries.values()]
+          .filter((e) => e.key.entity === entity)
+          .map((e) => e.collection as A), // see getOrCreate note
+      );
+
     const evict = (args: {
       readonly id: string;
       readonly entry: { readonly childScope: Scope.CloseableScope };
@@ -133,6 +146,7 @@ const make: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
     return CollectionRegistry.of({
       getOrCreate,
       getById,
+      getByEntity,
       dispose,
       disposeScope,
       disposeAllScoped,
