@@ -19,6 +19,11 @@ import type { SyncEvent } from "@triargos/live-collection-protocol"
 /** Re-exported so consumers and the dispatch layer share one contract type. */
 export type { SyncEvent }
 
+// registry/ — generic collection cache + scoping (A.1/A.2)
+export * from "./registry/collection-key.js"
+export * from "./registry/collection-registry.js"
+export * from "./registry/define-collection.js"
+
 /**
  * The hero type. A TanStack DB collection that is locally persisted and kept
  * live-synced with the authoritative server. The factory `createCollection`

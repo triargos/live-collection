@@ -13,7 +13,7 @@
   "types": "./dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests"
   },
