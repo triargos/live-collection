@@ -24,8 +24,10 @@ export interface DispatchEntry<T, Args> {
   /**
    * The model's collection, as defined with `defineCollection`. Only its `.key` is read —
    * the dispatcher routes to collections that are already mounted and never mounts one itself.
+   * The key carries the mounted value's shape: the synced-write path lives on `.utils` (a
+   * `LiveCollection<T>` hosts `SyncWrite<T>` there), which is where `dispatch` writes.
    */
-  readonly collection: (args: Args) => { readonly key: CollectionKey<SyncWrite<T>> }
+  readonly collection: (args: Args) => { readonly key: CollectionKey<{ readonly utils: SyncWrite<T> }> }
   /** Reads an entity's own mount arguments from it, e.g. `(webhook) => webhook.orgId`. */
   readonly scopeOf: (entity: T) => Args
 }
@@ -62,18 +64,18 @@ const make = (
 
       if (event._tag === "Delete") {
         // No data to scope on, but the id is globally unique — fan out and let the owner remove it.
-        const collections = yield* registry.getByEntity<SyncWrite<unknown>>(event.modelName)
-        return yield* Effect.forEach(collections, (c) => c.deleteSynced(event.modelId), {
+        const collections = yield* registry.getByEntity<{ utils: SyncWrite<unknown> }>(event.modelName)
+        return yield* Effect.forEach(collections, (c) => c.utils.deleteSynced(event.modelId), {
           discard: true,
         })
       }
 
       const data = yield* Schema.decodeUnknown(entry.schema)(event.data).pipe(Effect.orDie)
       const key = entry.collection(entry.scopeOf(data)).key
-      const found = yield* registry.getById<SyncWrite<unknown>>(key)
+      const found = yield* registry.getById<{ utils: SyncWrite<unknown> }>(key)
       return yield* Option.match(found, {
         onNone: () => Effect.void, // not mounted ⇒ ignore
-        onSome: (collection) => collection.writeSynced(data),
+        onSome: (collection) => collection.utils.writeSynced(data),
       })
     }),
 })

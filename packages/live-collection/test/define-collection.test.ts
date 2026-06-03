@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { CollectionRegistry } from "../src/registry/collection-registry.js"
-import { globalKey, scopedKey } from "../src/registry/collection-key.js"
+import { globalKey, scopedKey, serializeKey } from "../src/registry/collection-key.js"
 import { defineCollection } from "../src/registry/define-collection.js"
 
 // A fake collection whose `make` requires `Scope` (via addFinalizer), so these tests also
@@ -35,6 +35,24 @@ describe("defineCollection / MountRef", () => {
       make: () => tracked("user").make,
     })
     assert.deepStrictEqual(user().key, globalKey("user"))
+  })
+
+  it("threads collectionId = serializeKey(key) and the mount args into make (DEC-A3)", () => {
+    const seen: Array<{ collectionId: string; args: string }> = []
+    const webhook = defineCollection({
+      entity: "webhook",
+      scopeOf: (orgId: string) => orgId,
+      make: ({ collectionId, args }) => {
+        seen.push({ collectionId, args })
+        return Effect.succeed({ collectionId })
+      },
+    })
+
+    const ref = webhook("org-1")
+    assert.deepStrictEqual(seen, [
+      { collectionId: serializeKey(scopedKey({ entity: "webhook", scope: "org-1" })), args: "org-1" },
+    ])
+    assert.strictEqual(seen[0]!.collectionId, serializeKey(ref.key)) // id and key never drift
   })
 
   it.scoped("yielding a ref mounts via the registry and returns the canonical instance", () =>

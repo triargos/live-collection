@@ -1,6 +1,6 @@
 import { Effect, Effectable, Scope } from "effect"
 import { CollectionRegistry } from "./collection-registry.js"
-import { type CollectionKey, globalKey, scopedKey } from "./collection-key.js"
+import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collection-key.js"
 
 /**
  * A mountable handle for one collection instance — the typed skin over the untyped
@@ -47,17 +47,32 @@ export class MountRef<A, R> extends Effectable.Class<
 }
 
 /**
+ * What `defineCollection` hands a global collection's {@link CollectionDef.make}: just the
+ * `collectionId` it derived from the key (DEC-A3). `collectionId` is `serializeKey(key)` — stable,
+ * unique per `(entity, scope)`, and never hand-built by the app, so the SQLite table id and the
+ * registry key cannot drift to different entities. `make` threads it into `effectCollectionOptions`.
+ */
+export interface MountId {
+  readonly collectionId: string
+}
+
+/** As {@link MountId}, plus the scoped collection's mount `args` (e.g. an org id). */
+export interface MountArgs<Args> extends MountId {
+  readonly args: Args
+}
+
+/**
  * One entity's collection definition — the per-entity input an app writes once.
  *
  * `scopeOf` is the app-owned map from its domain args to the generic `scope` key (e.g.
  * `(orgId) => orgId`); this is the *only* place the app's notion of "workspace" appears — the
  * library never learns the word. Omit `scopeOf` for a global collection (one instance app-wide).
- * `Args` flows uniformly into both `scopeOf` and `make`.
+ * `Args` flows uniformly into both `scopeOf` and `make` (via {@link MountArgs}).
  */
 export interface CollectionDef<A, Args, R> {
   readonly entity: string
   readonly scopeOf?: (args: Args) => string
-  readonly make: (args: Args) => Effect.Effect<A, never, R>
+  readonly make: (mount: MountArgs<Args>) => Effect.Effect<A, never, R>
 }
 
 /** The typed entry point an app calls per request: `webhookCollection(orgId)`. */
@@ -73,25 +88,24 @@ export type MountCollection<A, Args, R> = (args: Args) => MountRef<A, R>
  * `Args`, so its entry point is `(args) => MountRef`. (One signature with `scopeOf?` can't
  * express "no `scopeOf` ⇒ no arg" — `Args` would infer to `unknown` and force a phantom arg.)
  */
-export function defineCollection<A, R>(def: {
-  readonly entity: string
-  readonly make: () => Effect.Effect<A, never, R>
-}): MountCollection<A, void, R>
 export function defineCollection<A, Args, R>(def: {
   readonly entity: string
   readonly scopeOf: (args: Args) => string
-  readonly make: (args: Args) => Effect.Effect<A, never, R>
+  readonly make: (mount: MountArgs<Args>) => Effect.Effect<A, never, R>
 }): MountCollection<A, Args, R>
+export function defineCollection<A, R>(def: {
+  readonly entity: string
+  readonly make: (mount: MountId) => Effect.Effect<A, never, R>
+}): MountCollection<A, void, R>
 export function defineCollection<A, Args, R>(
   def: CollectionDef<A, Args, R>,
 ): MountCollection<A, Args, R> {
   const scopeOf = def.scopeOf
-  return (args) =>
-    new MountRef({
-      key:
-        scopeOf === undefined
-          ? globalKey<A>(def.entity)
-          : scopedKey<A>({ entity: def.entity, scope: scopeOf(args) }),
-      make: def.make(args),
-    })
+  return (args) => {
+    const key =
+      scopeOf === undefined
+        ? globalKey<A>(def.entity)
+        : scopedKey<A>({ entity: def.entity, scope: scopeOf(args) })
+    return new MountRef({ key, make: def.make({ collectionId: serializeKey(key), args }) })
+  }
 }

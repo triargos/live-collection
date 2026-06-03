@@ -13,13 +13,17 @@ import {
 const Webhook = Schema.Struct({ id: Schema.String, orgId: Schema.String })
 type Webhook = typeof Webhook.Type
 
-// A fake collection: it records synced writes/deletes so a test can read what landed.
+// A fake collection: it records synced writes/deletes so a test can read what landed. The
+// synced-write path lives on `.utils`, mirroring a real `LiveCollection<T>` — that's where the
+// dispatcher writes.
 const makeCollection = () => {
   const rows = new Map<string, Webhook>()
   return {
     rows,
-    writeSynced: (e: Webhook) => Effect.sync(() => void rows.set(e.id, e)),
-    deleteSynced: (id: ModelId) => Effect.sync(() => void rows.delete(String(id))),
+    utils: {
+      writeSynced: (e: Webhook) => Effect.sync(() => void rows.set(e.id, e)),
+      deleteSynced: (id: ModelId) => Effect.sync(() => void rows.delete(String(id))),
+    },
   }
 }
 

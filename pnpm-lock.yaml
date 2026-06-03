@@ -30,7 +30,7 @@ importers:
         specifier: ^0.96.1
         version: 0.96.1(effect@3.21.2)
       '@tanstack/db':
-        specifier: ^0.6.7
+        specifier: 0.6.7
         version: 0.6.7(typescript@6.0.3)
       '@tanstack/db-sqlite-persistence-core':
         specifier: 0.1.11

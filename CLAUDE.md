@@ -96,7 +96,7 @@ This is a young codebase — conventions are still being set, so write them down
 **Stack:**
 
 - **Effect** — core runtime, services, layers, schema. The whole library is Effect-native.
-- **TanStack DB `persistedCollectionOptions`** (SQLite-WASM) — client persistence base. **Pinned exactly at `@tanstack/db@0.6.7`** (alpha; resolves spec §22's open version `TODO`). Bump deliberately, not via caret.
+- **TanStack DB `persistedCollectionOptions`** (SQLite-WASM) — client persistence base. Imported from **`@tanstack/db-sqlite-persistence-core`** (the SQLite persistence adapter), **not** `@tanstack/db` core — core only provides `createCollection`. `@tanstack/db` is **pinned exactly at `0.6.7`** (alpha; resolves spec §22's open version `TODO`). Bump deliberately, not via caret.
 - **`@effect/platform`** — HTTP client + SSE stream decode for the read path.
 - **React** (optional) — bindings via `@tanstack/react-db` in `@triargos/live-collection-react`; core stays framework-neutral.
 - **Tooling:** pnpm workspaces (no Turborepo — orchestrate with `pnpm -r` + `tsc -b` project references) · tsup (ESM/CJS) · `@effect/vitest` · Changesets (independent versioning).
@@ -153,7 +153,7 @@ the app composes them at the edge.
 ### Decisions (load-bearing; do not re-litigate without a new reason)
 
 1. **Library is frontend-only; the backend is per-app.** Generic backend infra (bus, repo, dispatcher, squasher, `/sync`, `/catchup`) incubates in `examples/server` and may later graduate to a published `@triargos/live-collection-server` — but it does not gate the frontend library. (User directive + spec framing.)
-2. **Persistence = TanStack DB 0.6 `persistedCollectionOptions` (SQLite-WASM), accepting alpha status.** NOT the old custom Dexie bridge (whole-table load + per-tick rescan), NOT a fresh bespoke Dexie engine. (Spec §22.)
+2. **Persistence = TanStack DB 0.6 `persistedCollectionOptions` (SQLite-WASM), accepting alpha status.** NOT the old custom Dexie bridge (whole-table load + per-tick rescan), NOT a fresh bespoke Dexie engine. (Spec §22.) **`persistedCollectionOptions` lives in `@tanstack/db-sqlite-persistence-core`, not `@tanstack/db` core** — core only exports `createCollection`.
 3. **The factory is the only seam.** A wrong persistence choice is contained to the inside of `create<Entity>Collection`; registry, dispatch, resolver, and bootstrap are unchanged. Blast radius = one function per entity. (Spec §22, §A.2.)
 4. **Scoping is the lever for large data — not the persistence backend.** A collection's working set is in memory under *either* backend. Per-workspace collections (`<entity>:<orgId>`) + windowed queries are how large data stays small. **Build the registry/scoping early.** (Spec §22.)
 5. **Freshness metadata is ours.** A durable, global `lastSyncId` gates catchup — *not* the framework's `staleTime` (which resets on reload). Catchup writes go through the **synced-store write path**, never the optimistic-mutation path. (Spec §22.)
