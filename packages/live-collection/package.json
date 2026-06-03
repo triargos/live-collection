@@ -11,7 +11,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "build": "tsc -b",
@@ -19,8 +21,12 @@
   },
   "dependencies": {
     "@effect/platform": "^0.96.1",
-    "@tanstack/db": "0.6.7",
+    "@tanstack/db": "^0.6.7",
+    "@tanstack/db-sqlite-persistence-core": "0.1.11",
     "@triargos/live-collection-protocol": "workspace:*",
     "effect": "^3.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
   }
 }
