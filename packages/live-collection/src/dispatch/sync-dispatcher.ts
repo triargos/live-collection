@@ -33,7 +33,7 @@ export interface DispatchEntry<T, Args> {
 /**
  * Builds a {@link DispatchEntry}, tying the schema, collection, and `scopeOf` to one entity
  * type. It only constructs a value — it registers nothing and runs no effect, so import order
- * never matters; a model is wired iff its entry is in the set passed to
+ * never matters; a model is wired if its entry is in the set passed to
  * {@link SyncDispatcher.fromEntries}.
  */
 export const dispatchEntry = <T, Args>(
