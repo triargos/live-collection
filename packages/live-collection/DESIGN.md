@@ -515,3 +515,65 @@ issues that the deltas/delete/schema-reset slices exposed — corrections to ear
 **CLAUDE.md cross-refs:** bends decision **3** (the factory is no longer the *only* seam — `PersistenceBase`
 sits inside it, DEC-A7); honors decision **9** (no string grammar — DEC-A3); leans on decisions **2/5**
 (persistence base + durable cursor) and protocol **DEC-6/DEC-11/DEC-12**.
+
+---
+
+# Transport tier (A.6–A.9) — LOCKED + IMPLEMENTED
+
+> **Status: LOCKED + GREEN.** Signed off 2026-06-08. The read path over the Bucket-A factory: one
+> global SSE connection + global catchup feeding the central `SyncDispatcher`; per-collection `sync`
+> stays network-free (DEC-A5). Modules live in `src/client/`. 13 tests added (44 total in the
+> package). Decode SSE/`/catchup` bodies against the protocol schemas at the boundary — never cast.
+
+## Modules (`src/client/`)
+- `last-sync-id-store.ts` — `LastSyncIdStore`: the global durable cursor. `get`/`set`(monotonic by
+  `compareSyncId`)/`clear`. `layer` (localStorage), `layerMemory` (Ref).
+- `catchup-client.ts` — `CatchupClient.fetch({from}) → CatchupResponse` decoded at the boundary;
+  `CatchupFailed` is modeled+recoverable (orchestrator tails anyway). `layer({url})` over `HttpClient`,
+  `layerMemory(canned)`.
+- `sync-transport.ts` — `SyncTransport.connect: Stream<HydratedSyncEventEnvelope, SyncConnectionLost>`,
+  one decoded SSE connection that **fails on drop**. `layer({url, keepAlive})`, `layerMemory(queue)`.
+- `sync-client.ts` — `SyncClient.start(specs)`: the orchestrator (A.8 resync folded in). `BootstrapSpec`
+  + `bootstrapSpec` erase-helper; `reloadWindow` convenience. `layer({onResync})`.
+
+## The loop (`SyncClient.start`, forked; runs forever)
+```
+each cycle (retry on SyncConnectionLost, spaced 3s):
+  from = cursor ?? "0"
+  resp = catchup({from})                  CatchupFailed ⇒ log + tail anyway
+  resp has a Resync arm ?  snapshot every spec (bootstrapFn → upsert + delete-absent)
+                        :  dispatch resp's entity events
+  cursor.set(resp.lastSyncId)             cursor ALWAYS from catchup
+  tail transport.connect:  entity → SyncDispatcher.dispatch ; live Resync → cursor.clear *> onResync (stop)
+```
+
+## Decisions log (DEC-T*, load-bearing — do not re-litigate without a new reason)
+- **DEC-T1** One global SSE connection + central dispatch (Model Y); per-collection `sync` stays
+  network-free. *Rejected:* per-collection network (Model X) — fights the global server contract.
+- **DEC-T2** Cursor durability = a single `localStorage` `lastSyncId`. Fire-and-forget row persistence
+  means (rows, cursor) can skew; healed by catchup overlap + cold re-snapshot. **Revises DEC-A14** —
+  per-write same-tx durability is unattainable (no alpha handle), so we don't pursue it.
+- **DEC-T3** Cursor's single source of truth = the sync stream (`CatchupResponse.lastSyncId`, live
+  `event.syncId`). `bootstrapFn` returns **rows only**. *Rejected:* `bootstrapFn` returns
+  `{rows, syncId}` — couples every list endpoint to the cursor.
+- **DEC-T4** `SyncTransport.connect` **fails** on drop; the orchestrator's outer retry re-runs catchup
+  each reconnect (heals the gap). *Rejected:* internally-retrying transport (gap relies on server
+  `Last-Event-ID`).
+- **DEC-T5** Cold/warm unified: `from = cursor ?? "0"`; snapshot-vs-delta decided by the catchup
+  response — a `Resync` arm ⇒ snapshot via `bootstrapFn`, else dispatch deltas. Preserves DEC-A12
+  snapshot-and-tail (a mature server resyncs `from:"0"`) with **no per-collection staleness store**.
+- **DEC-T6** Resync is blunt and context-split: **in a catchup response** ⇒ snapshot (no reload → no
+  loop); **live in SSE** ⇒ `cursor.clear *> onResync` (full reload, Model A). Target ignored entirely —
+  no `groupScope` hook, no `isUnder`. *Rejected:* per-target dispose mapping; in-place collection reset
+  (a future option if reload UX proves harsh).
+- **DEC-T7** `onResync` is an injected `Effect<void>` (prod: `reloadWindow`), keeping core
+  framework-neutral and the reload assertable in tests.
+- **DEC-T8** `start` runs forever and is forked; no "ready" signal — local hydration drives first paint
+  (DEC-A13).
+- **DEC-T9** Snapshot reconcile = upsert fetched (`writeSynced`) + delete-absent (`deleteSynced` for
+  `currentKeys − fetchedKeys`), so a snapshot is a true replacement.
+
+## Deferred (flagged, not built)
+- Incremental **workspace-switch** bootstrap (mounting a new scope while the cursor is `Some` won't
+  snapshot it). DEC-A12's staleTime *threshold* (`lastBootstrapAt`). Browser OPFS `PersistenceBase.layer`
+  (playground territory; only `layerSqliteDriver` test infra exists). In-place resync (DEC-T6).

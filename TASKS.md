@@ -59,24 +59,24 @@ design — see the linked decision after each.
 
 ### Tier 1 — collection scoping core (build early)
 
-- [ ] **A.1** `[generic]` `CollectionRegistry` — untyped `Map<id, RegisteredCollection>`; `getOrCreate/getById/dispose/disposePattern` + `globToRegex` — [§14 CollectionRegistry](live-sync-system.md#L836-L891)
-- [ ] **A.2** `[generic]` Lifecycle helpers — `disposeWorkspace`/`disposeAllWorkspaces`/`disposeEverything` over `disposePattern` — [§14 Lifecycle helpers](live-sync-system.md#L946-L968) · _dep: A.1_
+- [x] **A.1** `[generic]` `CollectionRegistry` — untyped `Map<id, RegisteredCollection>`; `getOrCreate/getById/dispose/disposePattern` + `globToRegex` — [§14 CollectionRegistry](live-sync-system.md#L836-L891)
+- [x] **A.2** `[generic]` Lifecycle helpers — `disposeWorkspace`/`disposeAllWorkspaces`/`disposeEverything` over `disposePattern` — [§14 Lifecycle helpers](live-sync-system.md#L946-L968) · _dep: A.1_
 
 ### Tier 2 — persistence factory seam (spike FIRST)
 
-- [ ] **A.3** `[generic]` **Persistence spike (the gate).** Validate `persistedCollectionOptions` (TanStack DB 0.6, SQLite-WASM) three-step flow on one small collection: hydrate-from-storage-on-mount → no full re-list when base exists → catchup deltas land through sync source & persist. Fall back to clean Dexie factory if broken. — [§A.1](live-sync-system.md#L1227-L1234), [§22 three-step flow](live-sync-system.md#L1213-L1223)
-- [ ] **A.4** `[generic]` Factory builder `effectCollectionOptions(...)` wrapping `persistedCollectionOptions` + Effect runtime. Keep the shape of existing `create-effect-collection.ts`, swap internals. — [§14 factories](live-sync-system.md#L891-L946), [§A.2](live-sync-system.md#L1235-L1236), [§B](live-sync-system.md#L1268-L1271) · _dep: A.3_
+- [x] **A.3** `[generic]` **Persistence spike (the gate).** Validate `persistedCollectionOptions` (TanStack DB 0.6, SQLite-WASM) three-step flow on one small collection: hydrate-from-storage-on-mount → no full re-list when base exists → catchup deltas land through sync source & persist. Fall back to clean Dexie factory if broken. — [§A.1](live-sync-system.md#L1227-L1234), [§22 three-step flow](live-sync-system.md#L1213-L1223)
+- [x] **A.4** `[generic]` Factory builder `effectCollectionOptions(...)` wrapping `persistedCollectionOptions` + Effect runtime. Keep the shape of existing `create-effect-collection.ts`, swap internals. — [§14 factories](live-sync-system.md#L891-L946), [§A.2](live-sync-system.md#L1235-L1236), [§B](live-sync-system.md#L1268-L1271) · _dep: A.3_
 
 ### Tier 3 — sync transport + routing
 
-- [ ] **A.5** `[generic]` Sync dispatch registry — `Map<ModelName, DispatchHandler>` + entity-agnostic resolver (`get(modelName)?.(event)`) — [§14 dispatch registry](live-sync-system.md#L968-L1001) · _dep: 0.1_
-- [ ] **A.6** `[generic]` Client SSE service — Effect `Stream` decode, event queue, keep-alive/retry. Model after `client-sync-service.ts`. — [§8 GET /sync](live-sync-system.md#L479-L510), [§10](live-sync-system.md#L580-L589), [§B](live-sync-system.md#L1263-L1267) · _dep: 0.1, A.5_
-- [ ] **A.7** `[generic]` `lastSyncId` durable store (self-owned, **not** framework `staleTime`) + catchup service: fetch `/catchup?from=`, feed through the **synced-store write path**, advance `lastSyncId` after applying. Model after `client-sync-catchup-service.ts`. — [§8 catchup](live-sync-system.md#L456-L479), [§22 fixed constraints](live-sync-system.md#L1129-L1141), [§A.5](live-sync-system.md#L1245-L1247) · _dep: 0.1, 0.3, A.4_
-- [ ] **A.8** `[generic]` Resync handling — on `__all`/`__group`/`__model` clear matching collections (via `disposePattern`) and trigger rebootstrap — [§9](live-sync-system.md#L556-L580) · _dep: A.1, A.5_
+- [x] **A.5** `[generic]` Sync dispatch registry — `Map<ModelName, DispatchHandler>` + entity-agnostic resolver (`get(modelName)?.(event)`) — [§14 dispatch registry](live-sync-system.md#L968-L1001) · _dep: 0.1_
+- [x] **A.6** `[generic]` Client SSE service — `SyncTransport.connect` (Effect `Stream` decode, keep-alive timeout, **fails on drop** so the orchestrator reconnects — DEC-T4). `src/client/sync-transport.ts`. — [§8 GET /sync](live-sync-system.md#L479-L510), [§10](live-sync-system.md#L580-L589), [§B](live-sync-system.md#L1263-L1267) · _dep: 0.1, A.5_
+- [x] **A.7** `[generic]` `LastSyncIdStore` durable cursor (localStorage, self-owned — **not** `staleTime`, DEC-T2) + `CatchupClient` (`/catchup?from=` → synced-store write path via the dispatcher; cursor from `CatchupResponse.lastSyncId`, DEC-T3). `src/client/{last-sync-id-store,catchup-client}.ts`. — [§8 catchup](live-sync-system.md#L456-L479), [§22 fixed constraints](live-sync-system.md#L1129-L1141), [§A.5](live-sync-system.md#L1245-L1247) · _dep: 0.1, 0.3, A.4_
+- [x] **A.8** `[generic]` Resync handling — **blunt, target-ignored** (DEC-T6): a catchup-response resync ⇒ snapshot via `bootstrapFn`; a *live* resync ⇒ `cursor.clear *> onResync` (full reload, Model A). Folded into `SyncClient.start`. — [§9](live-sync-system.md#L556-L580) · _dep: A.1, A.5_
 
 ### Tier 4 — orchestration + offline
 
-- [ ] **A.9** `[generic]` Bootstrap orchestrator — cold/warm start sequencing, capture `lastSyncId`, open `/sync`, catchup the gap, workspace-switch flow. Generic shell; app injects which collections to mount. — [§14 Bootstrap flow](live-sync-system.md#L1029-L1066), [§A.6](live-sync-system.md#L1248-L1249) · _dep: A.4, A.6, A.7_
+- [x] **A.9** `[generic]` Bootstrap orchestrator — `SyncClient.start(specs)`: cold/warm unified (`from = cursor ?? "0"`, DEC-T5), catchup the gap, tail SSE forever (reconnect re-runs catchup), snapshot-and-tail via `bootstrapSpec`. `src/client/sync-client.ts`. Workspace-switch incremental mount **deferred** (flagged in DESIGN). — [§14 Bootstrap flow](live-sync-system.md#L1029-L1066), [§A.6](live-sync-system.md#L1248-L1249) · _dep: A.4, A.6, A.7_
 - [ ] **A.10** `[generic]` Offline mutations — integrate `@tanstack/offline-transactions`. **Only after read path solid.** — [§A.7](live-sync-system.md#L1250-L1251) · _dep: A.4, A.9_
 - [ ] **A.11** `[generic]` Unmounted-workspace event policy (default ignore; optional persist-only / lazy-mount) as a configurable hook — [§14 events for unmounted workspaces](live-sync-system.md#L1066-L1073) · _dep: A.5_
 

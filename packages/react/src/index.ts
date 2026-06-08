@@ -13,4 +13,4 @@ import type { LiveCollection } from "@triargos/live-collection"
  *
  * TODO(A.6/A.9): implement over `@tanstack/react-db` + the runtime provider.
  */
-export type UseLiveCollection = <T>(collection: LiveCollection<T>) => ReadonlyArray<T>
+export type UseLiveCollection = <T extends object>(collection: LiveCollection<T>) => ReadonlyArray<T>

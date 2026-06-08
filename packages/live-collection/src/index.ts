@@ -28,16 +28,19 @@ export * from "./registry/define-collection.js"
 export * from "./dispatch/sync-write.js"
 export * from "./dispatch/sync-dispatcher.js"
 
-/**
- * The hero type. A TanStack DB collection that is locally persisted and kept
- * live-synced with the authoritative server. The factory `createCollection`
- * (task A.4) is the only seam where the persistence backend is chosen.
- *
- * TODO(A.4): replace this placeholder with the real collection surface.
- */
-export interface LiveCollection<T> {
-  readonly id: string
-  readonly __entity?: T
-}
+// client/ — SSE transport, catchup, durable cursor, bootstrap orchestrator (A.6–A.9)
+export * from "./client/last-sync-id-store.js"
+export * from "./client/catchup-client.js"
+export * from "./client/sync-transport.js"
+export * from "./client/sync-client.js"
+
+// persistence/ — the per-entity factory seam over TanStack DB 0.6 (A.3/A.4)
+//   LiveCollection<T> is the hero type: a TanStack Collection whose `utils` host the synced-write
+//   path. effectCollectionOptions is the factory `defineCollection.make` calls; PersistenceBase is
+//   the shared SQLite base; deriveSchemaVersion drives DEC-A6 dump-and-rebuild.
+export type { LiveCollection } from "./persistence/live-collection.js"
+export * from "./persistence/effect-collection.js"
+export * from "./persistence/persistence-base.js"
+export * from "./persistence/schema-version.js"
 
 export const LIB_VERSION = "0.0.0"
