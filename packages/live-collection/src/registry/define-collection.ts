@@ -1,111 +1,119 @@
-import { Effect, Effectable, Scope } from "effect"
-import { CollectionRegistry } from "./collection-registry.js"
+import { Effect, Option, type Schema, type Scope } from "effect"
+import { createCollection } from "@tanstack/db"
+import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core"
+import type { ModelId } from "@triargos/live-collection-protocol"
+import type { SyncWrite } from "../dispatch/sync-write.js"
+import type { LiveCollection } from "../persistence/live-collection.js"
+import { liveCollectionOptions } from "../persistence/live-collection-options.js"
+import { deriveSchemaVersion } from "../persistence/schema-version.js"
+import type { LiveRuntime } from "../runtime/live-runtime.js"
 import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collection-key.js"
 
 /**
- * A mountable handle for one collection instance — the typed skin over the untyped
- * {@link CollectionRegistry}. It is yieldable: `yield* ref` mounts the collection via the
- * registry (building once, caching by key) and returns the *canonical* instance. It also
- * carries {@link MountRef.key} so the dispatch resolver and `registry.getById` can locate
- * what's mounted without rebuilding.
- *
- * A ref is identity-*by-key*, not by object: `webhookCollection(orgId)` mints a fresh, inert
- * ref every call (just a key + an unstarted `make`), and the registry collapses them to one
- * instance. So it is safe to call inline in a render or a lookup.
- *
- * `R` is the *raw* requirement of `make` — it includes `Scope` because `make` declares its
- * teardown with `Effect.addFinalizer`. The registry provides the child scope and discharges
- * that requirement, so the yielded effect surfaces `CollectionRegistry | Exclude<R, Scope>`
- * (the same Exclude trick `getOrCreate` uses). Construction is internal — apps reach a ref
- * only through {@link defineCollection}.
+ * Everything the sync loop needs to drive one model, carried *on* the collection handle (DEC-R5) so
+ * the {@link SyncMap} is a literal `{ ModelName: collection }` with no duplicated `schema`/`scopeOf`.
+ * `scopeOf` is `(entity) => scope` (DEC-R6): `None` ⇒ global (one instance), `Some` ⇒ the dispatcher
+ * reads the scope straight off the event. `listFn` is the cold/resync snapshot source — self-contained
+ * (`R = never`; the app closes over its own API client).
  */
-export class MountRef<A, R> extends Effectable.Class<
-  A,
-  never,
-  CollectionRegistry | Exclude<R, Scope.Scope>
-> {
-  readonly key: CollectionKey<A>
-  private readonly make: Effect.Effect<A, never, R>
+export interface ModelMeta<T extends object> {
+  readonly entity: string
+  readonly schema: Schema.Schema<T, any, never>
+  readonly getKey: (entity: T) => ModelId
+  readonly scopeOf: Option.Option<(entity: T) => string>
+  readonly listFn: (scope: Option.Option<string>) => Effect.Effect<ReadonlyArray<T>>
+}
 
-  constructor(args: {
-    readonly key: CollectionKey<A>
-    readonly make: Effect.Effect<A, never, R>
-  }) {
-    super()
-    this.key = args.key
-    this.make = args.make
-  }
+/** A global collection handle: `webhookCollection()` mounts/returns the single instance. */
+export type GlobalHandle<T extends object> = (() => LiveCollection<T>) & { readonly _meta: ModelMeta<T> }
+/** A scoped collection handle: `webhookCollection(orgId)` mounts/returns the per-scope instance. */
+export type ScopedHandle<T extends object> = ((scope: string) => LiveCollection<T>) & {
+  readonly _meta: ModelMeta<T>
+}
+export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
 
-  commit(): Effect.Effect<A, never, CollectionRegistry | Exclude<R, Scope.Scope>> {
-    // Capture fields out here: inside an Effect.gen `this` is the generator's, not the
-    // instance's. The registry caches by key, so repeat mounts collapse to one instance.
-    const { key, make } = this
-    return CollectionRegistry.pipe(
-      Effect.flatMap((registry) => registry.getOrCreate({ key, make })),
+/**
+ * The explicit model→collection wiring passed to `useLiveSync`/`syncLoop` (DEC-R5). Keyed by wire
+ * model name; the value is the collection handle, whose `_meta` drives decode/route/snapshot. Only
+ * `_meta` is read here — the loop reaches instances through the registry, never by calling the handle.
+ */
+export type SyncMap = Record<string, { readonly _meta: ModelMeta<any> }>
+
+interface GlobalConfig<T extends object> {
+  readonly runtime: LiveRuntime
+  readonly entity: string
+  readonly schema: Schema.Schema<T, any, never>
+  readonly getKey: (entity: T) => ModelId
+  readonly listFn: Effect.Effect<ReadonlyArray<T>>
+}
+interface ScopedConfig<T extends object> {
+  readonly runtime: LiveRuntime
+  readonly entity: string
+  readonly schema: Schema.Schema<T, any, never>
+  readonly getKey: (entity: T) => ModelId
+  readonly scopeOf: (entity: T) => string
+  readonly listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>>
+}
+
+/**
+ * Define one model's collection. Returns a **runtime-bound, registry-backed handle** (DEC-R2): calling
+ * it mounts through the registry (sync, cached by `(entity, scope)`) and returns the **native**
+ * `LiveCollection<T>` — pass that straight to `useLiveQuery`. Calling the handle inline in render is
+ * cheap and referentially stable (a `Map.get` after first mount).
+ *
+ * Two overloads (mirrors the global/scoped split): `scopeOf` present ⇒ scoped `(scope) => Collection`;
+ * absent ⇒ global `() => Collection`. The model name is written once, so the registry key and the
+ * persisted table id (`serializeKey(key)`) can never drift.
+ */
+export function defineCollection<T extends object>(config: GlobalConfig<T>): GlobalHandle<T>
+export function defineCollection<T extends object>(config: ScopedConfig<T>): ScopedHandle<T>
+export function defineCollection<T extends object>(
+  config: GlobalConfig<T> | ScopedConfig<T>,
+): Handle<T> {
+  const { runtime, entity, schema, getKey } = config
+  const scopeOf = "scopeOf" in config ? config.scopeOf : undefined
+  const schemaVersion = deriveSchemaVersion(schema)
+
+  // Build the native collection. Sync (`createCollection`), with `persistence` a closed-over VALUE
+  // (not a context dep) and only `Scope` required (for `cleanup`), which the registry discharges —
+  // so the mount path is `Effect.runSync`-able with no async boundary (DEC-R8).
+  const makeFor = (key: CollectionKey<LiveCollection<T>>): Effect.Effect<LiveCollection<T>, never, Scope.Scope> =>
+    Effect.sync(
+      () =>
+        createCollection(
+          persistedCollectionOptions<T, ModelId, never, SyncWrite<T>>({
+            persistence: runtime.persistence,
+            id: serializeKey(key),
+            schemaVersion,
+            ...liveCollectionOptions({ getKey }),
+          }),
+        ) satisfies LiveCollection<T>,
+    ).pipe(
+      Effect.tap((collection) => Effect.addFinalizer(() => Effect.promise(() => collection.cleanup()))),
     )
-  }
-}
 
-/**
- * What `defineCollection` hands a global collection's {@link CollectionDef.make}: just the
- * `collectionId` it derived from the key (DEC-A3). `collectionId` is `serializeKey(key)` — stable,
- * unique per `(entity, scope)`, and never hand-built by the app, so the SQLite table id and the
- * registry key cannot drift to different entities. `make` threads it into `effectCollectionOptions`.
- */
-export interface MountId {
-  readonly collectionId: string
-}
+  const mount = (key: CollectionKey<LiveCollection<T>>): LiveCollection<T> =>
+    Effect.runSync(runtime.registry.getOrCreate({ key, make: makeFor(key) }))
 
-/** As {@link MountId}, plus the scoped collection's mount `args` (e.g. an org id). */
-export interface MountArgs<Args> extends MountId {
-  readonly args: Args
-}
-
-/**
- * One entity's collection definition — the per-entity input an app writes once.
- *
- * `scopeOf` is the app-owned map from its domain args to the generic `scope` key (e.g.
- * `(orgId) => orgId`); this is the *only* place the app's notion of "workspace" appears — the
- * library never learns the word. Omit `scopeOf` for a global collection (one instance app-wide).
- * `Args` flows uniformly into both `scopeOf` and `make` (via {@link MountArgs}).
- */
-export interface CollectionDef<A, Args, R> {
-  readonly entity: string
-  readonly scopeOf?: (args: Args) => string
-  readonly make: (mount: MountArgs<Args>) => Effect.Effect<A, never, R>
-}
-
-/** The typed entry point an app calls per request: `webhookCollection(orgId)`. */
-export type MountCollection<A, Args, R> = (args: Args) => MountRef<A, R>
-
-/**
- * Turn a per-entity {@link CollectionDef} into the typed entry point. Present `scopeOf` ⇒ a
- * scoped key (`scopedKey`); absent ⇒ a global key (`globalKey`). The entity name is written
- * exactly once, so the key and the `make` can never drift to different entities.
- *
- * Two overloads, because the two forms have genuinely different call shapes: a global def
- * takes no args, so its entry point is `() => MountRef`; a scoped def's `scopeOf`/`make` pin
- * `Args`, so its entry point is `(args) => MountRef`. (One signature with `scopeOf?` can't
- * express "no `scopeOf` ⇒ no arg" — `Args` would infer to `unknown` and force a phantom arg.)
- */
-export function defineCollection<A, Args, R>(def: {
-  readonly entity: string
-  readonly scopeOf: (args: Args) => string
-  readonly make: (mount: MountArgs<Args>) => Effect.Effect<A, never, R>
-}): MountCollection<A, Args, R>
-export function defineCollection<A, R>(def: {
-  readonly entity: string
-  readonly make: (mount: MountId) => Effect.Effect<A, never, R>
-}): MountCollection<A, void, R>
-export function defineCollection<A, Args, R>(
-  def: CollectionDef<A, Args, R>,
-): MountCollection<A, Args, R> {
-  const scopeOf = def.scopeOf
-  return (args) => {
-    const key =
+  const meta: ModelMeta<T> = {
+    entity,
+    schema,
+    getKey,
+    scopeOf: Option.fromNullable(scopeOf),
+    listFn:
       scopeOf === undefined
-        ? globalKey<A>(def.entity)
-        : scopedKey<A>({ entity: def.entity, scope: scopeOf(args) })
-    return new MountRef({ key, make: def.make({ collectionId: serializeKey(key), args }) })
+        ? () => (config as GlobalConfig<T>).listFn
+        : (scope) =>
+            Option.match(scope, {
+              onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
+              onSome: (config as ScopedConfig<T>).listFn,
+            }),
   }
+
+  const handle =
+    scopeOf === undefined
+      ? () => mount(globalKey<LiveCollection<T>>(entity))
+      : (scope: string) => mount(scopedKey<LiveCollection<T>>({ entity, scope }))
+
+  return Object.assign(handle, { _meta: meta }) as Handle<T>
 }

@@ -577,3 +577,111 @@ each cycle (retry on SyncConnectionLost, spaced 3s):
 - Incremental **workspace-switch** bootstrap (mounting a new scope while the cursor is `Some` won't
   snapshot it). DEC-A12's staleTime *threshold* (`lastBootstrapAt`). Browser OPFS `PersistenceBase.layer`
   (playground territory; only `layerSqliteDriver` test infra exists). In-place resync (DEC-T6).
+
+# Native-collection redesign + React bindings (DEC-R*) — LOCKED
+
+> **Status: LOCKED.** Signed off 2026-06-08. Goal: collections are **native TanStack collections** —
+> `defineCollection(...)` returns a value you pass straight to `useLiveQuery`, no provider/hook/wrapper
+> ceremony. This **revises** several Bucket-A decisions (noted per DEC-R below). The transport-tier
+> *behaviour* (DEC-T*) is unchanged — catchup/cursor/tail/resync are identical; only the wiring shape
+> changes: the app declares one `defineCollection` per model + one explicit `SyncMap`, instead of
+> hand-assembling `SyncDispatcher.fromEntries` + `SyncClient.start(specs)`.
+
+## The UX (the north star)
+```ts
+const persistence = createOpfsSQLitePersistence({ database: open({ name: "app.sqlite" }) }) // app value, sync, once
+const runtime     = makeLiveRuntime({ persistence, loop: TransportInfra, onResync: reloadWindow })
+
+export const webhookCollection = defineCollection({
+  runtime, entity: "Webhook", schema: Webhook, getKey: (w) => w.id,
+  scopeOf: (w) => w.orgId, listFn: (orgId) => api.listWebhooks(orgId),       // omit scopeOf+make listFn an Effect ⇒ global
+})
+
+function App() { useLiveSync(runtime, { Webhook: webhookCollection }); return <Webhooks/> }      // start loop once
+function Webhooks({ orgId }) {
+  const { data } = useLiveQuery(() => webhookCollection(orgId), [orgId])                          // native, stable (DEC-R9)
+}
+```
+
+## The architecture (acyclic DAG)
+```
+runtime (infra: registry value + persistence value | async transport+cursor+catchup)   ← built first, knows no collections
+   ↑
+collections = defineCollection({ runtime, … })   ← registry-backed handle → native LiveCollection<T>, carries _meta
+   ↑
+SyncMap { Webhook: webhookCollection, … } → syncLoop   ← assembled last; references the handles
+```
+A collection needs only **infra** (registry + persistence) to exist; it does **not** depend on the
+dispatcher (the loop *pushes into* it via `utils.writeSynced`). So the runtime can be an input to
+`defineCollection` with no cycle.
+
+## Two execution surfaces (the load-bearing mechanic)
+Mounting happens **during render** (inside `useLiveQuery`'s queryFn); the loop runs **in an effect**.
+They use different paths:
+- **mount (sync):** the `registry` is a plain **value** built once via `Effect.runSync` in a long-lived
+  scope. `webhookCollection(scope) ≡ Effect.runSync(registry.getOrCreate({ key, make }))`. `make` is
+  `Effect.sync(() => createCollection(...))` + an `addFinalizer(cleanup)`, so it requires only `Scope`,
+  which the registry discharges ⇒ `Effect<A, never, never>` ⇒ `runSync` can't hit an async boundary.
+  `persistence` is a **value closed over**, not a context dep — that's why the mount path needs no async
+  layers. After first mount it's a `Map.get`: referentially **stable** identity, no rebuild, no churn.
+- **loop (async):** `transport + catchup + cursor` run by `useLiveSync` via `runFork` in `useEffect`,
+  interrupted on unmount. Never on the render path. The runtime's registry value is shared into the loop
+  via `Layer.succeed(CollectionRegistry, registry)`, so dispatch sees the same instances the UI mounts.
+
+Registry lifetime = the **app's**, not the loop fiber's: unmounting `useLiveSync` stops the SSE loop but
+does **not** dispose collections (a remount reuses the warm local store). Disposal is `disposeScope`
+(workspace switch) / `disposeAll` (logout) / app teardown closing the long-lived scope.
+
+## The creator pattern (TanStack-idiomatic)
+`liveCollectionOptions({ getKey })` is the **inner** options creator (the live-sync analogue of
+`queryCollectionOptions`): network-free `sync` (installs the `SyncWrite` session + `markReady`, DEC-T1)
++ `utils: SyncWrite<T>` + `gcTime: Infinity` (DEC-A10) + `eager`/`startSync`. Persistence wraps it, exactly
+like the TanStack docs: `createCollection(persistedCollectionOptions({ persistence, schemaVersion, id, ...liveCollectionOptions({ getKey }) }))`.
+This composition lives inside `defineCollection`'s `make`; the app never writes it.
+
+## The explicit map + loop
+`SyncMap = Record<modelName, Handle>` where each `Handle` carries `_meta: ModelMeta<T>` =
+`{ entity, schema, getKey, scopeOf: Option<(t)=>string>, listFn }`. `syncLoop(map, onResync)` is the
+DEC-T loop, re-driven by `_meta`:
+- **dispatch** entity event: `h = map[modelName]`; `Delete` ⇒ fan-out `deleteSynced` over every mounted
+  instance of `entity`; `Insert/Update` ⇒ `decode(_meta.schema)`, `key = scopeOf ? scopedKey{entity, scopeOf(data)} : globalKey(entity)`, `registry.getById(key)` → `writeSynced` (only **mounted** instances).
+- **snapshot** (catchup `Resync`): for each model, for each **mounted** instance, `_meta.listFn(scope)` →
+  reconcile (upsert + delete-absent, DEC-T9). Mounting on first `useLiveQuery` render seeds the workspace.
+
+## Decisions log (DEC-R*, load-bearing — do not re-litigate without a new reason)
+- **DEC-R1** Collections are **native** `createCollection` results; `useLiveQuery` consumes them with no
+  wrapper. *Rejected:* a `useLiveCollection` subscription hook (would shadow `useLiveQuery`, deletion test
+  fails) and a `(collection, entry)` pair (doubles names).
+- **DEC-R2** `defineCollection({ runtime, … })` is **runtime-bound** and returns a registry-backed
+  **callable handle** (`() => LiveCollection` global / `(scope) => LiveCollection` scoped), not an inert
+  `MountRef`. **Revises DEC-10** (MountRef/yieldable) and **DEC-A3** (collectionId now `serializeKey(key)`
+  computed in `make`).
+- **DEC-R3** Persistence is an **app value** (`PersistedCollectionPersistence`) passed to
+  `makeLiveRuntime`, not a service tag. **Retires `PersistenceBase` tag** (**revises DEC-6/DEC-A2/DEC-A7**
+  for this seam). The node/sqlite persistence builder is test infra only (DEC-A8 unchanged).
+- **DEC-R4** `effectCollectionOptions` (`Effect<Collection>`) → `liveCollectionOptions` (plain
+  `CollectionConfig` fields + `utils`); `createCollection` moves into `defineCollection`'s `make`.
+- **DEC-R5** No auto-registration. The **explicit `SyncMap`** is passed to `syncLoop`/`useLiveSync`.
+  Metadata rides on the handle (`_meta`) so the map is literal `{ ModelName: collection }` with no
+  duplicated `schema`/`scopeOf` (D4=b). *Rejected:* per-collection bus subscription (auto-register);
+  metadata-only map (re-declares schema).
+- **DEC-R6** `scopeOf` is `(entity: T) => string` and the mount arg **is** the scope string
+  (`webhookCollection(orgId)`). **Revises DEC-10**'s `(args) => string`. One scope function, and the
+  dispatcher gets entity→scope directly. *Rejected:* `Args`-mapped mounting (two scope functions).
+- **DEC-R7** `SyncClient.start(specs)` → `syncLoop(map, onResync)`; `SyncDispatcher` survives as an
+  internal driven by the map. App-facing `dispatchEntry`/`fromEntries`/`BootstrapSpec`/`bootstrapSpec`
+  **retire**. Loop behaviour (DEC-T1…T9) unchanged.
+- **DEC-R8** Two runtime surfaces (sync registry+persistence value for mount; async ManagedRuntime over
+  `loop` for the fiber). The registry value is built with `Effect.runSync` in a long-lived scope and
+  shared into the loop via `Layer.succeed`. `useLiveSync` `runFork`s the loop on mount, `Fiber.interrupt`
+  on unmount; collections are NOT disposed on unmount.
+- **DEC-R9** Both read forms are native (typechecked in `react/test/use-live-query.types.test.ts`):
+  the direct overload `useLiveQuery(() => webhookCollection(orgId))` **and** the join/filter form
+  `useLiveQuery((q) => q.from({ w: coll }))`. The join form requires a collection's `utils` to be a
+  `Record<string, Fn>` (TanStack `Fn = (...args) => any`), so `SyncWrite<T>` carries a structural-only
+  index signature `readonly [util: string]: (...args: never[]) => unknown` — the widest function the two
+  real methods satisfy, **no `any`**. *Trade-off (accepted):* `.utils` typo-safety is partially relaxed
+  (a bare typo'd access compiles), but the named `writeSynced`/`deleteSynced` stay precise and a typo
+  *called with a real arg* still errors (args are `never[]`). `.utils` is effectively internal (dispatcher
+  reads it; UI reads via `useLiveQuery`), so exposure is minimal. *Rejected:* precise utils + a cast at
+  every join site.

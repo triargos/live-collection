@@ -17,4 +17,11 @@ export interface SyncWrite<T> {
   readonly writeSynced: (entity: T) => Effect.Effect<void>
   /** Remove the entity with `id` from the local baseline. A no-op if it isn't present. */
   readonly deleteSynced: (id: ModelId) => Effect.Effect<void>
+  /**
+   * Structural-only index so `SyncWrite<T>` is a `Record<string, Fn>` (TanStack's `UtilsRecord` index
+   * shape) — which is what `useLiveQuery((q) => q.from({ … }))` requires of a collection's `utils`
+   * (DEC-R9). `(...args: never[]) => unknown` (NOT `any`) is the widest function the two real methods
+   * both satisfy; it carries no callable surface of its own. The named members above are what callers use.
+   */
+  readonly [util: string]: (...args: never[]) => unknown
 }

@@ -77,8 +77,10 @@ design — see the linked decision after each.
 ### Tier 4 — orchestration + offline
 
 - [x] **A.9** `[generic]` Bootstrap orchestrator — `SyncClient.start(specs)`: cold/warm unified (`from = cursor ?? "0"`, DEC-T5), catchup the gap, tail SSE forever (reconnect re-runs catchup), snapshot-and-tail via `bootstrapSpec`. `src/client/sync-client.ts`. Workspace-switch incremental mount **deferred** (flagged in DESIGN). — [§14 Bootstrap flow](live-sync-system.md#L1029-L1066), [§A.6](live-sync-system.md#L1248-L1249) · _dep: A.4, A.6, A.7_
+- [x] **A.R** `[generic]` **Native-collection redesign + React bindings** (DEC-R1…R9, see `packages/live-collection/DESIGN.md`). Collections are native TanStack collections: `defineCollection({runtime,…})` returns a registry-backed handle → `useLiveQuery(() => coll)`. `makeLiveRuntime` (two-surface: sync registry+persistence value | async loop), `liveCollectionOptions` inner creator, explicit `SyncMap`-driven `syncLoop`, `react/useLiveSync`. **Revises:** A.4 (`effectCollectionOptions`→`liveCollectionOptions`), A.5 (`SyncDispatcher.fromEntries`/`dispatchEntry` retired → internal, map-driven), A.9 (`SyncClient.start(specs)`→`syncLoop(map)`), DEC-6/A2 (`PersistenceBase` tag → app value), DEC-10 (`MountRef`→handle, `scopeOf (entity)=>string`). 38 live-collection tests green; react type-test green. Both `useLiveQuery` forms (direct + `q.from` join) typecheck natively (DEC-R9 resolved via a structural-only `SyncWrite` index signature, no `any`).
 - [ ] **A.10** `[generic]` Offline mutations — integrate `@tanstack/offline-transactions`. **Only after read path solid.** — [§A.7](live-sync-system.md#L1250-L1251) · _dep: A.4, A.9_
 - [ ] **A.11** `[generic]` Unmounted-workspace event policy (default ignore; optional persist-only / lazy-mount) as a configurable hook — [§14 events for unmounted workspaces](live-sync-system.md#L1066-L1073) · _dep: A.5_
+- [ ] **A.R.opfs** `[generic]` Browser OPFS persistence value (`createOpfsSQLitePersistence`) so the read path is browser-runnable (node only has the test sqlite persistence). + playground OPFS smoke. _dep: A.R_
 
 ---
 

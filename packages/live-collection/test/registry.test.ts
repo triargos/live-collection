@@ -82,7 +82,11 @@ describe("CollectionRegistry", () => {
       yield* registry.getOrCreate({ key: globalKey("User"), make: tracked("user", []).make })
 
       const webhooks = yield* registry.getByEntity("Webhook")
-      assert.deepStrictEqual([...webhooks], [wh1, wh2]) // both Webhook scopes, User excluded
+      assert.deepStrictEqual(webhooks.map((e) => e.collection), [wh1, wh2]) // both Webhook scopes, User excluded
+      assert.deepStrictEqual(
+        webhooks.map((e) => Option.getOrNull(e.key.scope)),
+        ["org-1", "org-2"], // each instance paired with its scope
+      )
 
       assert.deepStrictEqual([...(yield* registry.getByEntity("Nope"))], []) // none mounted ⇒ empty
     }).pipe(Effect.provide(CollectionRegistry.layer)))

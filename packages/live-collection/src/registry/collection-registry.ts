@@ -32,11 +32,14 @@ export interface CollectionRegistryShape {
     key: CollectionKey<A>,
   ) => Effect.Effect<Option.Option<A>>;
   /**
-   * Every mounted collection for `entity`, across all scopes — one per workspace, plus the
-   * global instance if it's mounted. Empty when none are. Use this to fan an event out to a
-   * model rather than a single scope, e.g. applying a delete whose id may live in any scope.
+   * Every mounted instance for `entity`, across all scopes — one per workspace, plus the global
+   * instance if it's mounted — each paired with its {@link CollectionKey} (so callers can read the
+   * scope). Empty when none are. Use this to fan over a model rather than a single scope: a `Delete`
+   * whose id may live in any scope reads `.collection`; a snapshot reads `.key.scope`.
    */
-  readonly getByEntity: <A>(entity: string) => Effect.Effect<ReadonlyArray<A>>;
+  readonly getByEntity: <A>(
+    entity: string,
+  ) => Effect.Effect<ReadonlyArray<{ readonly key: CollectionKey<A>; readonly collection: A }>>;
   /** Tear down and evict one collection. A no-op if it isn't mounted. */
   readonly dispose: (key: CollectionKey<unknown>) => Effect.Effect<void>;
   /** Tear down and evict every collection whose `scope` equals `scope` (globals untouched). */
@@ -56,7 +59,7 @@ export interface CollectionRegistryShape {
  * - releasing the layer closes the parent, which closes every surviving child — an
  *   automatic backstop, with no finalizer loop of our own.
  */
-const make: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
+export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
   Effect.gen(function* () {
     const registryScope = yield* Effect.scope;
     const entries = new Map<
@@ -101,11 +104,13 @@ const make: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
           : Option.some(existing.collection as A); // see getOrCreate note
       });
 
-    const getByEntity = <A>(entity: string): Effect.Effect<ReadonlyArray<A>> =>
+    const getByEntity = <A>(
+      entity: string,
+    ): Effect.Effect<ReadonlyArray<{ readonly key: CollectionKey<A>; readonly collection: A }>> =>
       Effect.sync(() =>
         [...entries.values()]
           .filter((e) => e.key.entity === entity)
-          .map((e) => e.collection as A), // see getOrCreate note
+          .map((e) => ({ key: e.key as CollectionKey<A>, collection: e.collection as A })), // see getOrCreate note
       );
 
     const evict = (args: {
@@ -159,5 +164,5 @@ export class CollectionRegistry extends Context.Tag("CollectionRegistry")<
   CollectionRegistry,
   CollectionRegistryShape
 >() {
-  static readonly layer = Layer.scoped(CollectionRegistry, make);
+  static readonly layer = Layer.scoped(CollectionRegistry, makeRegistry);
 }
