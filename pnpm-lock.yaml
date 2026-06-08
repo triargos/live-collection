@@ -60,7 +60,13 @@ importers:
       '@triargos/live-collection':
         specifier: workspace:*
         version: link:../live-collection
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
     devDependencies:
+      '@triargos/live-collection-protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@types/react':
         specifier: ^19.2.15
         version: 19.2.15

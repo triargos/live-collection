@@ -13,7 +13,7 @@
   "types": "./dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests"
   },
@@ -22,9 +22,11 @@
   },
   "dependencies": {
     "@tanstack/react-db": "^0.1.85",
-    "@triargos/live-collection": "workspace:*"
+    "@triargos/live-collection": "workspace:*",
+    "effect": "^3.21.2"
   },
   "devDependencies": {
+    "@triargos/live-collection-protocol": "workspace:*",
     "@types/react": "^19.2.15",
     "react": "^19.2.6"
   }
