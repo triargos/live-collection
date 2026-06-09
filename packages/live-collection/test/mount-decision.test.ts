@@ -61,6 +61,17 @@ describe("decideOnMount", () => {
     ).toBe(MountDecision.Replay)
   })
 
+  it("bootstraps when a resync passed since the base, even with no cursor (cleared by the resync)", () => {
+    expect(
+      decideOnMount({
+        baseWatermark: Option.some(sid("50")),
+        cursor: Option.none(), // cleared by a live resync; the next catchup hasn't landed (or failed)
+        modelFloor: Option.none(),
+        lastResyncAt: Option.some(sid("60")), // a resync after the base ⇒ the base is invalidated
+      }),
+    ).toBe(MountDecision.Bootstrap) // a coerced cursor of "0" must not short-circuit into Skip
+  })
+
   it("bootstraps when a resync passed since the base (invalidated)", () => {
     expect(
       decideOnMount({

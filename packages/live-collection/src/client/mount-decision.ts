@@ -28,12 +28,15 @@ export const decideOnMount = (i: {
 }): MountDecision => {
   if (Option.isNone(i.baseWatermark)) return MountDecision.Bootstrap // no base ever ⇒ fetch one
   const base = i.baseWatermark.value
+
+  // A resync since the base invalidates it regardless of cursor position (D9). Checked BEFORE the
+  // Skip short-circuit: a cleared cursor (live resync seen, next catchup not yet landed or failed)
+  // coerces to "0" below, and `base >= "0"` would otherwise present invalidated state as current.
+  const resyncAfter = Option.exists(i.lastResyncAt, (r) => compareSyncId(r, base) > 0)
+  if (resyncAfter) return MountDecision.Bootstrap
+
   const cursor = Option.getOrElse(i.cursor, () => SyncId.make("0"))
   if (compareSyncId(base, cursor) >= 0) return MountDecision.Skip // base already complete to the cursor
-
-  // base is behind the cursor — replay only if it's both safe and possible.
-  const resyncAfter = Option.exists(i.lastResyncAt, (r) => compareSyncId(r, base) > 0)
-  if (resyncAfter) return MountDecision.Bootstrap // a resync since the base invalidated it (D9)
   const floorAbove = Option.match(i.modelFloor, {
     onNone: () => false, // nothing pruned ⇒ log complete from the start ⇒ gap is covered
     onSome: (floor) => compareSyncId(floor, base) > 0, // pruned past the base ⇒ gap not covered

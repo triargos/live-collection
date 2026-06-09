@@ -30,18 +30,33 @@ const makeHttp = (config: {
   readonly keepAlive: Duration.DurationInput
 }): Effect.Effect<SyncTransportShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
+    // filterStatusOk: a non-2xx response is a connection failure (carrying the status), not an
+    // empty SSE stream silently retried as "stream ended".
+    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
     // Every line resets the keep-alive timer: SSE servers emit `:` comment pings, so a gap longer
     // than `keepAlive` means the connection is dead even though no error surfaced.
     const lines = HttpClientResponse.stream(client.get(config.url)).pipe(
       Stream.decodeText(),
       Stream.splitLines,
-      Stream.filter((line) => line.length > 0),
       Stream.timeoutFail(() => new SyncConnectionLost({ reason: "keep-alive timeout" }), config.keepAlive),
     )
-    const connect = lines.pipe(
-      Stream.filter((line) => line.startsWith("data:")),
-      Stream.map((line) => line.slice("data:".length).trim()),
+    // SSE framing: an event's payload is the \n-join of its consecutive `data:` lines, dispatched at
+    // the first empty line (one leading space after the colon is stripped, per spec). Comment and
+    // other field lines reset the keep-alive above but contribute nothing; pending data at stream
+    // end (no closing blank line) is discarded, also per spec.
+    const payloads = lines.pipe(
+      Stream.mapAccum([] as ReadonlyArray<string>, (pending, line) => {
+        if (line.length === 0) {
+          return [[], pending.length === 0 ? Option.none<string>() : Option.some(pending.join("\n"))]
+        }
+        if (line.startsWith("data:")) {
+          return [[...pending, line.slice("data:".length).replace(/^ /, "")], Option.none<string>()]
+        }
+        return [pending, Option.none<string>()]
+      }),
+      Stream.filterMap((payload) => payload),
+    )
+    const connect = payloads.pipe(
       Stream.filter((payload) => payload.length > 0),
       Stream.mapEffect((payload) =>
         decodeEvent(payload).pipe(

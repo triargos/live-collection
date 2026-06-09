@@ -23,7 +23,9 @@ export interface LiveRuntime {
   /** App-owned persistence value, threaded into each collection's `make`. */
   readonly persistence: PersistedCollectionPersistence
   /** Fork the forever sync loop for `map`. Interrupt the returned fiber to stop it (does NOT dispose
-   *  collections — registry lifetime is the app's, DEC-R8). Called by `useLiveSync` on mount. */
+   *  collections — registry lifetime is the app's, DEC-R8). Called by `useLiveSync` on mount.
+   *  Last call wins: forking while a previous loop is still running interrupts the previous one (two
+   *  concurrent loops would split the registry's single-consumer `mounts` queue between them). */
   readonly forkLoop: (map: SyncMap) => Fiber.RuntimeFiber<void>
   /** Tear down the loop runtime and the registry's long-lived scope (app teardown / logout). */
   readonly dispose: () => void
@@ -47,18 +49,28 @@ export const makeLiveRuntime = (config: {
   const loopRuntime = ManagedRuntime.make(
     Layer.merge(config.loop, Layer.succeed(CollectionRegistry, registry)),
   )
+  let loopFiber: Fiber.RuntimeFiber<void> | undefined
 
   return {
     registry,
     persistence: config.persistence,
     // tapDefect: the loop's error channel is `never`, so the only way it dies is a defect — and a
     // forked fiber dies silently (sync just stops). Surface it; interruption (unmount) is not a defect.
-    forkLoop: (map) =>
-      loopRuntime.runFork(
+    forkLoop: (map) => {
+      if (loopFiber !== undefined && loopFiber.unsafePoll() === null) {
+        Effect.runFork(
+          Effect.logWarning("[liveRuntime] forkLoop while a loop is already running — interrupting the previous loop").pipe(
+            Effect.zipRight(Fiber.interrupt(loopFiber)),
+          ),
+        )
+      }
+      loopFiber = loopRuntime.runFork(
         syncLoop(map, config.onResync).pipe(
           Effect.tapDefect((cause) => Effect.logError("[liveRuntime] sync loop died unexpectedly", cause)),
         ),
-      ),
+      )
+      return loopFiber
+    },
     dispose: () => {
       void loopRuntime.dispose()
       Effect.runFork(Scope.close(scope, Exit.void))
