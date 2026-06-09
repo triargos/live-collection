@@ -789,9 +789,16 @@ decideOnMount(baseWatermark, cursor, modelFloor, lastResyncAt):
   **not the oldest event**. `None` ⇒ nothing pruned ⇒ complete from the start ⇒ **Replay**; `Some(f)` ⇒
   replay safe iff `f <= base`. First cut had `None ⇒ Bootstrap`, which made the common "caught-up → few
   events → remount" path always bootstrap — wrong.
-- **DEC-E11** *(TDD refinement)* **`applyCatchup` sets `baseWatermark = lastSyncId` for every mounted
-  scope** (they rode the catchup, so their `onMount` must `Skip`). Without it a premounted scope hits
-  `None ⇒ Bootstrap` and an empty `listFn` would *wipe* the catchup-applied rows.
+- **DEC-E11** *(TDD refinement; amended 2026-06-09)* After a catchup, `baseWatermark = lastSyncId` is
+  set for mounted scopes that **rode it from a complete base** — after a `Resync` catchup: every mounted
+  scope (`snapshotAll` just healed them all); after a **delta** catchup: only scopes with `base >= from`,
+  or no base when `from = "0"` (cursor-completeness ⇒ the full visible state was delivered). The original
+  blanket form stamped a never-bootstrapped scope that mounted before the first warm catchup as caught-up;
+  its `onMount` then `Skip`ped and the scope durably rendered only the delta window (the deep-link bug).
+  The premounted-cold-start wipe the blanket form guarded against is exactly the `from = "0"` case, which
+  still marks. The cycle additionally runs **`healMounted`** (an idempotent `onMount` over every mounted
+  instance) after each catchup, so healing is a property of every cycle — not of mount-signal queue
+  delivery, which a connection drop can eat.
 - **DEC-E12** `syncId` is **unique-per-event** (the exclusive cursor already requires it) ⇒ safe as the IDB
   **primary key** + dedupe key. The system is **gap-tolerant**: syncIds are opaque *positions* compared by
   magnitude (`compareSyncId`), never subtracted; `floor`/caps count **rows**, never id-distance.

@@ -93,6 +93,8 @@ const run = (args: {
   readonly listRows?: ReadonlyArray<Webhook>
   readonly onResync?: Effect.Effect<void>
   readonly premount?: ReadonlyArray<string>
+  /** Pre-set the durable cursor before the loop starts — simulates a later session's warm start. */
+  readonly seedCursor?: SyncId
   readonly loopOptions?: SyncLoopOptions
   readonly body: (ctx: Ctx) => Effect.Effect<void>
 }): Effect.Effect<void> =>
@@ -121,6 +123,7 @@ const run = (args: {
     yield* Effect.gen(function* () {
       const store = yield* LastSyncIdStore
       const log = yield* EventLogStore
+      yield* args.seedCursor === undefined ? Effect.void : store.set(args.seedCursor)
       // Premount (and preload) the scopes the snapshot/dispatch should reach, BEFORE the loop runs.
       yield* Effect.forEach(
         args.premount ?? [],
@@ -333,6 +336,25 @@ describe("syncLoop — read path end-to-end", () => {
           assert.isTrue(coll.has(k("w1"))) // healed by listFn (current truth), NOT a gap-ridden replay
           assert.isFalse(coll.has(k("old4"))) // the surviving logged event was NOT replayed in
           assert.strictEqual(listCalls(), 1)
+        }),
+    }))
+
+  it.live("a never-bootstrapped scope premounted before a warm delta catchup BOOTSTRAPs (not stamped caught-up)", () =>
+    run({
+      // Session 2: the cursor is warm from a prior session that never visited org-2…
+      seedCursor: sid("5"),
+      // …so this catchup returns only the delta window (an org-1 event), NOT org-2's history.
+      catchup: { events: [insertEnv("w7", "org-1")], lastSyncId: sid("9") },
+      listRows: [{ id: "w1", orgId: "org-2" }], // org-2's full current truth — only listFn can supply it
+      premount: ["org-2"], // deep-link: org-2 mounts BEFORE the first catchup completes
+      body: ({ webhookCollection, listCalls }) =>
+        Effect.gen(function* () {
+          // org-2 rode the catchup but was never complete to its `from` — stamping it caught-up would
+          // skip the heal and leave it permanently missing all history ≤ 5. It must bootstrap instead.
+          const coll = webhookCollection("org-2")
+          yield* waitUntil(() => coll.has(k("w1")))
+          assert.isTrue(coll.has(k("w1")))
+          assert.strictEqual(listCalls(), 1) // exactly one bootstrap — the queued mount signal then Skips
         }),
     }))
 
