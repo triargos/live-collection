@@ -1,27 +1,21 @@
 import { Data, Effect, Either, Option, Schedule, Schema, Stream } from "effect"
 import {
   type CatchupResponse,
-  compareSyncId,
   type HydratedSyncEventEnvelope,
   type ModelId,
-  ModelName,
   SyncId,
 } from "@triargos/live-collection-protocol"
 import { CollectionRegistry } from "../registry/collection-registry.js"
 import { type CollectionKey, globalKey, scopedKey } from "../registry/collection-key.js"
 import type { ModelMeta, SyncMap } from "../registry/define-collection.js"
-import type { SyncWrite } from "../dispatch/sync-write.js"
 import { LastSyncIdStore } from "./last-sync-id-store.js"
 import { CatchupClient } from "./catchup-client.js"
 import { SyncTransport } from "./sync-transport.js"
 import { EventLogStore, type LoggedEvent } from "./event-log-store.js"
-import { decideOnMount, MountDecision } from "./mount-decision.js"
+import { makeMountHealer, type Writable } from "./mount-healer.js"
 
 /** An entity event (the `Resync` arm separated out) — what the loop applies to the local store. */
 type EntityEvent = Exclude<HydratedSyncEventEnvelope, { readonly _tag: "Resync" }>
-
-/** Minimal view of a mounted collection the loop writes through. */
-type Writable = { readonly utils: SyncWrite<unknown> }
 
 /** The merged inbox: live SSE events and registry mount signals, drained on one fiber so they never interleave. */
 type Inbox =
@@ -47,7 +41,8 @@ const defaultOptions: SyncLoopOptions = { prune: { perModel: 1000, total: 5000, 
  *
  * - Application (`applyWrite`/`applyDelete`) is **source-agnostic** — live, catchup, and replay all go
  *   through it; only the cursor/log *recording* is ingest-specific.
- * - On mount, `decideOnMount` picks skip / replay / bootstrap from syncId positions alone.
+ * - Watermark policy (when to skip/replay/bootstrap, what a catchup makes complete) lives in the
+ *   {@link makeMountHealer | mount-healer} — the loop dispatches to it and never writes watermarks itself.
  * - A catchup `Resync` ⇒ snapshot every model + bump `lastResyncAt`; a live `Resync` ⇒ reload + stop.
  *
  * Runs forever — fork it (`useLiveSync`). Error channel is `never`: drops retry, `ResyncStop` is caught.
@@ -69,10 +64,6 @@ export const syncLoop = (
     const log = yield* EventLogStore
 
     let ingestsSincePrune = 0 // single-fibered (merged inbox), so a plain counter is safe
-
-    // entity → wire model name, so a mount signal (keyed by entity) can read the model's log slice.
-    const modelOfEntity = new Map<string, ModelName>()
-    for (const [name, entry] of Object.entries(map)) modelOfEntity.set(entry._meta.entity, ModelName.make(name))
 
     // ── source-agnostic application (the dispatcher): apply ONE decoded event to the mounted store ──
     const applyWrite = (meta: ModelMeta<any>, data: any): Effect.Effect<void> =>
@@ -185,128 +176,32 @@ export const syncLoop = (
       { discard: true },
     )
 
-    // Mark every currently-mounted instance complete to `at` — only sound when every one of them was
-    // just healed to current truth (the catchup-Resync branch, right after `snapshotAll`).
-    const markAllMountedCaughtUp = (at: SyncId): Effect.Effect<void> =>
-      Effect.forEach(
-        Object.values(map),
-        (entry) =>
-          registry
-            .getByEntity(entry._meta.entity)
-            .pipe(
-              Effect.flatMap((mounted) =>
-                Effect.forEach(mounted, ({ key }) => log.setBaseWatermark({ key, at }), { discard: true }),
-              ),
-            ),
-        { discard: true },
-      )
-
-    // Mark the instances that RODE this delta catchup complete to `at`. An instance rode it iff its
-    // base was already complete to the catchup's `from` — or it has no base but the catchup covered
-    // everything (`from = "0"` delivers the full visible state, by cursor-completeness). An instance
-    // mounted mid-flight with a gap below `from` keeps its watermark and heals in its own `onMount`
-    // (skip/replay/bootstrap) — stamping it here would silently skip that heal: a scope deep-linked on
-    // a warm-cursor start would render only the delta window, durably (DEC-E11 amendment).
-    const markCatchupRiders = (args: { readonly from: SyncId; readonly at: SyncId }): Effect.Effect<void> =>
-      Effect.forEach(
-        Object.values(map),
-        (entry) =>
-          registry.getByEntity(entry._meta.entity).pipe(
-            Effect.flatMap((mounted) =>
-              Effect.forEach(
-                mounted,
-                ({ key }) =>
-                  log.getBaseWatermark(key).pipe(
-                    Effect.flatMap((watermark) => {
-                      const rode = Option.match(watermark, {
-                        onNone: () => compareSyncId(args.from, SyncId.make("0")) === 0,
-                        onSome: (base) => compareSyncId(base, args.from) >= 0,
-                      })
-                      return rode ? log.setBaseWatermark({ key, at: args.at }) : Effect.void
-                    }),
-                  ),
-                { discard: true },
-              ),
-            ),
-          ),
-        { discard: true },
-      )
+    // The healer owns watermark policy (heal decisions + post-catchup completeness stamps); the loop
+    // hands it the two application arms and never writes watermarks itself.
+    const healer = makeMountHealer({ map, registry, store, log, replayRow, snapshotInstance })
 
     const applyCatchup = (args: { readonly response: CatchupResponse; readonly from: SyncId }): Effect.Effect<void> =>
       Effect.gen(function* () {
         const { response, from } = args
-        if (response.events.some((event) => event._tag === "Resync")) {
+        const resync = response.events.some((event) => event._tag === "Resync")
+        if (resync) {
           yield* Effect.forEach(
             response.events.filter((event) => event._tag === "Resync"),
             (event) => log.setLastResync(event.syncId),
             { discard: true },
           )
           yield* snapshotAll
-          yield* store.set(response.lastSyncId)
-          yield* markAllMountedCaughtUp(response.lastSyncId)
         } else {
           yield* Effect.forEach(response.events, (event) => (event._tag === "Resync" ? Effect.void : ingest(event)), {
             discard: true,
           })
-          yield* store.set(response.lastSyncId)
-          yield* markCatchupRiders({ from, at: response.lastSyncId })
         }
+        yield* store.set(response.lastSyncId)
+        yield* healer.onCatchupApplied({ from, at: response.lastSyncId, resync })
       })
-
-    // ── heal a freshly-mounted collection from its freshness metadata ──
-    const onMount = (key: CollectionKey<unknown>): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const modelName = modelOfEntity.get(key.entity)
-        if (modelName === undefined) return
-        const entry = map[modelName]
-        if (entry === undefined) return
-        const meta = entry._meta
-
-        const baseWatermark = yield* log.getBaseWatermark(key)
-        const cursor = yield* store.get
-        const modelFloor = yield* log.floor(modelName)
-        const lastResyncAt = yield* log.getLastResync
-        const at = Option.getOrElse(cursor, () => SyncId.make("0"))
-
-        switch (decideOnMount({ baseWatermark, cursor, modelFloor, lastResyncAt })) {
-          case MountDecision.Skip:
-            return
-          case MountDecision.Replay: {
-            const since = Option.getOrElse(baseWatermark, () => SyncId.make("0"))
-            const rows = yield* log.read({ modelName, scope: key.scope, since })
-            yield* Effect.forEach(rows, (row) => replayRow(meta, row), { discard: true })
-            yield* log.setBaseWatermark({ key, at })
-            return
-          }
-          case MountDecision.Bootstrap: {
-            const found = yield* registry.getById(key as CollectionKey<Writable>)
-            yield* Option.match(found, {
-              onNone: () => Effect.void,
-              onSome: (collection) => snapshotInstance(meta, key.scope, collection),
-            })
-            yield* log.setBaseWatermark({ key, at })
-            return
-          }
-        }
-      })
-
-    // Heal every currently-mounted instance (idempotent — complete instances Skip). The registry also
-    // queues a Mount signal per first mount, but a signal consumed by a cycle that then died with the
-    // connection is gone for good — this pass makes healing a property of every cycle, not of queue
-    // delivery, so a collection mounted during a disconnect still converges on the next catchup.
-    const healMounted: Effect.Effect<void> = Effect.forEach(
-      Object.values(map),
-      (entry) =>
-        registry
-          .getByEntity(entry._meta.entity)
-          .pipe(
-            Effect.flatMap((mounted) => Effect.forEach(mounted, ({ key }) => onMount(key), { discard: true })),
-          ),
-      { discard: true },
-    )
 
     const route = (item: Inbox): Effect.Effect<void, ResyncStop> => {
-      if (item._tag === "Mount") return onMount(item.key)
+      if (item._tag === "Mount") return healer.heal(item.key)
       const event = item.event
       return event._tag === "Resync"
         ? log.setLastResync(event.syncId).pipe(
@@ -333,7 +228,7 @@ export const syncLoop = (
         ),
       )
       yield* Option.match(response, { onNone: () => Effect.void, onSome: (r) => applyCatchup({ response: r, from }) })
-      yield* healMounted
+      yield* healer.healAllMounted
       yield* Stream.runForEach(inbox, route)
     })
 
