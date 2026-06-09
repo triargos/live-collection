@@ -690,3 +690,111 @@ DEC-T loop, re-driven by `_meta`:
   *called with a real arg* still errors (args are `never[]`). `.utils` is effectively internal (dispatcher
   reads it; UI reads via `useLiveQuery`), so exposure is minimal. *Rejected:* precise utils + a cast at
   every join site.
+
+---
+
+# EventLog manager — replay-on-mount (A.12, DEC-E*) — LOCKED + IMPLEMENTED
+
+> **Status: LOCKED + GREEN.** Signed off 2026-06-09; implemented in commit `f291562` (58 package tests,
+> `pnpm -r typecheck` clean). Fixes the snapshot-on-mount bug: a scope mounted **after** its events streamed
+> past rendered **empty** because `syncLoop` dropped events for not-yet-mounted scopes *while advancing the
+> global cursor past them*. Now every received event is **logged** (even when dropped), and on mount a
+> collection converges by **replaying the durable local log** when it can — falling back to `listFn`
+> bootstrap only when the log can't cover the gap. Frontend-only; one backend contract (DEC-E8/E9).
+> The durable **IndexedDB `EventLogStore.layer` now ships** alongside `layerMemory` — proven against real
+> IDB by `examples/playground/test/event-log-store.browser.test.ts` (append-dedupe, scope+Delete read,
+> magnitude-not-lexicographic ordering, prune-floor, watermark/resync — each surviving a layer-scope reload).
+
+## Modules (`src/client/`)
+- `event-log-store.ts` — `EventLogStore`: the durable log **and** its sync metadata, one seam.
+  `append` (upsert by `syncId` ⇒ free dedupe) · `read({modelName, scope, since})` (syncId-ordered slice;
+  `scope` `Some` ⇒ that scope's rows **plus** scope-less `Delete`s) · `prune({perModel, total})` ·
+  `floor(modelName)` · `get/setBaseWatermark` · `get/setLastResync`. `LoggedEvent` is the schema-agnostic
+  at-rest row (`syncId, modelName, scope, tag, modelId, data`). `layerMemory` only (Refs).
+- `mount-decision.ts` — `decideOnMount(...)`: a pure `MountDecision` enum (`Skip`/`Replay`/`Bootstrap`)
+  from syncId positions alone. The heart of the design.
+- `prune-plan.ts` — `prunePlan(...)`: the pure per-model + global retention policy, shared by any adapter.
+- `sync-loop.ts` — refactored: `ingest` (append → apply → cursor), source-agnostic `applyWrite`/`applyDelete`,
+  `onMount`, one merged single-fiber inbox (`transport ⊕ registry.mounts`), prune every N ingests.
+- `collection-registry.ts` — gains `mounts: Stream<CollectionKey>` (unbounded queue; emits on first create).
+
+## The decision (heart)
+```
+decideOnMount(baseWatermark, cursor, modelFloor, lastResyncAt):
+  no base             ⇒ Bootstrap     // never had a base
+  base >= cursor      ⇒ Skip          // already complete to the cursor
+  resync since base   ⇒ Bootstrap     // local log invalidated (DEC-E9)
+  floor > base        ⇒ Bootstrap     // pruned past the base ⇒ gap not covered
+  else                ⇒ Replay        // the log fully covers (base, cursor]
+```
+
+## Invariants (named in code; correctness rests on these)
+- **idempotency** — application is key-addressed upsert/delete (`writeSynced`/`deleteSynced` by `ModelId`)
+  in `syncId` order; an under-estimated `baseWatermark` only re-applies dominated events. Replay never
+  touches the optimistic-mutation handlers.
+- **floor-guard** — never `Replay` when `floor > base` (or the model's log is pruned-but-uncovered);
+  `Bootstrap` instead. The single line that keeps the size cap from corrupting the base.
+- **cursor-completeness** — the cursor never advances past terminal state the client hasn't received
+  (catchup delivers the visible terminal set up to `lastSyncId`, else `Resync`; the tail is in-order;
+  `ingest` appends *before* routing). floor-guard + completeness ⇒ replay is hole-proof.
+
+## Decisions log (DEC-E*, load-bearing — do not re-litigate without a new reason)
+- **DEC-E1** Manager is **loop-internal** (`ingest`/`onMount` + the pure `decideOnMount`), not a tag — its
+  only caller is the loop and its deps are already seams (one adapter ⇒ hypothetical seam). May become a
+  single-default-layer `Context.Tag` if cleaner; **never `Effect.Service`**; no speculative 2nd adapter.
+- **DEC-E2** Watermarks **and** `lastResyncAt` live **on `EventLogStore`** (one IDB, one metadata home),
+  not a separate `WatermarkStore`. *Rejected:* a second tag always provided/swapped as a pair = false split.
+- **DEC-E3** `baseWatermark` is written **once per mount, at `onMount` completion** (bootstrap/replay arms).
+  **No dispose-writes, no per-event writes, no flush.** Lag is underestimate-safe (only causes extra
+  idempotent replay). *Rejected:* dispose-writes (need a strictly-ordered queue to avoid over-estimating
+  past post-dispose events); per-event writes (O(mounted) IDB writes per event). Throttled flush **deferred**.
+- **DEC-E4** Registry gains **`mounts` only** (unbounded queue, `runSync`-safe). **No `disposes`** — the
+  prune cap bounds the log and `onMount` rereads freshness, so a disposed scope freezes safely on its own.
+- **DEC-E5** **One merged inbox** (`Stream.merge(transport.connect, registry.mounts)`), single fiber — so
+  replay and live ingest **never interleave** (a freshly-mounted scope sees `replay[..base]` then live).
+- **DEC-E6** **`dispatch` is the single source-agnostic application** (`applyWrite`/`applyDelete` on decoded
+  data + meta) — live, catchup, and replay all flow through it; only the *recording* (append + cursor) is
+  ingest-specific. `LoggedEvent` is keyed by **`modelName`**; the loop maps `entity → modelName` from the
+  `SyncMap`. *Rejected:* a fat `EntityEvent`-in-the-log (carries envelope-only fields dispatch never reads).
+- **DEC-E7** Prune = **per-model cap `perModel` + global capacity `total`**, denominated in **events
+  (size), not wall-clock** (so no `createdAt` on the row). Per-model isolation solves chatty-evicts-quiet;
+  the global cap is the backstop. Runs every `everyEvents` ingests. *Rejected:* single global cap (a chatty
+  model evicts a quiet model's gap); `minWatermark`-driven prune (the caps + floor-guard subsume it).
+- **DEC-E8** **Backend contract:** server catchup retention is a *deployment* property; a `from` **below
+  the retention floor MUST return `Resync`** (never silently-incomplete deltas) or cursor-completeness
+  breaks. Retention is **two independent axes**: client `perModel`/`total` (events, bounds local replay)
+  vs. server retention (wall-clock, bounds the offline gap; surfaces to the client only as a `Resync`).
+  The client never computes cursor age.
+- **DEC-E9** A resync that passed **while a scope was unmounted ⇒ Bootstrap**, via a **single global
+  `lastResyncAt`** (newest resync syncId, monotonic), consistent with DEC-T6's blunt/target-ignored resync.
+  Resync events are **not** appended to the log (not `AppliedEvent`s); ingesting one only bumps `lastResyncAt`.
+- **DEC-E10** *(TDD refinement)* `modelFloor` is the per-model **prune boundary** (highest deleted syncId),
+  **not the oldest event**. `None` ⇒ nothing pruned ⇒ complete from the start ⇒ **Replay**; `Some(f)` ⇒
+  replay safe iff `f <= base`. First cut had `None ⇒ Bootstrap`, which made the common "caught-up → few
+  events → remount" path always bootstrap — wrong.
+- **DEC-E11** *(TDD refinement)* **`applyCatchup` sets `baseWatermark = lastSyncId` for every mounted
+  scope** (they rode the catchup, so their `onMount` must `Skip`). Without it a premounted scope hits
+  `None ⇒ Bootstrap` and an empty `listFn` would *wipe* the catchup-applied rows.
+- **DEC-E12** `syncId` is **unique-per-event** (the exclusive cursor already requires it) ⇒ safe as the IDB
+  **primary key** + dedupe key. The system is **gap-tolerant**: syncIds are opaque *positions* compared by
+  magnitude (`compareSyncId`), never subtracted; `floor`/caps count **rows**, never id-distance.
+- **DEC-E13** *(storage; built in the browser-proof pass)* Events in **IndexedDB** keyed by `syncId` (PK);
+  watermarks / `lastResyncAt` / per-model prune-floors in a **sibling keyval store in the same DB**, and
+  **separate from the OPFS collection DB** (cross-store eventual consistency already accepted, DEC-A14/T2).
+  *Rejected:* localStorage (too small/sync/string-only — home of the tiny global cursor only); a second
+  wa-sqlite/OPFS DB (couples to a peer-dep's internals, no cross-store tx anyway).
+- **DEC-E13a** *(implementation refinement — supersedes the `[modelName, scope]` compound index + syncId
+  range in the locked sketch)* The index is on **`modelName` alone**; `read`/`prune` filter, **sort, and
+  retain in memory** with `compareSyncId`. Two facts force this: (1) IDB orders string keys
+  **lexicographically** but `syncId`s order by **magnitude** (`"10" < "2"`), so a `syncId` range scan/delete
+  would be wrong — never range-scan the key; (2) a `[modelName, scope]` compound index **drops scope-less
+  `Delete`s** (a `null` index-key path makes the record un-indexed), but a scoped `read` must include them.
+  Cap-bounded stores keep the per-model `getAll` + in-memory pass cheap. Rows round-trip through a
+  `StoredEvent` schema (`Option` ⇄ `string|null` / `unknown|null` at the seam); driver faults are **defects**
+  (`Effect.promise` dies on rejection — the method error channel stays empty). The `layer({databaseName?})`
+  is `Layer.scoped`: opens on acquire, `db.close()` on release.
+
+## Deferred (flagged, not built)
+- Throttled flush of `baseWatermark` while mounted (DEC-E3 optimization — shortens reload replay).
+- Registry **eviction backstop** (collections are resident until explicit `dispose*`).
+- Per-target resync (kept blunt/global via `lastResyncAt`, DEC-E9).
