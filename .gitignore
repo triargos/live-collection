@@ -6,3 +6,7 @@ coverage/
 
 # Playwright/vitest browser failure screenshots
 __screenshots__/
+
+# Claude Code local session state
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
