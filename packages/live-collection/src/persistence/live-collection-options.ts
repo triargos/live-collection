@@ -51,6 +51,12 @@ export const liveCollectionOptions = <T extends object>(config: {
             params.write({ type: "delete", key: id })
             params.commit()
           },
+          replace: (rows) => {
+            params.begin()
+            params.truncate() // clears store + table atomically with the writes below (one tx)
+            for (const row of rows) params.write({ type: "update", value: row })
+            params.commit()
+          },
         }
         provide(session)
         params.markReady() // wrapper defers this until internal hydration completes

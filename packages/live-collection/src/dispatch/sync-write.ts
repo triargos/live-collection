@@ -18,6 +18,13 @@ export interface SyncWrite<T> {
   /** Remove the entity with `id` from the local baseline. A no-op if it isn't present. */
   readonly deleteSynced: (id: ModelId) => Effect.Effect<void>
   /**
+   * Replace the **entire** local baseline with `rows`, in one sync transaction (truncate + writes) —
+   * applied atomically to the in-memory store and the persisted table. This is the snapshot reconcile
+   * (DEC-T9): rows absent from `rows` are gone afterwards, with no read of the current keys (so it
+   * cannot race background hydration).
+   */
+  readonly replaceSynced: (rows: ReadonlyArray<T>) => Effect.Effect<void>
+  /**
    * Structural-only index so `SyncWrite<T>` is a `Record<string, Fn>` (TanStack's `UtilsRecord` index
    * shape) — which is what `useLiveQuery((q) => q.from({ … }))` requires of a collection's `utils`
    * (DEC-R9). `(...args: never[]) => unknown` (NOT `any`) is the widest function the two real methods

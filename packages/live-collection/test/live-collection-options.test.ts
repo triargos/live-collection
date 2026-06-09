@@ -126,6 +126,34 @@ describe("liveCollectionOptions — A.3 persistence gate", () => {
       assert.strictEqual(hasR2, true)
     }))
 
+  it.live("replaceSynced replaces the whole baseline durably (truncate + writes, one tx)", () =>
+    Effect.gen(function* () {
+      const persistence = makeNodeSqlitePersistence()
+      yield* withMount(persistence, rowOpts, (c) =>
+        Effect.all(
+          [c.utils.writeSynced({ id: "r1", name: "a" }), c.utils.writeSynced({ id: "r2", name: "b" })],
+          { discard: true },
+        ),
+      )
+      yield* reloadUntil(persistence, rowOpts, (c) => c.has(k("r1")) && c.has(k("r2")), (p) => p)
+      // The new baseline: r2 (new value) + r3. r1 is absent from it ⇒ must be gone — durably.
+      yield* withMount(persistence, rowOpts, (c) =>
+        c.utils.replaceSynced([
+          { id: "r2", name: "z" },
+          { id: "r3", name: "c" },
+        ]),
+      )
+      const [hasR1, n2, hasR3] = yield* reloadUntil(
+        persistence,
+        rowOpts,
+        (c) => [c.has(k("r1")), c.get(k("r2"))?.name, c.has(k("r3"))] as const,
+        ([a, b, c3]) => a === false && b === "z" && c3 === true,
+      )
+      assert.strictEqual(hasR1, false) // truncated away
+      assert.strictEqual(n2, "z") // replaced value won
+      assert.strictEqual(hasR3, true) // new row present
+    }))
+
   it.live("a schema change resets the persisted base (dump-and-rebuild)", () =>
     Effect.gen(function* () {
       const persistence = makeNodeSqlitePersistence()

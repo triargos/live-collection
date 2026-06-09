@@ -570,8 +570,13 @@ each cycle (retry on SyncConnectionLost, spaced 3s):
   framework-neutral and the reload assertable in tests.
 - **DEC-T8** `start` runs forever and is forked; no "ready" signal — local hydration drives first paint
   (DEC-A13).
-- **DEC-T9** Snapshot reconcile = upsert fetched (`writeSynced`) + delete-absent (`deleteSynced` for
-  `currentKeys − fetchedKeys`), so a snapshot is a true replacement.
+- **DEC-T9** *(amended 2026-06-09)* Snapshot reconcile = **`replaceSynced(rows)`** — one sync
+  transaction: `truncate()` + write every fetched row, applied atomically to the in-memory store and
+  the persisted table (adapter: `DELETE FROM` + repopulate in one sqlite tx; the wrapper queues the
+  whole transaction if hydration is mid-flight). A snapshot is a *literal* replacement. *Replaces* the
+  original upsert + delete-absent over `collection.keys()`: that key read raced background hydration —
+  a snapshot firing before hydration completed missed still-hydrating stale rows, which survived as
+  zombies the server had already deleted. The loop no longer reads collection state at all.
 - **DEC-T10** *(2026-06-09 hardening)* **Undecodable `data` on a known model is skipped wholesale,
   never fatal** — the same forward-compatibility policy as undecodable envelopes (transport) and
   unknown models (ingest): warn + drop, no log append, no apply, no cursor advance (catchup overlap

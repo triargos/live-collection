@@ -21,7 +21,7 @@ import { decideOnMount, MountDecision } from "./mount-decision.js"
 type EntityEvent = Exclude<HydratedSyncEventEnvelope, { readonly _tag: "Resync" }>
 
 /** Minimal view of a mounted collection the loop writes through. */
-type Writable = { readonly utils: SyncWrite<unknown>; readonly keys: () => Iterable<ModelId> }
+type Writable = { readonly utils: SyncWrite<unknown> }
 
 /** The merged inbox: live SSE events and registry mount signals, drained on one fiber so they never interleave. */
 type Inbox =
@@ -160,19 +160,14 @@ export const syncLoop = (
             ),
           )
 
-    // Replace one mounted instance's contents with the server's current rows (DEC-T9 reconcile).
+    // Replace one mounted instance's contents with the server's current rows (DEC-T9 reconcile):
+    // one truncate+writes sync transaction — no read of current keys, so it cannot race hydration.
     const snapshotInstance = (
       meta: ModelMeta<any>,
       scope: Option.Option<string>,
       collection: Writable,
     ): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const rows = yield* meta.listFn(scope)
-        const fetched = new Set(rows.map(meta.getKey))
-        const absent = Array.from(collection.keys()).filter((key) => !fetched.has(key))
-        yield* Effect.forEach(rows, (row) => collection.utils.writeSynced(row), { discard: true })
-        yield* Effect.forEach(absent, (key) => collection.utils.deleteSynced(key), { discard: true })
-      })
+      meta.listFn(scope).pipe(Effect.flatMap((rows) => collection.utils.replaceSynced(rows)))
 
     // Snapshot every mounted instance of every model in the map.
     const snapshotAll: Effect.Effect<void> = Effect.forEach(
