@@ -31,5 +31,10 @@ jobs:
       - name: Build
         run: pnpm -r build
 
+      # The playground's browser tests (OPFS + IndexedDB) run in real Chromium via
+      # @vitest/browser's Playwright provider, so the runner needs the browser binary + its system deps.
+      - name: Install Playwright Chromium
+        run: pnpm --filter @triargos/live-collection-playground exec playwright install --with-deps chromium
+
       - name: Test
         run: pnpm -r test
