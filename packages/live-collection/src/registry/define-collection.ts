@@ -1,4 +1,4 @@
-import { Context, Effect, ManagedRuntime, Option, Schema, type Scope } from "effect"
+import { Effect, type ManagedRuntime, Option, Schema, type Scope } from "effect"
 import {
   createCollection,
   type DeleteMutationFnParams,
@@ -130,14 +130,13 @@ export function defineCollection<T extends object, R = never>(
   const scopeOf = "scopeOf" in config ? config.scopeOf : undefined
   const schemaVersion = deriveSchemaVersion(schema)
 
-  // Discharge the app's `R` once, at define time, by capturing the `services` runtime's context (the
-  // elternportal pattern). `ServicesOf<R>` collapses to one branch per concrete `R`, but `R` is generic
-  // in this body, so narrow the field to a single runtime type. When `services` is absent, `R` is
-  // `never` (see ServicesOf) so an empty context is exactly `Context<R>`.
+  // The `services` ManagedRuntime IS the executor for everything carrying the app's `R` — handlers run
+  // ON it (`runPromise`), the loop-facing listFn runs WITH it (`Effect.provide`). It is never forced to
+  // build synchronously: the runtime builds lazily on first use and memoizes, so async-constructing
+  // layers work and a disposed runtime fails loudly instead of serving finalized services. When
+  // `services` is absent, `R` is `never` (see ServicesOf), so running on the default runtime is sound —
+  // the casts below are that contract, stated once per seam. (DEC-W3)
   const services = config.services as ManagedRuntime.ManagedRuntime<R, never> | undefined
-  const servicesCtx: Context.Context<R> = services
-    ? services.runSync(Effect.context<R>())
-    : (Context.empty() as Context.Context<R>)
 
   // Bridge an Effect handler (with R) to the native TanStack handler (a Promise): run the handler, then
   // reconcile its result into the synced baseline (Model B) — both before the Promise resolves, so the
@@ -149,12 +148,15 @@ export function defineCollection<T extends object, R = never>(
       handler: (params: P) => Effect.Effect<A, unknown, R>,
       reconcile: (params: P, result: A) => Effect.Effect<void>,
     ) =>
-    (params: P): Promise<void> =>
-      Effect.runPromise(
+    (params: P): Promise<void> => {
+      const composed =
         params.transaction.mutations.length > 1
           ? Effect.die(new BatchedMutationsUnsupported({ entity, mutationCount: params.transaction.mutations.length }))
-          : handler(params).pipe(Effect.flatMap((result) => reconcile(params, result)), Effect.provide(servicesCtx)),
-      )
+          : handler(params).pipe(Effect.flatMap((result) => reconcile(params, result)))
+      return services
+        ? services.runPromise(composed)
+        : Effect.runPromise(composed as Effect.Effect<void, unknown>)
+    }
 
   // Build the native collection. Sync (`createCollection`), with `persistence` a closed-over VALUE
   // (not a context dep) and only `Scope` required (for `cleanup`), which the registry discharges —
@@ -182,19 +184,25 @@ export function defineCollection<T extends object, R = never>(
   const mount = (key: CollectionKey<LiveCollection<T>>): LiveCollection<T> =>
     Effect.runSync(runtime.registry.getOrCreate({ key, make: makeFor(key) }))
 
+  // Bridge listFn to `R = never` for the loop. The loop is itself an Effect fiber, so this stays in
+  // Effect-land: `Effect.provide(services)` runs the listFn with the services runtime (the same
+  // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
+  // snapshot and cause structure are preserved.
+  const provideServices = <A>(eff: Effect.Effect<A, never, R>): Effect.Effect<A> =>
+    services ? eff.pipe(Effect.provide(services)) : (eff as Effect.Effect<A>)
+
   const meta: ModelMeta<T> = {
     entity,
     schema,
     getKey,
     scopeOf: Option.fromNullable(scopeOf),
-    // Bridge listFn to `R = never` by providing the services context, so the loop yields it directly.
     listFn:
       scopeOf === undefined
-        ? () => (config as GlobalBase<T, R>).listFn.pipe(Effect.provide(servicesCtx))
+        ? () => provideServices((config as GlobalBase<T, R>).listFn)
         : (scope) =>
             Option.match(scope, {
               onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
-              onSome: (s) => (config as ScopedBase<T, R>).listFn(s).pipe(Effect.provide(servicesCtx)),
+              onSome: (s) => provideServices((config as ScopedBase<T, R>).listFn(s)),
             }),
   }
 

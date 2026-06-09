@@ -211,6 +211,53 @@ describe("write path — optimistic mutations", () => {
       yield* teardown
     }))
 
+  it.live("an async-constructing services layer works: handlers run ON the runtime, not a frozen capture", () =>
+    Effect.gen(function* () {
+      const persistence = makeNodeSqlitePersistence()
+      const log: Array<string> = []
+      // One async step in layer construction (a config fetch, a token load, an IDB open…). The
+      // ManagedRuntime builds this lazily on first run; defineCollection must not force it
+      // synchronously at define time.
+      const services: Services = ManagedRuntime.make(
+        Layer.effect(
+          FakeApi,
+          Effect.promise(() =>
+            Promise.resolve<FakeApiShape>({
+              createWebhook: (w) => Effect.sync(() => (log.push(`create:${w.id}`), w)),
+              deleteWebhook: (id) => Effect.sync(() => void log.push(`delete:${id}`)),
+              list: Effect.succeed([{ id: "s1", orgId: "org-1", url: "u" }]),
+            }),
+          ),
+        ),
+      )
+      const scope = yield* Scope.make()
+      const registry = yield* Scope.extend(makeRegistry, scope)
+      const runtime = { registry, persistence } as unknown as LiveRuntime
+      const webhooks = defineCollection({
+        runtime,
+        services,
+        entity: "Webhook",
+        schema: Webhook,
+        getKey: (w) => k(w.id),
+        scopeOf: (w) => w.orgId,
+        listFn: () => Effect.flatMap(FakeApi, (api) => api.list),
+        onInsert: ({ transaction }) =>
+          Effect.flatMap(FakeApi, (api) => api.createWebhook(transaction.mutations[0]!.modified)),
+      })
+
+      const coll = webhooks("org-1")
+      yield* Effect.promise(() => coll.preload())
+      const tx = coll.insert({ id: "w9", orgId: "org-1", url: "https://example.com/hook" })
+      yield* Effect.promise(() => tx.isPersisted.promise)
+      assert.isTrue(coll.has(k("w9"))) // confirmed + reconciled through the lazily-built runtime
+      assert.deepStrictEqual(log, ["create:w9"])
+      // the listFn bridge reaches the same runtime, still as an Effect (loop-side seam)
+      const rows = yield* webhooks._meta.listFn(Option.some("org-1"))
+      assert.deepStrictEqual(rows, [{ id: "s1", orgId: "org-1", url: "u" }])
+      yield* Scope.close(scope, Exit.void)
+      yield* Effect.promise(() => services.dispose())
+    }))
+
   it.effect("listFn carries R: the `services` runtime discharges it for the snapshot", () =>
     Effect.gen(function* () {
       const log: Array<string> = []

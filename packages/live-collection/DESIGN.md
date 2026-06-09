@@ -709,6 +709,14 @@ DEC-T loop, re-driven by `_meta`:
   library reconciles exactly `mutations[0]`, so a batch would silently lose rows 2..n the moment the
   optimistic tx drops. Array-batch reconcile (`ReadonlyArray<T>`-returning handlers) is a flagged
   future pass, not built.
+- **DEC-W3** **`services` is the executor, not a context donor.** Handlers run ON the runtime
+  (`services.runPromise(handler → reconcile)`); the loop-facing `listFn` runs WITH it
+  (`Effect.provide(services)` — the same memoized runtime, kept in Effect-land so interruption and
+  causes survive). The runtime builds lazily on first use and memoizes. *Rejected:* the original
+  eager `services.runSync(Effect.context<R>())` capture at define time — it forced the app's layer
+  graph to construct synchronously at module import (one `Effect.promise` in a layer ⇒
+  `AsyncFiberException` at import, pointing at library internals) and the frozen context kept serving
+  finalized services after `services.dispose()` instead of failing loudly.
 
 # EventLog manager — replay-on-mount (A.12, DEC-E*) — LOCKED + IMPLEMENTED
 
