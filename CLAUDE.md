@@ -54,7 +54,7 @@ Validation happens **at boundaries** — HTTP handlers, repository mappers, env/
 
 ## Mandatory: `Option` over null/undefined
 
-- Use `Option` for modeled internal absence. Convert `null`/`undefined` from external APIs at the seam (`Option.fromNullishOr` / `fromNullOr` / `fromUndefinedOr`), pass `Option` through domain and service interfaces, and convert back only when an external contract requires a nullable/optional field. (Note: `HydratedSyncEvent.data` is `T | null` *on the wire* by contract — decode it to `Option<T>` at the boundary.)
+- Use `Option` for modeled internal absence. Convert `null`/`undefined` from external APIs at the seam (`Option.fromNullishOr` / `fromNullOr` / `fromUndefinedOr`), pass `Option` through domain and service interfaces, and convert back only when an external contract requires a nullable/optional field. (Note: the sync-event wire makes data presence *structural*, not nullable — `Insert`/`Update` carry `data`, `Delete` carries no `data` field at all — so there is no `T | null` to decode; the `EventLogStore`'s at-rest rows are where `Option ⇄ null` conversion happens.)
 
 ## Mandatory: object args when more than one parameter
 
@@ -114,34 +114,36 @@ and `react` (a *different dep* non-React apps must avoid).
 packages/
   protocol/         # @triargos/live-collection-protocol   deps: effect   (NOT @effect/platform — DEC-7)
                     #   The shared CONTRACT KIT — backend implements against it (pure, no I/O):
-                    #   - SyncEvent + HydratedSyncEvent<T> schemas w/ encode/decode (both directions)
-                    #   - sync-group grammar: deriveGroup/parseGroup/matches (wildcards)
-                    #   - resync sentinel codecs (__all / __group:<id> / __model:<Name>)
+                    #   - SyncEvent / HydratedSyncEvent<T> schemas (data presence is STRUCTURAL:
+                    #     Insert/Update carry data, Delete carries none) + the opaque-data Envelope
+                    #   - sync-group grammar: deriveGroup/parseGroup/intersects/isUnder (no wildcards)
+                    #   - ResyncTarget union (All/Group/Model — structured, no string sentinels, DEC-9)
                     #   - the SQUASHER (pure §8 fold; property-tested here; backend imports it)
-                    #   - expected interface TYPES: ModelDescriptor<T,R>, SyncContext, DispatchArgs,
-                    #     permission-resolver signature (no implementations)
+                    #   - expected interface TYPES: ModelDescriptor<T,R>, SyncContext, GroupsFor,
+                    #     narrowModelName (no implementations)
                     #   - the /catchup CatchupRequest/CatchupResponse SCHEMAS (not an HttpApi):
                     #     the backend owns the route, errors, and auth and wires the schemas in.
                     #     Groups are resolved server-side from user perms (no client narrowing).
   live-collection/  # @triargos/live-collection            deps: effect, @effect/platform, @tanstack/db
-                    #   src/registry/    CollectionRegistry, globToRegex, lifecycle helpers
-                    #   src/dispatch/    dispatch registry + resolver
-                    #   src/persistence/ effectCollectionOptions (TanStack 0.6 persisted)
-                    #   src/client/      SSE transport, catchup, lastSyncId store
-                    #   src/bootstrap/   orchestrator
-                    #   + service tags (SyncTransport, PersistedCollectionFactory, LastSyncIdStore)
-                    #     and their default layers; public LiveCollection<T> + createCollection.
+                    #   src/registry/    CollectionRegistry (tag+layer), CollectionKey, defineCollection
+                    #   src/dispatch/    the SyncWrite contract (writeSynced/deleteSynced/replaceSynced)
+                    #   src/persistence/ liveCollectionOptions (inner creator), schema-version, sync-session
+                    #   src/client/      SyncTransport (SSE), CatchupClient, LastSyncIdStore, EventLogStore,
+                    #                    mount-decision + mount-healer (internal), syncLoop
+                    #   src/runtime/     makeLiveRuntime (two-surface: sync registry+persistence | async loop)
+                    #   public hero: LiveCollection<T> — a NATIVE TanStack collection from defineCollection.
   react/            # @triargos/live-collection-react      deps: react, @tanstack/react-db, + main
-                    #   useLiveCollection hook, runtime provider.
+                    #   useLiveSync(runtime, models) — fork the loop on mount, interrupt on unmount.
+                    #   Reads use @tanstack/react-db's useLiveQuery directly (no wrapper, DEC-R1).
 
 examples/           # NOT published, NOT packages — workspace apps
-  playground/       # the A.3 persistence spike home + reference Bucket-B (per-entity) wiring
-  server/           # optional reference backend (generic Bucket-C infra), keeps playground runnable
+  playground/       # browser lab: real OPFS persistence + a cross-tab fake backend (localStorage log
+                    #   + BroadcastChannel) serving catchup/SSE/listFn/mutations; debug inspector
 ```
 
-Dependency DAG (acyclic): `protocol → live-collection → react`. Inside `live-collection`, `core`
-modules declare the service tags; `persistence`/`client` modules provide their default `Layer`s;
-the app composes them at the edge.
+Dependency DAG (acyclic): `protocol → live-collection → react`. Inside `live-collection` each seam
+module hosts its own hand-rolled tag + default layers (`layer` / `layerMemory`); the app composes
+them at the edge (the `loop` layer handed to `makeLiveRuntime`).
 
 > **Decided:** the external backend imports `@triargos/live-collection-protocol` from the company
 > registry, so it stays a separate package and is scoped as a **contract kit** — schemas, the pure
@@ -175,13 +177,14 @@ the app composes them at the edge.
 
 ## Commands
 
-> The workspace is not scaffolded yet — these are the target commands and light up after the
-> initial pnpm-workspace scaffold lands.
-
 ```bash
-pnpm -r typecheck                    # tsc -b project references — run after every change
-pnpm -r test                         # @effect/vitest across packages
+pnpm -r typecheck                    # tsc -b + per-package tsconfig.test.json — run after every change
+pnpm -r test                         # @effect/vitest across packages (playground runs its browser suites via playwright)
 pnpm -r build                        # tsup (ESM/CJS) across packages
-pnpm --filter server db:migrate      # reference backend only (examples/server); the library has no DB
+pnpm --filter playground dev         # the browser lab (OPFS + cross-tab fake backend + debug inspector)
 pnpm changeset                       # record a version bump before publishing
 ```
+
+> Run plain `pnpm -r test` / per-package scripts — a bare `npx vitest run` from a package directory
+> picks up the workspace root config and runs the playground's **browser** suites in node, where they
+> fail on missing `indexedDB`/OPFS. That's an invocation error, not a regression.

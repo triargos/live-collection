@@ -17,7 +17,9 @@ import type { SyncEvent } from "@triargos/live-collection-protocol"
 /** Re-exported so consumers and the dispatch layer share one contract type. */
 export type { SyncEvent }
 
-// registry/ — generic collection cache + the runtime-bound collection handle
+// registry/ — generic collection cache + the runtime-bound collection handle. makeRegistry stays
+// public: composing syncLoop manually (without makeLiveRuntime) needs the registry as a VALUE shared
+// between the mount path and the loop's layer — the playground's replay lab is the reference consumer.
 export * from "./registry/collection-key.js"
 export * from "./registry/collection-registry.js"
 export * from "./registry/define-collection.js"
@@ -25,12 +27,13 @@ export * from "./registry/define-collection.js"
 // dispatch/ — the synced-store write path contract
 export * from "./dispatch/sync-write.js"
 
-// client/ — SSE transport, catchup, durable cursor, the durable event log, the sync loop
+// client/ — SSE transport, catchup, durable cursor, the durable event log, the sync loop.
+// (mount-decision, mount-healer, prune-plan, and sync-session are internal policy/plumbing —
+// reachable behaviorally through syncLoop and the collection utils, not part of the API.)
 export * from "./client/last-sync-id-store.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
 export * from "./client/event-log-store.js"
-export * from "./client/mount-decision.js"
 export * from "./client/sync-loop.js"
 
 // runtime/ — the live runtime that owns infra and forks the loop

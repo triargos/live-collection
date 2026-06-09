@@ -2,6 +2,7 @@ import { Context, Duration, Effect, Layer, ManagedRuntime, Queue, Schema } from 
 import { CatchupClient, LastSyncIdStore, SyncTransport } from "@triargos/live-collection"
 import {
   type CatchupResponse,
+  compareSyncId,
   HydratedSyncEventEnvelope,
   ModelId,
   ModelName,
@@ -224,7 +225,8 @@ export const makeSharedBackend = (config: {
       Effect.sleep(tail).pipe(
         Effect.zipRight(readLog),
         Effect.flatMap((log) => {
-          const events = log.filter((e) => Number(e.syncId) > Number(from))
+          // compareSyncId, never Number(): syncIds are exact beyond MAX_SAFE_INTEGER (protocol ids.ts).
+          const events = log.filter((e) => compareSyncId(e.syncId, from) > 0)
           const response: CatchupResponse = { events, lastSyncId: SyncId.make(String(rawSeq())) }
           return bus
             .tap({ direction: "in", channel: "catchup", label: `catchup from #${from} → ${events.length} events`, payload: { from, count: events.length } })
@@ -259,7 +261,9 @@ export const makeSharedBackend = (config: {
     lastSyncId: () => String(rawSeq()),
     broadcastResync: () => {
       // No log append and no self-echo: a Resync is a live control signal to *other* tabs only.
-      const env = resyncEnvelope(SyncId.make(String(rawSeq() + 1)))
+      // It still CONSUMES a real seq — syncIds are unique-per-event (DEC-E12); reusing rawSeq()+1
+      // would collide with the next real mutation's id.
+      const env = resyncEnvelope(SyncId.make(String(Effect.runSync(nextSeq))))
       const wire = Effect.runSync(encodeEnvelope(env).pipe(Effect.orDie))
       channel.postMessage(wire)
       bus.push({ direction: "out", channel: "resync", label: "broadcast Resync(All) → other tabs reload" })
