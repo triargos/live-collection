@@ -57,19 +57,12 @@ export const createPlayground = async (): Promise<Playground> => {
     getKey: webhookKey,
     scopeOf: (w) => w.orgId,
     listFn: (orgId) => Effect.flatMap(WebhookApi, (api) => api.list(orgId)),
-    onInsert: ({ transaction, collection }) =>
-      Effect.gen(function* () {
-        const api = yield* WebhookApi
-        const created = yield* api.create(transaction.mutations[0]!.modified)
-        yield* collection.utils.writeSynced(created) // Model B: confirm before resolving
-      }),
-    onDelete: ({ transaction, collection }) =>
-      Effect.gen(function* () {
-        const api = yield* WebhookApi
-        const id = transaction.mutations[0]!.key
-        yield* api.remove(id)
-        yield* collection.utils.deleteSynced(id)
-      }),
+    // Handlers only call the server and return the confirmed row (insert) / void (delete); the library
+    // reconciles into the synced baseline before resolving (Model B). The app never touches utils.
+    onInsert: ({ transaction }) =>
+      Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
+    onDelete: ({ transaction }) =>
+      Effect.flatMap(WebhookApi, (api) => api.remove(transaction.mutations[0]!.key)),
   })
 
   return { runtime, syncMap: { Webhook: webhooks }, webhooks, bus, controls: backend.controls, tabId }

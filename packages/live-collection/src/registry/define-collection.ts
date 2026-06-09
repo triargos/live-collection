@@ -48,16 +48,25 @@ export type SyncMap = Record<string, { readonly _meta: ModelMeta<any> }>
 /**
  * Optional **optimistic write path** (A.10). These are TanStack DB's native mutation params, but
  * **Effect-returning** with the app's `R` (discharged by `services`) — so the app writes a pure Effect
- * (`yield* SomeApi`) with no `runPromise` boilerplate. To reconcile, the handler calls
- * `collection.utils.writeSynced(confirmed)` **before it resolves** (Model B): the synced store then
- * holds the row at the instant TanStack drops the completed optimistic transaction, so there is no
- * flicker, and the eventual SSE echo of the same row is an idempotent `writeSynced`. A failed Effect
- * rejects the mutation ⇒ TanStack rolls the optimistic write back. Ids are the app's (client-minted
- * recommended: the self-echo stays idempotent and no temp-id swap is needed — DEC-8).
+ * (`yield* SomeApi`) with no `runPromise` boilerplate.
+ *
+ * The handler's only job is the **server call**: `onInsert`/`onUpdate` call your backend and **return
+ * the server-confirmed row**; `onDelete` calls your backend and returns `void`. The library reconciles
+ * for you — it folds the returned row into the synced baseline (`writeSynced`), or removes the row by
+ * key (`deleteSynced`), in {@link bridge} **before the mutation resolves** (Model B). Apps never touch
+ * `collection.utils`: the synced store holds the row at the instant TanStack drops the completed
+ * optimistic transaction, so there is no flicker, and the eventual SSE echo of the same row is an
+ * idempotent `writeSynced`. A failed Effect rejects the mutation ⇒ TanStack rolls the optimistic write
+ * back (the reconcile runs only on success). Ids are the app's (client-minted recommended: the
+ * self-echo stays idempotent and no temp-id swap is needed — DEC-8).
+ *
+ * Insert/update must return `T` (no `void` opt-out): without the confirmed row the library can't
+ * reconcile, and an unreconciled optimistic row flickers. One mutation per transaction — the library
+ * reconciles `mutations[0]`; batched transactions are not reconciled (a future pass).
  */
 interface MutationHandlers<T extends object, R> {
-  readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, unknown, R>
-  readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, unknown, R>
+  readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
+  readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
   readonly onDelete?: (params: DeleteMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, unknown, R>
 }
 
@@ -118,12 +127,14 @@ export function defineCollection<T extends object, R = never>(
     ? services.runSync(Effect.context<R>())
     : (Context.empty() as Context.Context<R>)
 
-  // Bridge an Effect handler (with R) to the native TanStack handler (a Promise): provide the captured
-  // context, then run on the default runtime. A rejection rolls the optimistic mutation back.
+  // Bridge an Effect handler (with R) to the native TanStack handler (a Promise): run the handler, then
+  // reconcile its result into the synced baseline (Model B) — both before the Promise resolves, so the
+  // synced row is in place when TanStack drops the completed optimistic tx. `flatMap` short-circuits on
+  // failure ⇒ the reconcile never runs and the rejection rolls the optimistic mutation back.
   const bridge =
-    <P>(handler: (params: P) => Effect.Effect<void, unknown, R>) =>
+    <P, A>(handler: (params: P) => Effect.Effect<A, unknown, R>, reconcile: (params: P, result: A) => Effect.Effect<void>) =>
     (params: P): Promise<void> =>
-      Effect.runPromise(handler(params).pipe(Effect.provide(servicesCtx)))
+      Effect.runPromise(handler(params).pipe(Effect.flatMap((result) => reconcile(params, result)), Effect.provide(servicesCtx)))
 
   // Build the native collection. Sync (`createCollection`), with `persistence` a closed-over VALUE
   // (not a context dep) and only `Scope` required (for `cleanup`), which the registry discharges —
@@ -138,9 +149,10 @@ export function defineCollection<T extends object, R = never>(
             schemaVersion,
             ...liveCollectionOptions({ getKey }),
             // Omit absent handlers entirely (exactOptionalPropertyTypes forbids an explicit `undefined`).
-            ...(config.onInsert ? { onInsert: bridge(config.onInsert) } : {}),
-            ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate) } : {}),
-            ...(config.onDelete ? { onDelete: bridge(config.onDelete) } : {}),
+            // Insert/update reconcile the returned confirmed row; delete reconciles by the mutation key.
+            ...(config.onInsert ? { onInsert: bridge(config.onInsert, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
+            ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
+            ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => p.collection.utils.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
           }),
         ) satisfies LiveCollection<T>,
     ).pipe(

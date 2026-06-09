@@ -11,8 +11,8 @@ import { WebhookApi } from "../src/live/shared-backend.js"
 import { Webhook, webhookKey } from "../src/live/schema.js"
 
 // The A.10 write path end-to-end in a REAL browser over REAL OPFS, against the fake backend (with fake
-// delays). Proves, in one realistic flow, the things node can't: an optimistic insert confirmed via
-// `writeSynced`, the SSE self-echo staying idempotent (client-minted id), a *remote* insert delivered
+// delays). Proves, in one realistic flow, the things node can't: an optimistic insert confirmed by the
+// library's reconcile, the SSE self-echo staying idempotent (client-minted id), a *remote* insert delivered
 // over the live tail (loop alive + dispatch by scope), and all of it durably persisted across a reload.
 const k = (s: string) => ModelId.make(s)
 const count = (coll: { keys: () => Iterable<ModelId> }) => Array.from(coll.keys()).length
@@ -34,12 +34,9 @@ const webhookCollection = (runtime: ReturnType<typeof makeLiveRuntime>, services
     getKey: webhookKey,
     scopeOf: (w) => w.orgId,
     listFn: (orgId) => Effect.flatMap(WebhookApi, (api) => api.list(orgId)),
-    onInsert: ({ transaction, collection }) =>
-      Effect.gen(function* () {
-        const api = yield* WebhookApi
-        const created = yield* api.create(transaction.mutations[0]!.modified)
-        yield* collection.utils.writeSynced(created) // Model B confirm
-      }),
+    // Handler only calls the server and returns the confirmed row; the library reconciles (Model B).
+    onInsert: ({ transaction }) =>
+      Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
   })
 
 describe("write path over OPFS (browser)", () => {
@@ -58,7 +55,7 @@ describe("write path over OPFS (browser)", () => {
       const coll = webhooks("org-1")
       yield* Effect.promise(() => coll.preload())
 
-      // optimistic insert with a CLIENT-minted id → handler confirms via writeSynced
+      // optimistic insert with a CLIENT-minted id → handler returns the row, library reconciles it
       coll.insert({ id: "wh-1", orgId: "org-1", url: "https://example.com/1" })
       yield* waitUntil(() => coll.has(k("wh-1")))
       yield* Effect.sleep(Duration.millis(200)) // let the SSE self-echo flow through the loop
