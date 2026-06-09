@@ -693,6 +693,23 @@ DEC-T loop, re-driven by `_meta`:
 
 ---
 
+# Write path (A.10 revision) — library-reconciled handlers (DEC-W*) — LOCKED + IMPLEMENTED
+
+> **Status: LOCKED + GREEN.** Implemented 2026-06-09 (`ee5177e` + the DEC-W2 guard). Amends the
+> original A.10 contract (where the app handler called `collection.utils.writeSynced` itself).
+
+- **DEC-W1** `onInsert`/`onUpdate` return the **server-confirmed row** (`Effect<T, unknown, R>`); the
+  library reconciles it into the synced baseline (`writeSynced`) inside `bridge` **before the mutation
+  resolves** (Model B). `onDelete` returns `void`; the library `deleteSynced`s by the mutation key.
+  Apps never touch `collection.utils`. *Rejected:* handler-side `writeSynced` (the original A.10
+  shape) — every app must remember the call, nothing in the types enforces it, and a missed call is an
+  invisible flicker bug. Returning `T` makes the reconcile input part of the handler's type.
+- **DEC-W2** **One mutation per transaction, enforced loudly.** A bridged handler receiving
+  `mutations.length > 1` dies with `BatchedMutationsUnsupported` *before the server call* — the
+  library reconciles exactly `mutations[0]`, so a batch would silently lose rows 2..n the moment the
+  optimistic tx drops. Array-batch reconcile (`ReadonlyArray<T>`-returning handlers) is a flagged
+  future pass, not built.
+
 # EventLog manager — replay-on-mount (A.12, DEC-E*) — LOCKED + IMPLEMENTED
 
 > **Status: LOCKED + GREEN.** Signed off 2026-06-09; implemented in commit `f291562` (58 package tests,

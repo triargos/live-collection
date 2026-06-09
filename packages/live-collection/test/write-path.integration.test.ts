@@ -184,6 +184,33 @@ describe("write path — optimistic mutations", () => {
       yield* teardown
     }))
 
+  it.live("a batched insert (two mutations in one tx) dies loudly instead of silently dropping rows", () =>
+    Effect.gen(function* () {
+      const { persistence, log, services, teardown } = yield* setup()
+      const scope = yield* Scope.make()
+      const registry = yield* Scope.extend(makeRegistry, scope)
+      const runtime = { registry, persistence } as unknown as LiveRuntime
+      const webhooks = makeWebhooks(runtime, services)
+
+      const coll = webhooks("org-1")
+      yield* Effect.promise(() => coll.preload())
+      const tx = coll.insert([
+        { id: "b1", orgId: "org-1", url: "https://example.com/1" },
+        { id: "b2", orgId: "org-1", url: "https://example.com/2" },
+      ])
+
+      // The library reconciles exactly mutations[0]'s confirmed row, so a batch would silently lose
+      // rows 2..n when the optimistic tx drops. The guard must reject the whole transaction…
+      const exit = yield* Effect.exit(Effect.tryPromise(() => tx.isPersisted.promise))
+      assert.isTrue(Exit.isFailure(exit))
+      // …BEFORE the handler runs (no server call with an unreconcilable batch)…
+      assert.deepStrictEqual(log, [])
+      // …and TanStack rolls the optimistic rows back.
+      yield* waitUntil(() => !coll.has(k("b1")) && !coll.has(k("b2")))
+      yield* Scope.close(scope, Exit.void)
+      yield* teardown
+    }))
+
   it.effect("listFn carries R: the `services` runtime discharges it for the snapshot", () =>
     Effect.gen(function* () {
       const log: Array<string> = []
