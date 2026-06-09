@@ -339,6 +339,66 @@ describe("syncLoop — read path end-to-end", () => {
         }),
     }))
 
+  it.live("a known model whose data fails decode is dropped — the loop keeps running", () =>
+    run({
+      catchup: { events: [], lastSyncId: sid("1") },
+      premount: ["org-1"],
+      body: ({ webhookCollection, queue }) =>
+        Effect.gen(function* () {
+          const coll = webhookCollection("org-1")
+          // Schema drift: a newer server emits a shape this client's Webhook schema can't decode.
+          // The envelope is valid (data is opaque there); the per-model decode is what fails.
+          const malformed: HydratedSyncEventEnvelope = {
+            _tag: "Insert",
+            syncId: sid("2"),
+            modelName: ModelName.make("Webhook"),
+            modelId: k("bad"),
+            syncGroups: [grp],
+            createdAt: new Date(0),
+            data: { id: 123, orgId: false },
+          }
+          yield* Queue.offer(queue, malformed)
+          yield* Queue.offer(queue, insertEnv("w3", "org-1")) // must still be applied afterwards
+          yield* waitUntil(() => coll.has(k("w3")))
+          assert.isFalse(coll.has(k("bad"))) // dropped, not applied — and the loop survived it
+        }),
+    }))
+
+  it.live("an undecodable logged event is skipped during replay — the rest still applies", () =>
+    run({
+      seedCursor: sid("2"),
+      catchup: { events: [], lastSyncId: sid("2") },
+      body: ({ webhookCollection, log }) =>
+        Effect.gen(function* () {
+          const org2 = scopedKey({ entity: "Webhook", scope: "org-2" })
+          // A prior session logged one row that no longer decodes (schema drift across versions)
+          // and one good row. Replay must skip the bad one and still converge on the good one.
+          yield* log.append([
+            {
+              syncId: sid("1"),
+              modelName: ModelName.make("Webhook"),
+              scope: Option.some("org-2"),
+              tag: "Insert",
+              modelId: k("bad"),
+              data: Option.some({ id: 123 }),
+            },
+            {
+              syncId: sid("2"),
+              modelName: ModelName.make("Webhook"),
+              scope: Option.some("org-2"),
+              tag: "Insert",
+              modelId: k("good"),
+              data: Option.some({ id: "good", orgId: "org-2" }),
+            },
+          ])
+          yield* log.setBaseWatermark({ key: org2, at: sid("0") })
+          const coll = webhookCollection("org-2")
+          yield* Effect.promise(() => coll.preload())
+          yield* waitUntil(() => coll.has(k("good")))
+          assert.isFalse(coll.has(k("bad")))
+        }),
+    }))
+
   it.live("a never-bootstrapped scope premounted before a warm delta catchup BOOTSTRAPs (not stamped caught-up)", () =>
     run({
       // Session 2: the cursor is warm from a prior session that never visited org-2…

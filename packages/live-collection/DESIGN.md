@@ -572,6 +572,13 @@ each cycle (retry on SyncConnectionLost, spaced 3s):
   (DEC-A13).
 - **DEC-T9** Snapshot reconcile = upsert fetched (`writeSynced`) + delete-absent (`deleteSynced` for
   `currentKeys − fetchedKeys`), so a snapshot is a true replacement.
+- **DEC-T10** *(2026-06-09 hardening)* **Undecodable `data` on a known model is skipped wholesale,
+  never fatal** — the same forward-compatibility policy as undecodable envelopes (transport) and
+  unknown models (ingest): warn + drop, no log append, no apply, no cursor advance (catchup overlap
+  re-delivers; a snapshot/resync heals divergence). Replay applies the same policy to logged rows
+  that no longer decode. The loop's only remaining death is a genuine defect, surfaced by a
+  `tapDefect` log in `forkLoop` (a forked fiber otherwise dies silently). *Rejected:* `orDie` on the
+  per-event decode — one schema-drifted event from a newer server killed sync permanently and silently.
 
 ## Deferred (flagged, not built)
 - Incremental **workspace-switch** bootstrap (mounting a new scope while the cursor is `Some` won't

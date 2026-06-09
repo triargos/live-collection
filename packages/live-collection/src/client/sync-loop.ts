@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Schedule, Schema, Stream } from "effect"
+import { Data, Effect, Either, Option, Schedule, Schema, Stream } from "effect"
 import {
   type CatchupResponse,
   compareSyncId,
@@ -115,7 +115,17 @@ export const syncLoop = (
           yield* log.append([row])
           yield* applyDelete(meta, event.modelId)
         } else {
-          const data = yield* Schema.decodeUnknown(meta.schema)(event.data).pipe(Effect.orDie)
+          // A known model whose `data` doesn't decode is schema drift (a newer server, an older
+          // client) — the same forward-compatibility case as an unknown model, so the same policy:
+          // skip it wholesale (no log, no apply, no cursor advance — catchup overlap re-delivers it;
+          // a snapshot/resync heals divergence). One bad event must never kill the forked loop.
+          const decoded = yield* Effect.either(Schema.decodeUnknown(meta.schema)(event.data))
+          if (Either.isLeft(decoded)) {
+            return yield* Effect.logWarning(
+              `[syncLoop] dropping undecodable ${event.modelName} event #${event.syncId}: ${decoded.left.message}`,
+            )
+          }
+          const data = decoded.right
           const row: LoggedEvent = {
             syncId: event.syncId,
             modelName: event.modelName,
@@ -135,13 +145,19 @@ export const syncLoop = (
         }
       })
 
-    // ── replay: apply a logged row through the SAME application path (decode at the boundary) ──
+    // ── replay: apply a logged row through the SAME application path (decode at the boundary).
+    // A logged row that no longer decodes (schema drift across sessions) is skipped with a warning,
+    // same policy as live ingest — the rest of the replay still applies. ──
     const replayRow = (meta: ModelMeta<any>, row: LoggedEvent): Effect.Effect<void> =>
       row.tag === "Delete"
         ? applyDelete(meta, row.modelId)
         : Schema.decodeUnknown(meta.schema)(Option.getOrElse(row.data, () => null)).pipe(
-            Effect.orDie,
             Effect.flatMap((data) => applyWrite(meta, data)),
+            Effect.catchTag("ParseError", (error) =>
+              Effect.logWarning(
+                `[syncLoop] skipping undecodable logged ${row.modelName} event #${row.syncId}: ${error.message}`,
+              ),
+            ),
           )
 
     // Replace one mounted instance's contents with the server's current rows (DEC-T9 reconcile).

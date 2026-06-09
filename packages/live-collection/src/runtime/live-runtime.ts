@@ -51,7 +51,14 @@ export const makeLiveRuntime = (config: {
   return {
     registry,
     persistence: config.persistence,
-    forkLoop: (map) => loopRuntime.runFork(syncLoop(map, config.onResync)),
+    // tapDefect: the loop's error channel is `never`, so the only way it dies is a defect — and a
+    // forked fiber dies silently (sync just stops). Surface it; interruption (unmount) is not a defect.
+    forkLoop: (map) =>
+      loopRuntime.runFork(
+        syncLoop(map, config.onResync).pipe(
+          Effect.tapDefect((cause) => Effect.logError("[liveRuntime] sync loop died unexpectedly", cause)),
+        ),
+      ),
     dispose: () => {
       void loopRuntime.dispose()
       Effect.runFork(Scope.close(scope, Exit.void))
