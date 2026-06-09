@@ -25,10 +25,12 @@ export * from "./registry/define-collection.js"
 // dispatch/ — the synced-store write path contract
 export * from "./dispatch/sync-write.js"
 
-// client/ — SSE transport, catchup, durable cursor, the sync loop
+// client/ — SSE transport, catchup, durable cursor, the durable event log, the sync loop
 export * from "./client/last-sync-id-store.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
+export * from "./client/event-log-store.js"
+export * from "./client/mount-decision.js"
 export * from "./client/sync-loop.js"
 
 // runtime/ — the live runtime that owns infra and forks the loop

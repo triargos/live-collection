@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, type Scope } from "effect"
+import { Effect, Option, Schema, type Scope, Stream } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelId } from "@triargos/live-collection-protocol"
 import type { CollectionRegistryShape } from "../src/registry/collection-registry.js"
@@ -30,6 +30,7 @@ const fakeRuntime = () => {
     getById: <A>(key: CollectionKey<A>) =>
       Effect.sync(() => Option.fromNullable(built.get(serializeKey(key)) as A | undefined)),
     getByEntity: () => Effect.succeed([]),
+    mounts: Stream.empty,
     dispose: () => Effect.void,
     disposeScope: () => Effect.void,
     disposeAllScoped: () => Effect.void,

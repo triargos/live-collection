@@ -1,6 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import {
   defineCollection,
+  EventLogStore,
   type LiveRuntime,
   makeLiveRuntime,
   reloadWindow,
@@ -43,7 +44,9 @@ export const createPlayground = async (): Promise<Playground> => {
 
   const bus = new DebugBus()
   const backend = makeSharedBackend({ bus, tabId })
-  const runtime = makeLiveRuntime({ persistence, loop: backend.loop, onResync: reloadWindow })
+  // EventLogStore (replay-on-mount) — in-memory for now; the durable IndexedDB adapter lands with the browser proof.
+  const loop = Layer.merge(backend.loop, EventLogStore.layerMemory)
+  const runtime = makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
 
   const webhooks = defineCollection({
     runtime,

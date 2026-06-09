@@ -5,7 +5,9 @@ import {
   Exit,
   Layer,
   Option,
+  Queue,
   Scope,
+  Stream,
 } from "effect";
 import { type CollectionKey, serializeKey } from "./collection-key.js";
 
@@ -42,6 +44,12 @@ export interface CollectionRegistryShape {
   ) => Effect.Effect<ReadonlyArray<{ readonly key: CollectionKey<A>; readonly collection: A }>>;
   /** Tear down and evict one collection. A no-op if it isn't mounted. */
   readonly dispose: (key: CollectionKey<unknown>) => Effect.Effect<void>;
+  /**
+   * Emits a key the **first** time {@link CollectionRegistryShape.getOrCreate} builds it (not on cache
+   * hits). The sync loop drains it to heal a freshly-mounted collection (skip/replay/bootstrap). Backed
+   * by an unbounded queue, so `getOrCreate`'s `offer` stays synchronous (the mount path is `runSync`).
+   */
+  readonly mounts: Stream.Stream<CollectionKey<unknown>>;
   /** Tear down and evict every collection whose `scope` equals `scope` (globals untouched). */
   readonly disposeScope: (scope: string) => Effect.Effect<void>;
   /** Tear down and evict every *scoped* collection, leaving globals mounted (workspace reset). */
@@ -62,6 +70,7 @@ export interface CollectionRegistryShape {
 export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.Scope> =
   Effect.gen(function* () {
     const registryScope = yield* Effect.scope;
+    const mountsQueue = yield* Queue.unbounded<CollectionKey<unknown>>();
     const entries = new Map<
       string,
       {
@@ -91,6 +100,7 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
         );
         const collection = yield* Scope.extend(make, childScope);
         entries.set(id, { collection, childScope, key });
+        yield* Queue.offer(mountsQueue, key); // announce the first mount (loop heals it)
         return collection;
       });
 
@@ -152,6 +162,7 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
       getOrCreate,
       getById,
       getByEntity,
+      mounts: Stream.fromQueue(mountsQueue),
       dispose,
       disposeScope,
       disposeAllScoped,

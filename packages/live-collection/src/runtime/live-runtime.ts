@@ -5,10 +5,11 @@ import type { SyncMap } from "../registry/define-collection.js"
 import { CatchupClient } from "../client/catchup-client.js"
 import { LastSyncIdStore } from "../client/last-sync-id-store.js"
 import { SyncTransport } from "../client/sync-transport.js"
+import { EventLogStore } from "../client/event-log-store.js"
 import { syncLoop } from "../client/sync-loop.js"
 
 /** The deps the async sync loop needs; the app supplies them as one merged layer (`loop`). */
-export type LoopDeps = SyncTransport | CatchupClient | LastSyncIdStore
+export type LoopDeps = SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore
 
 /**
  * The two-surface live runtime (DEC-R8). The **mount** surface (`registry` + `persistence`) is a sync

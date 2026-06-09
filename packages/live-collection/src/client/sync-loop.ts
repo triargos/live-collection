@@ -3,85 +3,158 @@ import {
   type CatchupResponse,
   type HydratedSyncEventEnvelope,
   type ModelId,
+  ModelName,
   SyncId,
 } from "@triargos/live-collection-protocol"
 import { CollectionRegistry } from "../registry/collection-registry.js"
-import { globalKey, scopedKey } from "../registry/collection-key.js"
-import type { SyncMap } from "../registry/define-collection.js"
+import { type CollectionKey, globalKey, scopedKey } from "../registry/collection-key.js"
+import type { ModelMeta, SyncMap } from "../registry/define-collection.js"
 import type { SyncWrite } from "../dispatch/sync-write.js"
 import { LastSyncIdStore } from "./last-sync-id-store.js"
 import { CatchupClient } from "./catchup-client.js"
 import { SyncTransport } from "./sync-transport.js"
+import { EventLogStore, type LoggedEvent } from "./event-log-store.js"
+import { decideOnMount, MountDecision } from "./mount-decision.js"
 
-/** An entity event (the `Resync` arm separated out) — what `dispatch` applies to the local store. */
+/** An entity event (the `Resync` arm separated out) — what the loop applies to the local store. */
 type EntityEvent = Exclude<HydratedSyncEventEnvelope, { readonly _tag: "Resync" }>
 
 /** Minimal view of a mounted collection the loop writes through. */
 type Writable = { readonly utils: SyncWrite<unknown>; readonly keys: () => Iterable<ModelId> }
 
+/** The merged inbox: live SSE events and registry mount signals, drained on one fiber so they never interleave. */
+type Inbox =
+  | { readonly _tag: "Live"; readonly event: HydratedSyncEventEnvelope }
+  | { readonly _tag: "Mount"; readonly key: CollectionKey<unknown> }
+
 /** Internal control signal: a live resync was seen, so stop the tail (it must not be retried). */
 class ResyncStop extends Data.TaggedError("ResyncStop")<{}> {}
 
+/** Log-retention knobs: keep the newest `perModel` per model and `total` overall, pruning every `everyEvents` ingests. */
+export interface SyncLoopOptions {
+  readonly prune: { readonly perModel: number; readonly total: number; readonly everyEvents: number }
+}
+
+/** Generous defaults (tune against the browser proof + the backend's catchup retention). */
+const defaultOptions: SyncLoopOptions = { prune: { perModel: 1000, total: 5000, everyEvents: 100 } }
+
 /**
- * The read-path loop (DEC-R7), re-driven by the explicit {@link SyncMap} instead of a dispatcher tag
- * + bootstrap specs. Behaviour is the locked transport tier (DEC-T1…T9): catchup from the stored
- * cursor (`"0"` cold), then tail the live SSE; reconnect re-runs catchup so the gap heals.
+ * The read-path loop (DEC-R7) with the durable EventLog folded in. Behaviour is the locked transport
+ * tier (DEC-T1…T9) plus replay-on-mount: every received event is **logged** (even when dropped for an
+ * unmounted scope), so a collection that mounts after its events streamed past can converge by
+ * **replaying the local log** instead of a network `listFn`.
  *
- * - A catchup `Resync` ⇒ **snapshot** every model's mounted instances via `_meta.listFn` + reconcile;
- *   otherwise dispatch the returned deltas. The cursor is then set from `lastSyncId` (DEC-T5).
- * - A **live** `Resync` ⇒ `cursor.clear` then `onResync` (prod: reload), and the loop stops.
+ * - Application (`applyWrite`/`applyDelete`) is **source-agnostic** — live, catchup, and replay all go
+ *   through it; only the cursor/log *recording* is ingest-specific.
+ * - On mount, `decideOnMount` picks skip / replay / bootstrap from syncId positions alone.
+ * - A catchup `Resync` ⇒ snapshot every model + bump `lastResyncAt`; a live `Resync` ⇒ reload + stop.
  *
  * Runs forever — fork it (`useLiveSync`). Error channel is `never`: drops retry, `ResyncStop` is caught.
  */
 export const syncLoop = (
   map: SyncMap,
   onResync: Effect.Effect<void>,
-): Effect.Effect<void, never, CollectionRegistry | SyncTransport | CatchupClient | LastSyncIdStore> =>
+  options: SyncLoopOptions = defaultOptions,
+): Effect.Effect<
+  void,
+  never,
+  CollectionRegistry | SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore
+> =>
   Effect.gen(function* () {
     const registry = yield* CollectionRegistry
     const store = yield* LastSyncIdStore
     const catchup = yield* CatchupClient
     const transport = yield* SyncTransport
+    const log = yield* EventLogStore
 
-    // Apply one entity event to the local store.
-    const dispatch = (event: EntityEvent): Effect.Effect<void> =>
+    let ingestsSincePrune = 0 // single-fibered (merged inbox), so a plain counter is safe
+
+    // entity → wire model name, so a mount signal (keyed by entity) can read the model's log slice.
+    const modelOfEntity = new Map<string, ModelName>()
+    for (const [name, entry] of Object.entries(map)) modelOfEntity.set(entry._meta.entity, ModelName.make(name))
+
+    // ── source-agnostic application (the dispatcher): apply ONE decoded event to the mounted store ──
+    const applyWrite = (meta: ModelMeta<any>, data: any): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const entry = map[event.modelName]
-        if (entry === undefined) return // unknown model ⇒ skip (a newer server may emit more)
-        const meta = entry._meta
-
-        if (event._tag === "Delete") {
-          // No data to scope on, but the id is globally unique — fan out and let the owner remove it.
-          const mounted = yield* registry.getByEntity<Writable>(meta.entity)
-          return yield* Effect.forEach(mounted, ({ collection }) => collection.utils.deleteSynced(event.modelId), {
-            discard: true,
-          })
-        }
-
-        const data = yield* Schema.decodeUnknown(meta.schema)(event.data).pipe(Effect.orDie)
         const key = Option.match(meta.scopeOf, {
           onNone: () => globalKey<Writable>(meta.entity),
           onSome: (scopeOf) => scopedKey<Writable>({ entity: meta.entity, scope: scopeOf(data) }),
         })
         const found = yield* registry.getById(key)
         return yield* Option.match(found, {
-          onNone: () => Effect.void, // not mounted ⇒ ignore (DEC-A11)
+          onNone: () => Effect.void, // not mounted ⇒ ignore (the event is still in the log for later replay)
           onSome: (collection) => collection.utils.writeSynced(data),
         })
       })
 
+    const applyDelete = (meta: ModelMeta<any>, modelId: ModelId): Effect.Effect<void> =>
+      registry
+        .getByEntity<Writable>(meta.entity)
+        .pipe(
+          Effect.flatMap((mounted) =>
+            Effect.forEach(mounted, ({ collection }) => collection.utils.deleteSynced(modelId), { discard: true }),
+          ),
+        )
+
+    // ── ingest: record a NEW event (append to the log + advance the cursor) and apply it ──
+    const ingest = (event: EntityEvent): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const entry = map[event.modelName]
+        if (entry === undefined) return // unknown model ⇒ skip both log and apply (a newer server may emit more)
+        const meta = entry._meta
+        if (event._tag === "Delete") {
+          const row: LoggedEvent = {
+            syncId: event.syncId,
+            modelName: event.modelName,
+            scope: Option.none(),
+            tag: "Delete",
+            modelId: event.modelId,
+            data: Option.none(),
+          }
+          yield* log.append([row])
+          yield* applyDelete(meta, event.modelId)
+        } else {
+          const data = yield* Schema.decodeUnknown(meta.schema)(event.data).pipe(Effect.orDie)
+          const row: LoggedEvent = {
+            syncId: event.syncId,
+            modelName: event.modelName,
+            scope: Option.map(meta.scopeOf, (scopeOf) => scopeOf(data)),
+            tag: event._tag,
+            modelId: meta.getKey(data),
+            data: Option.some(event.data),
+          }
+          yield* log.append([row])
+          yield* applyWrite(meta, data)
+        }
+        yield* store.set(event.syncId)
+        ingestsSincePrune += 1
+        if (ingestsSincePrune >= options.prune.everyEvents) {
+          ingestsSincePrune = 0
+          yield* log.prune({ perModel: options.prune.perModel, total: options.prune.total })
+        }
+      })
+
+    // ── replay: apply a logged row through the SAME application path (decode at the boundary) ──
+    const replayRow = (meta: ModelMeta<any>, row: LoggedEvent): Effect.Effect<void> =>
+      row.tag === "Delete"
+        ? applyDelete(meta, row.modelId)
+        : Schema.decodeUnknown(meta.schema)(Option.getOrElse(row.data, () => null)).pipe(
+            Effect.orDie,
+            Effect.flatMap((data) => applyWrite(meta, data)),
+          )
+
     // Replace one mounted instance's contents with the server's current rows (DEC-T9 reconcile).
     const snapshotInstance = (
-      meta: SyncMap[string]["_meta"],
-      key: { readonly scope: Option.Option<string> },
+      meta: ModelMeta<any>,
+      scope: Option.Option<string>,
       collection: Writable,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const rows = yield* meta.listFn(key.scope)
+        const rows = yield* meta.listFn(scope)
         const fetched = new Set(rows.map(meta.getKey))
-        const absent = Array.from(collection.keys()).filter((k) => !fetched.has(k))
+        const absent = Array.from(collection.keys()).filter((key) => !fetched.has(key))
         yield* Effect.forEach(rows, (row) => collection.utils.writeSynced(row), { discard: true })
-        yield* Effect.forEach(absent, (k) => collection.utils.deleteSynced(k), { discard: true })
+        yield* Effect.forEach(absent, (key) => collection.utils.deleteSynced(key), { discard: true })
       })
 
     // Snapshot every mounted instance of every model in the map.
@@ -92,7 +165,7 @@ export const syncLoop = (
           .getByEntity<Writable>(entry._meta.entity)
           .pipe(
             Effect.flatMap((mounted) =>
-              Effect.forEach(mounted, ({ key, collection }) => snapshotInstance(entry._meta, key, collection), {
+              Effect.forEach(mounted, ({ key, collection }) => snapshotInstance(entry._meta, key.scope, collection), {
                 discard: true,
               }),
             ),
@@ -100,24 +173,93 @@ export const syncLoop = (
       { discard: true },
     )
 
+    // Mark every currently-mounted instance complete to `at` — they rode this catchup, so their `onMount`
+    // skips instead of re-bootstrapping (which an empty `listFn` would turn into a wipe).
+    const markMountedCaughtUp = (at: SyncId): Effect.Effect<void> =>
+      Effect.forEach(
+        Object.values(map),
+        (entry) =>
+          registry
+            .getByEntity(entry._meta.entity)
+            .pipe(
+              Effect.flatMap((mounted) =>
+                Effect.forEach(mounted, ({ key }) => log.setBaseWatermark({ key, at }), { discard: true }),
+              ),
+            ),
+        { discard: true },
+      )
+
     const applyCatchup = (response: CatchupResponse): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (response.events.some((event) => event._tag === "Resync")) {
-          yield* snapshotAll
-        } else {
           yield* Effect.forEach(
-            response.events,
-            (event) => (event._tag === "Resync" ? Effect.void : dispatch(event)),
+            response.events.filter((event) => event._tag === "Resync"),
+            (event) => log.setLastResync(event.syncId),
             { discard: true },
           )
+          yield* snapshotAll
+        } else {
+          yield* Effect.forEach(response.events, (event) => (event._tag === "Resync" ? Effect.void : ingest(event)), {
+            discard: true,
+          })
         }
         yield* store.set(response.lastSyncId)
+        yield* markMountedCaughtUp(response.lastSyncId)
       })
 
-    const route = (event: HydratedSyncEventEnvelope): Effect.Effect<void, ResyncStop> =>
-      event._tag === "Resync"
-        ? store.clear.pipe(Effect.zipRight(onResync), Effect.zipRight(Effect.fail(new ResyncStop())))
-        : dispatch(event).pipe(Effect.zipRight(store.set(event.syncId)))
+    // ── heal a freshly-mounted collection from its freshness metadata ──
+    const onMount = (key: CollectionKey<unknown>): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const modelName = modelOfEntity.get(key.entity)
+        if (modelName === undefined) return
+        const entry = map[modelName]
+        if (entry === undefined) return
+        const meta = entry._meta
+
+        const baseWatermark = yield* log.getBaseWatermark(key)
+        const cursor = yield* store.get
+        const modelFloor = yield* log.floor(modelName)
+        const lastResyncAt = yield* log.getLastResync
+        const at = Option.getOrElse(cursor, () => SyncId.make("0"))
+
+        switch (decideOnMount({ baseWatermark, cursor, modelFloor, lastResyncAt })) {
+          case MountDecision.Skip:
+            return
+          case MountDecision.Replay: {
+            const since = Option.getOrElse(baseWatermark, () => SyncId.make("0"))
+            const rows = yield* log.read({ modelName, scope: key.scope, since })
+            yield* Effect.forEach(rows, (row) => replayRow(meta, row), { discard: true })
+            yield* log.setBaseWatermark({ key, at })
+            return
+          }
+          case MountDecision.Bootstrap: {
+            const found = yield* registry.getById(key as CollectionKey<Writable>)
+            yield* Option.match(found, {
+              onNone: () => Effect.void,
+              onSome: (collection) => snapshotInstance(meta, key.scope, collection),
+            })
+            yield* log.setBaseWatermark({ key, at })
+            return
+          }
+        }
+      })
+
+    const route = (item: Inbox): Effect.Effect<void, ResyncStop> => {
+      if (item._tag === "Mount") return onMount(item.key)
+      const event = item.event
+      return event._tag === "Resync"
+        ? log.setLastResync(event.syncId).pipe(
+            Effect.zipRight(store.clear),
+            Effect.zipRight(onResync),
+            Effect.zipRight(Effect.fail(new ResyncStop())),
+          )
+        : ingest(event)
+    }
+
+    const inbox = Stream.merge(
+      registry.mounts.pipe(Stream.map((key): Inbox => ({ _tag: "Mount", key }))),
+      transport.connect.pipe(Stream.map((event): Inbox => ({ _tag: "Live", event }))),
+    )
 
     const cycle = Effect.gen(function* () {
       const from = Option.getOrElse(yield* store.get, () => SyncId.make("0"))
@@ -130,7 +272,7 @@ export const syncLoop = (
         ),
       )
       yield* Option.match(response, { onNone: () => Effect.void, onSome: applyCatchup })
-      yield* Stream.runForEach(transport.connect, route)
+      yield* Stream.runForEach(inbox, route)
     })
 
     yield* cycle.pipe(
