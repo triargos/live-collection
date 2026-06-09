@@ -44,8 +44,9 @@ export const createPlayground = async (): Promise<Playground> => {
 
   const bus = new DebugBus()
   const backend = makeSharedBackend({ bus, tabId })
-  // EventLogStore (replay-on-mount) — in-memory for now; the durable IndexedDB adapter lands with the browser proof.
-  const loop = Layer.merge(backend.loop, EventLogStore.layerMemory)
+  // EventLogStore (replay-on-mount) — durable IndexedDB, per-tab so two tabs are independent clients (one
+  // origin-shared default DB would clobber each other's log/watermarks). Survives reload; powers replay.
+  const loop = Layer.merge(backend.loop, EventLogStore.layer({ databaseName: `${dbName}-eventlog` }))
   const runtime = makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
 
   const webhooks = defineCollection({

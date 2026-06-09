@@ -44,6 +44,13 @@ export interface BackendControls {
   readonly lastSyncId: () => string
   /** Broadcast a live `Resync(All)` to **other** tabs (they reload + re-catchup — DEC-T6). */
   readonly broadcastResync: () => void
+  /**
+   * Append an `Insert` for `orgId` to the shared log and echo it onto this tab's loop — the "a remote
+   * client wrote into a scope you don't have mounted" signal. The loop **logs** it to the EventLog (so it
+   * is replayable) even when no collection for that scope is mounted, which is what makes replay-on-mount
+   * demonstrable: seed while unmounted, then mount and watch it heal from the local log with no `listFn`.
+   */
+  readonly seedRemote: (args: { readonly orgId: string; readonly url: string }) => void
   /** Wipe the shared event log (a fresh server). Does not touch any tab's local OPFS/cursor. */
   readonly resetServer: () => void
 }
@@ -256,6 +263,23 @@ export const makeSharedBackend = (config: {
       const wire = Effect.runSync(encodeEnvelope(env).pipe(Effect.orDie))
       channel.postMessage(wire)
       bus.push({ direction: "out", channel: "resync", label: "broadcast Resync(All) → other tabs reload" })
+    },
+    seedRemote: ({ orgId, url }) => {
+      const w: Webhook = { id: crypto.randomUUID(), orgId, url }
+      // `commit` is the same path a real mutation takes: append to the shared log, self-echo onto this
+      // tab's loop (which logs it to the EventLog + advances the cursor), and fan out to other tabs.
+      Effect.runSync(
+        commit((syncId) => insertEnvelope(syncId, w)).pipe(
+          Effect.flatMap((env) =>
+            bus.tap({
+              direction: "in",
+              channel: "seed",
+              label: `seeded Insert #${env.syncId} → ${orgId} (no collection mounted ⇒ logged, not applied)`,
+              payload: w,
+            }),
+          ),
+        ),
+      )
     },
     resetServer: () => {
       localStorage.removeItem(LOG_KEY)

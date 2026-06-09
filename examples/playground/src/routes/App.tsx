@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge.js"
 import { usePlayground } from "../live/context.js"
 import { DebugPanel } from "../debug/DebugPanel.js"
 import { useStoreTaps } from "../debug/store-taps.js"
+import { ReplayLab } from "./ReplayLab.js"
 import { StatusBar } from "./StatusBar.js"
 import { WebhooksPage } from "./WebhooksPage.js"
 
@@ -36,6 +37,7 @@ export function App() {
 
         <StatusBar pg={pg} />
         <WebhooksPage />
+        <ReplayLab />
       </div>
       <DebugPanel pg={pg} />
     </div>
