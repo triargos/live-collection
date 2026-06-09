@@ -72,7 +72,7 @@ provides it into `listFn` and every handler, so they reach the loop as `R = neve
   decoded event via `scopeOf`.
 
 > The handle also carries `_meta` (`ModelMeta<T>`) — `entity`, `schema`, `getKey`, `scopeOf`,
-> `listFn` — which is what the `SyncMap` and sync loop read. You pass the handle into the `SyncMap`;
+> `listFn` — which is what the `SyncModels` array and sync loop read. You pass the handle into `SyncModels`;
 > the loop reaches *instances* through the registry, never by calling the handle
 > ([`define-collection.ts:25-46`](../packages/live-collection/src/registry/define-collection.ts#L25)).
 
@@ -253,7 +253,7 @@ Each collection is built in its own **child scope** forked from the registry's l
 
 ## See also
 
-- [./architecture.md](./architecture.md) — `makeLiveRuntime`, the two-surface runtime, the `SyncMap`.
+- [./architecture.md](./architecture.md) — `makeLiveRuntime`, the two-surface runtime, the `SyncModels` array.
 - [./read-path.md](./read-path.md) — how `mounts` drives skip / replay / bootstrap.
 - [./optimistic-writes.md](./optimistic-writes.md) — the optimistic write path and `SyncWrite` reconciliation.
 - [./protocol.md](./protocol.md) / [./backend.md](./backend.md) — the wire contract you implement

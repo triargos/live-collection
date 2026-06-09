@@ -70,7 +70,7 @@ const runtime = makeLiveRuntime({
 **2. Define one collection per model.** The model name is written once; the handle is runtime-bound and registry-backed. `scopeOf` present ⇒ scoped (`webhooks(orgId)`); absent ⇒ global (`projects()`).
 
 ```ts
-import { defineCollection, type SyncMap } from "@triargos/live-collection"
+import { defineCollection, type SyncModels } from "@triargos/live-collection"
 import { Effect } from "effect"
 
 const webhooks = defineCollection({
@@ -85,7 +85,7 @@ const webhooks = defineCollection({
     Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
 })
 
-const syncMap: SyncMap = { Webhook: webhooks } // explicit model → collection wiring for the loop
+const models: SyncModels = [webhooks] // the models the loop drives; wire name = each handle's `entity`
 ```
 
 **3. Mount the loop once, then read with `useLiveQuery`.** `useLiveSync` forks the SSE/catchup/cursor loop for the app's lifetime; reads are plain `@tanstack/react-db`.
@@ -95,7 +95,7 @@ import { useLiveSync } from "@triargos/live-collection-react"
 import { useLiveQuery } from "@tanstack/react-db"
 
 function App() {
-  useLiveSync(runtime, syncMap) // mount ONCE near the root; map is captured at mount — keep it stable
+  useLiveSync(runtime, models) // mount ONCE near the root; models is captured at mount — keep it stable
   return <Webhooks orgId="org-1" />
 }
 

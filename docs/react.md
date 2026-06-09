@@ -22,7 +22,7 @@ runtime/registry/two-surface mechanics behind the hook, see [./architecture.md](
 
 | Symbol | From | Role |
 |---|---|---|
-| `useLiveSync(runtime, map)` | `@triargos/live-collection-react` | Fork the sync loop for the app lifetime |
+| `useLiveSync(runtime, models)` | `@triargos/live-collection-react` | Fork the sync loop for the app lifetime |
 | `useLiveQuery(() => coll)` | `@tanstack/react-db` | Read a collection reactively (native, not wrapped) |
 
 You also import `defineCollection`, `makeLiveRuntime`, and `reloadWindow` from the main
@@ -36,15 +36,15 @@ in [./architecture.md](./architecture.md); this page covers how they meet React.
 
 ---
 
-## `useLiveSync(runtime, map)`
+## `useLiveSync(runtime, models)`
 
 ```ts
-export function useLiveSync(runtime: LiveRuntime, map: SyncMap): void
+export function useLiveSync(runtime: LiveRuntime, models: SyncModels): void
 ```
 
-[`packages/react/src/index.ts:21`](../packages/react/src/index.ts) — DEC-R8.
+[`packages/react/src/index.ts`](../packages/react/src/index.ts) — DEC-R8.
 
-Forks `runtime.forkLoop(map)` on mount and `Fiber.interrupt`s the returned fiber on unmount. That
+Forks `runtime.forkLoop(models)` on mount and `Fiber.interrupt`s the returned fiber on unmount. That
 loop is the async transport tier: SSE tail + catchup + cursor/watermark advance + resync. It runs
 **off the render path**, in an effect.
 
@@ -52,44 +52,43 @@ Three things to internalize:
 
 1. **Mount it once, near the root.** One loop serves the whole app. The playground mounts it in the
    app shell ([`examples/playground/src/routes/App.tsx:15`](../examples/playground/src/routes/App.tsx)).
-   Mounting it in two places gives you two SSE connections fighting over the same watermark.
+   `forkLoop` is last-call-wins (a second fork interrupts the previous loop), so two mounts won't
+   split the registry's mount-signal queue — but one mount point is still the intended shape.
 
 2. **Unmount stops the loop, but does *not* dispose collections.** Registry lifetime is the **app's**,
    not the loop fiber's — a remount reuses the warm local store (no re-hydrate, no re-list). The hook's
-   cleanup runs `Effect.runFork(Fiber.interrupt(fiber))` and nothing else
-   ([`packages/react/src/index.ts:28`](../packages/react/src/index.ts)). Disposal is a separate,
+   cleanup runs `Effect.runFork(Fiber.interrupt(fiber))` and nothing else. Disposal is a separate,
    explicit act: `runtime.dispose()` at app teardown / logout, or `disposeScope` on a workspace switch
    (see [./architecture.md](./architecture.md)).
 
-3. **`map` is snapshotted at mount.** The loop reads it once at start; the hook deliberately omits
-   `map` from the effect deps and re-forks **only when `runtime` changes**
-   ([`packages/react/src/index.ts:31`](../packages/react/src/index.ts)). Passing a fresh `{ ... }`
-   literal every render would thrash the connection, so the hook captures the *current* `map` via a
-   ref but does not re-run on it. **Keep `map` a stable, module-level (or memoized) value.** Changing
-   its contents after mount has no effect.
+3. **`models` is snapshotted at mount.** The loop reads it once at start; the hook deliberately omits
+   `models` from the effect deps and re-forks **only when `runtime` changes**. Passing a fresh `[ ... ]`
+   literal every render is fine for identity but pointless — **keep `models` a stable, module-level
+   (or memoized) array.** Changing its contents after mount has no effect.
 
-### What `runtime` and `map` are
+### What `runtime` and `models` are
 
 `runtime: LiveRuntime` is the two-surface infra value from `makeLiveRuntime(...)`. The hook only
 touches its `forkLoop` member
-([`packages/live-collection/src/runtime/live-runtime.ts:27`](../packages/live-collection/src/runtime/live-runtime.ts)):
+([`packages/live-collection/src/runtime/live-runtime.ts`](../packages/live-collection/src/runtime/live-runtime.ts)):
 
 ```ts
-readonly forkLoop: (map: SyncMap) => Fiber.RuntimeFiber<void>
+readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void>
 ```
 
-`map: SyncMap` is the **explicit** model→collection wiring (DEC-R5) — there is no auto-registration.
-It is a plain record keyed by wire model name; each value is a collection handle from
-`defineCollection`, and only its `_meta` is read (the loop reaches live instances through the
-registry, never by calling the handle)
-([`packages/live-collection/src/registry/define-collection.ts:46`](../packages/live-collection/src/registry/define-collection.ts)):
+`models: SyncModels` is the **explicit** wiring (DEC-R5 as amended) — there is no auto-registration.
+It is an array of collection handles from `defineCollection`; only each handle's `_meta` is read (the
+loop reaches live instances through the registry, never by calling the handle)
+([`packages/live-collection/src/registry/define-collection.ts`](../packages/live-collection/src/registry/define-collection.ts)):
 
 ```ts
-export type SyncMap = Record<string, { readonly _meta: ModelMeta<any> }>
+export type SyncModels = ReadonlyArray<{ readonly _meta: ModelMeta<any> }>
 ```
 
-So `map` is a literal `{ Webhook: webhookCollection }` — no duplicated `schema`/`scopeOf`, that
-metadata rides on the handle.
+So `models` is a literal `[webhookCollection]` — the wire model name is each handle's `_meta.entity`,
+written once in `defineCollection`, and the rest of the metadata (`schema`/`scopeOf`/`listFn`) rides
+on the handle. (The earlier record shape, `{ Webhook: webhookCollection }`, duplicated the name — a
+typo'd key silently dropped every event for that model.)
 
 ---
 
@@ -148,10 +147,10 @@ const webhooks = defineCollection({
     Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
 })
 
-return { runtime, syncMap: { Webhook: webhooks }, webhooks, /* … */ }
+return { runtime, models: [webhooks], webhooks, /* … */ }
 ```
 
-Note the `SyncMap` is the literal `{ Webhook: webhooks }`. `reloadWindow` is the default prod resync
+Note `models` is the literal `[webhooks]`. `reloadWindow` is the default prod resync
 action exported from the main package
 ([`packages/live-collection/src/runtime/live-runtime.ts:63`](../packages/live-collection/src/runtime/live-runtime.ts)).
 
@@ -184,7 +183,7 @@ export function usePlayground(): Playground {
 ```tsx
 export function App() {
   const pg = usePlayground()
-  useLiveSync(pg.runtime, pg.syncMap) // forks the loop for the app's lifetime
+  useLiveSync(pg.runtime, pg.models) // forks the loop for the app's lifetime
   return (/* … reads via useLiveQuery deeper in the tree … */)
 }
 ```

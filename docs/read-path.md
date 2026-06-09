@@ -253,7 +253,7 @@ import { useLiveSync } from "@triargos/live-collection-react"
 
 function App() {
   // forks the catchup/cursor/tail fiber for the app's lifetime
-  useLiveSync(pg.runtime, pg.syncMap)
+  useLiveSync(pg.runtime, pg.models)
   // ...
 }
 ```

@@ -35,7 +35,7 @@ protocol  →  live-collection  →  react
 `protocol → live-collection`: `live-collection` imports the wire schemas and the squasher from the
 protocol kit (`HydratedSyncEventEnvelope`, `CatchupResponse`, `ModelId`, `SyncId`, `ModelName` — see
 the imports at the top of [`sync-loop.ts:1-8`](../packages/live-collection/src/client/sync-loop.ts#L1-L8)).
-`live-collection → react`: the React bindings import `LiveRuntime` and `SyncMap` as types only
+`live-collection → react`: the React bindings import `LiveRuntime` and `SyncModels` as types only
 ([`react/src/index.ts:11`](../packages/react/src/index.ts#L11)). Nothing points back up the chain.
 
 ### Why `core` / `persistence` / `client` are directories, not packages
@@ -95,7 +95,7 @@ one async path — so `LiveRuntime` exposes exactly two surfaces
 export interface LiveRuntime {
   readonly registry: CollectionRegistryShape          // mount surface — sync value
   readonly persistence: PersistedCollectionPersistence // app-owned value, threaded into each make
-  readonly forkLoop: (map: SyncMap) => Fiber.RuntimeFiber<void> // loop surface — async fiber
+  readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void> // loop surface — async fiber
   readonly dispose: () => void                         // app teardown / logout
 }
 ```
@@ -182,8 +182,8 @@ runtime  (infra: registry value + persistence value | async transport+cursor+cat
    ↑       built first, knows no collections
 collections = defineCollection({ runtime, … })   →  native LiveCollection<T>, carries _meta
    ↑       registry-backed callable handle
-SyncMap { Webhook: webhookCollection, … }  →  syncLoop / useLiveSync
-           assembled last; references the handles by _meta
+SyncModels [webhookCollection, …]  →  syncLoop / useLiveSync
+           assembled last; references the handles by _meta (wire name = _meta.entity)
 ```
 
 `defineCollection` has **two overloads** ([`define-collection.ts:103-104`](../packages/live-collection/src/registry/define-collection.ts#L103-L104)):
@@ -194,8 +194,11 @@ Collection identity is the structured `CollectionKey { entity, scope: Option<str
 is no string-id grammar; the registry never parses an id, and `serializeKey` is an injective map key only,
 never parsed back ([`collection-key.ts:41-42`](../packages/live-collection/src/registry/collection-key.ts#L41-L42)).
 
-The `SyncMap` is a literal `{ ModelName: handle }`; each handle carries `_meta: ModelMeta<T>`
-(`entity`, `schema`, `getKey`, `scopeOf`, `listFn`) that the loop reads to decode, route, and snapshot
+`SyncModels` is a literal **array of handles** — `[webhookCollection, …]` — and the wire model name
+is each handle's `_meta.entity`, written once in `defineCollection` (DEC-R5 as amended: the earlier
+record shape duplicated the name, and a typo'd key silently dropped a model's events). Each handle
+carries `_meta: ModelMeta<T>` (`entity`, `schema`, `getKey`, `scopeOf`, `listFn`) that the loop reads
+to decode, route, and snapshot
 ([`define-collection.ts:25-31`](../packages/live-collection/src/registry/define-collection.ts#L25-L31)) —
 the loop never *calls* the handle, it reaches instances through the registry.
 
@@ -226,9 +229,9 @@ const webhooks = defineCollection({
     Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)), // library reconciles (Model B)
 })
 
-// 4. The map is a literal; start the loop once near the app root.
-const syncMap: SyncMap = { Webhook: webhooks }
-// React:  useLiveSync(runtime, syncMap)
+// 4. The models array is a literal; start the loop once near the app root.
+const models: SyncModels = [webhooks]
+// React:  useLiveSync(runtime, models)
 // Reads:  const { data } = useLiveQuery(() => webhooks(orgId), [orgId])   // native, stable
 ```
 

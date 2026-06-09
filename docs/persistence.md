@@ -53,7 +53,7 @@ app constructs and passes to `makeLiveRuntime`, which stores it on the runtime
 export interface LiveRuntime {
   readonly registry: CollectionRegistryShape
   readonly persistence: PersistedCollectionPersistence   // app-owned value, threaded into each make
-  readonly forkLoop: (map: SyncMap) => Fiber.RuntimeFiber<void>
+  readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void>
   readonly dispose: () => void
 }
 ```
