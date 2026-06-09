@@ -6,27 +6,26 @@
  * re-export it. The only genuinely React-specific piece is lifecycle: {@link useLiveSync} forks the sync
  * loop on mount and interrupts it on unmount (DEC-R8).
  */
-import { useEffect, useRef } from "react"
+import { useEffect } from "react"
 import { Effect, Fiber } from "effect"
-import type { LiveRuntime, SyncMap } from "@triargos/live-collection"
+import type { LiveRuntime, SyncModels } from "@triargos/live-collection"
 
 /**
- * Run the live sync loop for `map` for the lifetime of the mounting component (DEC-R8). Forks
+ * Run the live sync loop for `models` for the lifetime of the mounting component (DEC-R8). Forks
  * `runtime.forkLoop` on mount and `Fiber.interrupt`s it on unmount. Mount once near the app root.
  *
  * Interrupting stops the SSE loop but does **not** dispose collections — registry lifetime is the
- * app's, so a remount reuses the warm local store. `map` is captured at mount (the loop reads it once
- * at start); changing it later has no effect — keep it a stable, module-level literal.
+ * app's, so a remount reuses the warm local store. `models` is captured at mount (the loop reads it
+ * once at start); changing it later has no effect — keep it a stable, module-level array.
  */
-export function useLiveSync(runtime: LiveRuntime, map: SyncMap): void {
-  // map intentionally omitted from deps: the loop snapshots it at start; re-forking per render
-  // (a fresh `{ ... }` literal each render) would thrash the connection.
-  const mapRef = useRef(map)
-  mapRef.current = map
+export function useLiveSync(runtime: LiveRuntime, models: SyncModels): void {
+  // `models` intentionally omitted from deps: the loop snapshots it at start; re-forking per render
+  // (a fresh `[ ... ]` literal each render) would thrash the connection.
   useEffect(() => {
-    const fiber = runtime.forkLoop(mapRef.current)
+    const fiber = runtime.forkLoop(models)
     return () => {
       Effect.runFork(Fiber.interrupt(fiber))
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- models is captured at mount by design
   }, [runtime])
 }

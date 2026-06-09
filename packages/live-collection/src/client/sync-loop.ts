@@ -7,7 +7,7 @@ import {
 } from "@triargos/live-collection-protocol"
 import { CollectionRegistry } from "../registry/collection-registry.js"
 import { type CollectionKey, globalKey, scopedKey } from "../registry/collection-key.js"
-import type { ModelMeta, SyncMap } from "../registry/define-collection.js"
+import type { ModelMeta, SyncModels } from "../registry/define-collection.js"
 import { LastSyncIdStore } from "./last-sync-id-store.js"
 import { CatchupClient } from "./catchup-client.js"
 import { SyncTransport } from "./sync-transport.js"
@@ -48,7 +48,7 @@ const defaultOptions: SyncLoopOptions = { prune: { perModel: 1000, total: 5000, 
  * Runs forever — fork it (`useLiveSync`). Error channel is `never`: drops retry, `ResyncStop` is caught.
  */
 export const syncLoop = (
-  map: SyncMap,
+  models: SyncModels,
   onResync: Effect.Effect<void>,
   options: SyncLoopOptions = defaultOptions,
 ): Effect.Effect<
@@ -64,6 +64,10 @@ export const syncLoop = (
     const log = yield* EventLogStore
 
     let ingestsSincePrune = 0 // single-fibered (merged inbox), so a plain counter is safe
+
+    // The routing index: wire model name === entity (one name, DEC-R5 amendment).
+    const metaByName = new Map<string, ModelMeta<any>>()
+    for (const { _meta } of models) metaByName.set(_meta.entity, _meta)
 
     // ── source-agnostic application (the dispatcher): apply ONE decoded event to the mounted store ──
     const applyWrite = (meta: ModelMeta<any>, data: any): Effect.Effect<void> =>
@@ -91,9 +95,8 @@ export const syncLoop = (
     // ── ingest: record a NEW event (append to the log + advance the cursor) and apply it ──
     const ingest = (event: EntityEvent): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const entry = map[event.modelName]
-        if (entry === undefined) return // unknown model ⇒ skip both log and apply (a newer server may emit more)
-        const meta = entry._meta
+        const meta = metaByName.get(event.modelName)
+        if (meta === undefined) return // unknown model ⇒ skip both log and apply (a newer server may emit more)
         if (event._tag === "Delete") {
           const row: LoggedEvent = {
             syncId: event.syncId,
@@ -160,15 +163,15 @@ export const syncLoop = (
     ): Effect.Effect<void> =>
       meta.listFn(scope).pipe(Effect.flatMap((rows) => collection.utils.replaceSynced(rows)))
 
-    // Snapshot every mounted instance of every model in the map.
+    // Snapshot every mounted instance of every model.
     const snapshotAll: Effect.Effect<void> = Effect.forEach(
-      Object.values(map),
-      (entry) =>
+      [...metaByName.values()],
+      (meta) =>
         registry
-          .getByEntity<Writable>(entry._meta.entity)
+          .getByEntity<Writable>(meta.entity)
           .pipe(
             Effect.flatMap((mounted) =>
-              Effect.forEach(mounted, ({ key, collection }) => snapshotInstance(entry._meta, key.scope, collection), {
+              Effect.forEach(mounted, ({ key, collection }) => snapshotInstance(meta, key.scope, collection), {
                 discard: true,
               }),
             ),
@@ -178,7 +181,7 @@ export const syncLoop = (
 
     // The healer owns watermark policy (heal decisions + post-catchup completeness stamps); the loop
     // hands it the two application arms and never writes watermarks itself.
-    const healer = makeMountHealer({ map, registry, store, log, replayRow, snapshotInstance })
+    const healer = makeMountHealer({ models: metaByName, registry, store, log, replayRow, snapshotInstance })
 
     const applyCatchup = (args: { readonly response: CatchupResponse; readonly from: SyncId }): Effect.Effect<void> =>
       Effect.gen(function* () {

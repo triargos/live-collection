@@ -131,7 +131,7 @@ const run = (args: {
         { discard: true },
       )
       const fiber = yield* Effect.forkScoped(
-        syncLoop({ Webhook: webhookCollection }, args.onResync ?? Effect.void, args.loopOptions),
+        syncLoop([webhookCollection], args.onResync ?? Effect.void, args.loopOptions),
       )
       yield* args.body({ webhookCollection, store, log, registry, listCalls: () => listCalls, queue, fiber })
     }).pipe(Effect.scoped, Effect.provide(memory))

@@ -16,7 +16,7 @@ type Counted = { readonly keys: () => Iterable<unknown> }
 
 const readRegistry = (pg: Playground): ReadonlyArray<RegistryRow> => {
   const rows: Array<RegistryRow> = []
-  for (const entity of Object.keys(pg.syncMap)) {
+  for (const entity of pg.models.map((m) => m._meta.entity)) {
     const mounted = Effect.runSync(pg.runtime.registry.getByEntity<Counted>(entity))
     for (const { key, collection } of mounted) {
       rows.push({

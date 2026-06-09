@@ -6,7 +6,7 @@ import {
   makeLiveRuntime,
   reloadWindow,
   type ScopedHandle,
-  type SyncMap,
+  type SyncModels,
 } from "@triargos/live-collection"
 import {
   createBrowserWASQLitePersistence,
@@ -26,11 +26,11 @@ import { Webhook, webhookKey } from "./schema.js"
  * to OPFS. Reload to hydrate from OPFS; open a second tab to watch writes sync across tabs.
  *
  * Everything observable hangs off here for the debug panel: the {@link DebugBus} traffic log, the backend
- * {@link BackendControls} (failure injection, resync, server reset), the registry, and the {@link SyncMap}.
+ * {@link BackendControls} (failure injection, resync, server reset), the registry, and the {@link SyncModels}.
  */
 export interface Playground {
   readonly runtime: LiveRuntime
-  readonly syncMap: SyncMap
+  readonly models: SyncModels
   readonly webhooks: ScopedHandle<Webhook>
   readonly bus: DebugBus
   readonly controls: BackendControls
@@ -65,5 +65,5 @@ export const createPlayground = async (): Promise<Playground> => {
       Effect.flatMap(WebhookApi, (api) => api.remove(transaction.mutations[0]!.key)),
   })
 
-  return { runtime, syncMap: { Webhook: webhooks }, webhooks, bus, controls: backend.controls, tabId }
+  return { runtime, models: [webhooks], webhooks, bus, controls: backend.controls, tabId }
 }

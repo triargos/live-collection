@@ -51,7 +51,7 @@ describe("write path over OPFS (browser)", () => {
       const fake = makeFakeBackend()
       const runtime = makeLiveRuntime({ persistence, loop: fake.loop, onResync: Effect.void })
       const webhooks = webhookCollection(runtime, fake.services)
-      const fiber = runtime.forkLoop({ Webhook: webhooks })
+      const fiber = runtime.forkLoop([webhooks])
       const coll = webhooks("org-1")
       yield* Effect.promise(() => coll.preload())
 

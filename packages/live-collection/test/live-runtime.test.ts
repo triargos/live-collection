@@ -20,8 +20,8 @@ describe("makeLiveRuntime", () => {
       )
       const runtime = makeLiveRuntime({ persistence: makeNodeSqlitePersistence(), loop, onResync: Effect.void })
 
-      const first = runtime.forkLoop({})
-      const second = runtime.forkLoop({}) // the registry's mounts queue has ONE consumer — last call wins
+      const first = runtime.forkLoop([])
+      const second = runtime.forkLoop([]) // the registry's mounts queue has ONE consumer — last call wins
 
       const exit = yield* Fiber.await(first) // resolves only if the second fork interrupted the first
       assert.isTrue(Exit.isInterrupted(exit))

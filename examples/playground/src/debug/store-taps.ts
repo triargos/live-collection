@@ -31,7 +31,7 @@ export function useStoreTaps(pg: Playground): void {
     const subscriptions = new Map<string, { readonly unsubscribe: () => void }>()
 
     const sweep = (): void => {
-      for (const entity of Object.keys(pg.syncMap)) {
+      for (const entity of pg.models.map((m) => m._meta.entity)) {
         const mounted = Effect.runSync(pg.runtime.registry.getByEntity<Watchable>(entity))
         for (const { key, collection } of mounted) {
           const id = serializeKey(key)

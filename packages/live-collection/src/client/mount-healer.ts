@@ -2,7 +2,7 @@ import { Effect, Option } from "effect"
 import { compareSyncId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import type { CollectionRegistryShape } from "../registry/collection-registry.js"
 import type { CollectionKey } from "../registry/collection-key.js"
-import type { ModelMeta, SyncMap } from "../registry/define-collection.js"
+import type { ModelMeta } from "../registry/define-collection.js"
 import type { SyncWrite } from "../dispatch/sync-write.js"
 import type { EventLogStoreShape, LoggedEvent } from "./event-log-store.js"
 import type { LastSyncIdStoreShape } from "./last-sync-id-store.js"
@@ -17,7 +17,8 @@ export type Writable = { readonly utils: SyncWrite<unknown> }
  * stay the loop's source-agnostic dispatch; the healer owns only the policy of when to use which.
  */
 export interface MountHealerDeps {
-  readonly map: SyncMap
+  /** The loop's routing index: wire model name (=== entity, DEC-R5 amendment) → its meta. */
+  readonly models: ReadonlyMap<string, ModelMeta<any>>
   readonly registry: CollectionRegistryShape
   readonly store: LastSyncIdStoreShape
   readonly log: EventLogStoreShape
@@ -67,31 +68,25 @@ export interface MountHealer {
 }
 
 export const makeMountHealer = (deps: MountHealerDeps): MountHealer => {
-  const { map, registry, store, log, replayRow, snapshotInstance } = deps
-
-  // entity → wire model name, so a mount signal (keyed by entity) can read the model's log slice.
-  const modelOfEntity = new Map<string, ModelName>()
-  for (const [name, entry] of Object.entries(map)) modelOfEntity.set(entry._meta.entity, ModelName.make(name))
+  const { models, registry, store, log, replayRow, snapshotInstance } = deps
 
   const forEachMounted = (
     body: (key: CollectionKey<unknown>) => Effect.Effect<void>,
   ): Effect.Effect<void> =>
     Effect.forEach(
-      Object.values(map),
-      (entry) =>
+      [...models.values()],
+      (meta) =>
         registry
-          .getByEntity(entry._meta.entity)
+          .getByEntity(meta.entity)
           .pipe(Effect.flatMap((mounted) => Effect.forEach(mounted, ({ key }) => body(key), { discard: true }))),
       { discard: true },
     )
 
   const heal = (key: CollectionKey<unknown>): Effect.Effect<void> =>
     Effect.gen(function* () {
-      const modelName = modelOfEntity.get(key.entity)
-      if (modelName === undefined) return
-      const entry = map[modelName]
-      if (entry === undefined) return
-      const meta = entry._meta
+      const meta = models.get(key.entity)
+      if (meta === undefined) return
+      const modelName = ModelName.make(key.entity) // wire name === entity (DEC-R5 amendment)
 
       const baseWatermark = yield* log.getBaseWatermark(key)
       const cursor = yield* store.get

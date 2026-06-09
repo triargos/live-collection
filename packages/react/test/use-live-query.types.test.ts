@@ -20,8 +20,8 @@ export function _typeCheck(runtime: LiveRuntime, orgId: string): void {
     listFn: () => Effect.succeed<ReadonlyArray<Webhook>>([]),
   })
 
-  // The explicit SyncMap is a literal `{ ModelName: collection }`.
-  useLiveSync(runtime, { Webhook: webhookCollection })
+  // The explicit models array — the wire name comes from each handle's `_meta.entity` (DEC-R5 amendment).
+  useLiveSync(runtime, [webhookCollection])
 
   // Direct-collection overload — the native read: data is the entity rows, no wrapper.
   const direct = useLiveQuery(() => webhookCollection(orgId), [orgId])

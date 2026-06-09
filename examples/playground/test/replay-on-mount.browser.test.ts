@@ -103,7 +103,7 @@ const run = (body: (ctx: Ctx) => Effect.Effect<void>): Effect.Effect<void> =>
 
     yield* Effect.gen(function* () {
       const log = yield* EventLogStore
-      const fiber = yield* Effect.forkScoped(syncLoop({ Webhook: webhooks }, Effect.void))
+      const fiber = yield* Effect.forkScoped(syncLoop([webhooks], Effect.void))
       yield* body({ webhooks, log, registry, listCalls: () => listCalls, queue, fiber })
     }).pipe(Effect.scoped, Effect.provide(layers))
 

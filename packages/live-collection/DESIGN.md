@@ -678,10 +678,15 @@ DEC-T loop, re-driven by `_meta`:
   browser builder — our node `makeSqlitePersistence` is a hand-port of that same official assembly.**
 - **DEC-R4** `effectCollectionOptions` (`Effect<Collection>`) → `liveCollectionOptions` (plain
   `CollectionConfig` fields + `utils`); `createCollection` moves into `defineCollection`'s `make`.
-- **DEC-R5** No auto-registration. The **explicit `SyncMap`** is passed to `syncLoop`/`useLiveSync`.
-  Metadata rides on the handle (`_meta`) so the map is literal `{ ModelName: collection }` with no
-  duplicated `schema`/`scopeOf` (D4=b). *Rejected:* per-collection bus subscription (auto-register);
-  metadata-only map (re-declares schema).
+- **DEC-R5** *(amended 2026-06-09)* No auto-registration. The loop takes an explicit **array of
+  handles** (`SyncModels`): `useLiveSync(runtime, [webhookCollection])`. The wire model name IS
+  `_meta.entity` — one name, written once in `defineCollection`. *Supersedes the record-keyed
+  `SyncMap` (`{ ModelName: collection }`): the record duplicated the model name (map key vs
+  `entity`) and nothing related them — a typo'd key silently dropped every event for the model AND
+  its mount healing, with no error, ever.* Metadata still rides on the handle (`_meta`), D4=b
+  unchanged. *Rejected (unchanged):* per-collection bus subscription (auto-register); metadata-only
+  map (re-declares schema). If a wire name ever legitimately differs from `entity`, add an explicit
+  `modelName` field to `defineCollection` — still one declaration site.
 - **DEC-R6** `scopeOf` is `(entity: T) => string` and the mount arg **is** the scope string
   (`webhookCollection(orgId)`). **Revises DEC-10**'s `(args) => string`. One scope function, and the
   dispatcher gets entity→scope directly. *Rejected:* `Args`-mapped mounting (two scope functions).

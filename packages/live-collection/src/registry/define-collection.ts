@@ -39,11 +39,14 @@ export type ScopedHandle<T extends object> = ((scope: string) => LiveCollection<
 export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
 
 /**
- * The explicit model→collection wiring passed to `useLiveSync`/`syncLoop` (DEC-R5). Keyed by wire
- * model name; the value is the collection handle, whose `_meta` drives decode/route/snapshot. Only
- * `_meta` is read here — the loop reaches instances through the registry, never by calling the handle.
+ * The models the sync loop drives (DEC-R5 as amended): an explicit **array of collection handles**,
+ * `useLiveSync(runtime, [webhookCollection, …])`. The wire model name IS `_meta.entity` — one name,
+ * written once in `defineCollection`, so the registry key, the persisted table id, and the wire
+ * routing can never drift. Only `_meta` is read; the loop reaches instances through the registry,
+ * never by calling the handle. (The earlier record shape keyed by wire name duplicated the name —
+ * a typo'd key silently dropped every event for that model along with its mount healing.)
  */
-export type SyncMap = Record<string, { readonly _meta: ModelMeta<any> }>
+export type SyncModels = ReadonlyArray<{ readonly _meta: ModelMeta<any> }>
 
 /**
  * Optional **optimistic write path** (A.10). These are TanStack DB's native mutation params, but
