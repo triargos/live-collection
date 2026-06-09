@@ -29,7 +29,9 @@ export interface LiveRuntime {
 }
 
 /**
- * Build a {@link LiveRuntime}. `persistence` is the app value (`createOpfsSQLitePersistence(...)`);
+ * Build a {@link LiveRuntime}. `persistence` is the app value (prod: `createBrowserWASQLitePersistence({
+ * database })` from `@tanstack/browser-db-sqlite-persistence`, where `database` is opened once at startup
+ * via `await openBrowserWASQLiteOPFSDatabase({ databaseName })`);
  * `loop` is the transport/catchup/cursor layer; `onResync` is the live-resync action (prod:
  * {@link reloadWindow}). The registry is created synchronously in a long-lived scope and also handed
  * to the loop's ManagedRuntime via `Layer.succeed`, so both surfaces share one instance.

@@ -589,7 +589,8 @@ each cycle (retry on SyncConnectionLost, spaced 3s):
 
 ## The UX (the north star)
 ```ts
-const persistence = createOpfsSQLitePersistence({ database: open({ name: "app.sqlite" }) }) // app value, sync, once
+const database    = await openBrowserWASQLiteOPFSDatabase({ databaseName: "app.sqlite" }) // async, once, at startup
+const persistence = createBrowserWASQLitePersistence({ database })                        // app value (off render path)
 const runtime     = makeLiveRuntime({ persistence, loop: TransportInfra, onResync: reloadWindow })
 
 export const webhookCollection = defineCollection({
@@ -658,7 +659,11 @@ DEC-T loop, re-driven by `_meta`:
   computed in `make`).
 - **DEC-R3** Persistence is an **app value** (`PersistedCollectionPersistence`) passed to
   `makeLiveRuntime`, not a service tag. **Retires `PersistenceBase` tag** (**revises DEC-6/DEC-A2/DEC-A7**
-  for this seam). The node/sqlite persistence builder is test infra only (DEC-A8 unchanged).
+  for this seam). The node/sqlite persistence builder is test infra only (DEC-A8 unchanged). **Prod
+  builds the value with the official `@tanstack/browser-db-sqlite-persistence` (pinned `0.1.11`, matching
+  our `db-sqlite-persistence-core` pin): `await openBrowserWASQLiteOPFSDatabase({ databaseName })` →
+  `createBrowserWASQLitePersistence({ database })` over `@journeyapps/wa-sqlite`. The library ships no
+  browser builder — our node `makeSqlitePersistence` is a hand-port of that same official assembly.**
 - **DEC-R4** `effectCollectionOptions` (`Effect<Collection>`) → `liveCollectionOptions` (plain
   `CollectionConfig` fields + `utils`); `createCollection` moves into `defineCollection`'s `make`.
 - **DEC-R5** No auto-registration. The **explicit `SyncMap`** is passed to `syncLoop`/`useLiveSync`.
