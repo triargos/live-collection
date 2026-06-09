@@ -28,6 +28,6 @@
   "devDependencies": {
     "@triargos/live-collection-protocol": "workspace:*",
     "@types/react": "^19.2.15",
-    "react": "^19.2.6"
+    "react": "^19.2.7"
   }
 }

@@ -11,7 +11,8 @@
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "clean": "tsc -b --clean"
+    "clean": "tsc -b --clean",
+    "playground": "pnpm --filter @triargos/live-collection-playground"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
