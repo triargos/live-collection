@@ -3,8 +3,8 @@
 Guidance for Claude Code working in this repo.
 
 > **What this repo is.** `@triargos/live-collection-*` — a reusable, **frontend-only** Effect + TanStack DB
-> live-sync library (hero type `LiveCollection<T>`). The authoritative spec is [`live-sync-system.md`](live-sync-system.md);
-> the task breakdown is [`TASKS.md`](TASKS.md). The backend is per-app and lives elsewhere;
+> live-sync library (hero type `LiveCollection<T>`). The authoritative spec is [`live-sync-system.md`](live-sync-system.md).
+> The backend is per-app and lives elsewhere;
 > a reference backend lives (unpublished) in `examples/server`. Read the spec before writing code.
 
 ## Mandatory before any code change

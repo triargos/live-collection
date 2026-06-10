@@ -1,4 +1,4 @@
-# Optimistic writes (A.10)
+# Optimistic writes
 
 **What this is.** The optimistic write path is how the UI *mutates* a live collection: `coll.insert(...)`/`coll.delete(...)` apply locally and instantly, an Effect-returning handler you supply talks to your backend and returns the confirmed row, and **the library folds that row into the synced store before the mutation resolves**. It is the write half of the library; the read half (catchup + SSE tail + replay) is documented in [architecture.md](./architecture.md). **You use it when** you wire `onInsert`/`onUpdate`/`onDelete` into `defineCollection` for a model whose rows users edit. The backend that those handlers call is yours — see [backend.md](./backend.md) and [protocol.md](./protocol.md) for the wire contract.
 
@@ -73,7 +73,7 @@ Why "before"? In `@tanstack/db@0.6.7` (pinned alpha — **verify against your in
 
 ---
 
-## Client-minted ids (DEC-8)
+## Client-minted ids
 
 Recommended: **mint the id on the client** before inserting. The UI in the playground does exactly this:
 
@@ -82,7 +82,7 @@ Recommended: **mint the id on the client** before inserting. The UI in the playg
 coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id
 ```
 
-Because the id is the app's and the server preserves it, the SSE self-echo carries the **same key** as the row you already confirmed — so it collapses to an idempotent `writeSynced` and **no `clientId` / echo-suppression filter is needed** (this is what validates DEC-8). Server-assigned ids also work (you'd swap a temp id for the real one in the handler), but client-minted keeps the self-echo trivially idempotent and avoids the swap.
+Because the id is the app's and the server preserves it, the SSE self-echo carries the **same key** as the row you already confirmed — so it collapses to an idempotent `writeSynced` and **no `clientId` / echo-suppression filter is needed**. Server-assigned ids also work (you'd swap a temp id for the real one in the handler), but client-minted keeps the self-echo trivially idempotent and avoids the swap.
 
 ---
 
@@ -173,7 +173,7 @@ Steps 6–7 are the read path — see [architecture.md](./architecture.md) and t
 ## Not built (and why)
 
 - **Offline-durable writes — deferred.** Persisted collections persist the *synced* store, not the optimistic overlay, so a write made offline does not survive reload today. A durable offline queue needs a **separate mutation log** (replayed on reconnect), which is a future pass. (`@tanstack/offline-transactions` does not exist — this path is built on the native handlers above, not a phantom dep.)
-- **`clientId` / echo-suppression — removed (DEC-8/protocol DEC-11).** Not needed: client-minted ids make the self-echo idempotent, so there is no server-side originator filter on events, `SyncContext`, or the HTTP contract.
+- **`clientId` / echo-suppression — not needed.** Client-minted ids make the self-echo idempotent, so there is no server-side originator filter on events, `SyncContext`, or the HTTP contract.
 
 ---
 
@@ -187,6 +187,6 @@ Steps 6–7 are the read path — see [architecture.md](./architecture.md) and t
 | `writeSynced` / `deleteSynced` | `sync-write.ts:15` | the synced-baseline reconcile surface (library-internal) |
 | Model B (confirm-before-resolve) | this doc | required by TanStack tx-cleanup timing (0.6.7) |
 | Rollback on failure | `write-path.integration.test.ts` | handler `Effect.fail` ⇒ optimistic row removed |
-| Client-minted id | `WebhooksPage.tsx:27` | makes the self-echo idempotent (DEC-8) |
+| Client-minted id | `WebhooksPage.tsx:27` | makes the self-echo idempotent |
 
 Versions that matter: `@tanstack/db` is pinned at **0.6.7** (alpha); the browser persistence adapter at **0.1.11**. The persistence/mutation surface shifts between alphas — **verify signatures against your installed version.**

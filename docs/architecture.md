@@ -9,11 +9,8 @@ pieces compose before you wire the library in. The backend is yours and is docum
 see [`./backend.md`](./backend.md)
 and the wire contract in [`./protocol.md`](./protocol.md).
 
-> The authoritative design history is [`../packages/live-collection/DESIGN.md`](../packages/live-collection/DESIGN.md),
-> which is layered by date — **later sections supersede earlier ones**. This doc reflects the current
-> shipped surface (the native-collection redesign, DEC-R*, plus the EventLog replay path, DEC-E*); where
-> the design log still names an older API (`effectCollectionOptions`, `PersistenceBase` tag, `MountRef`),
-> that name is **dead** — the live name is cited from `src/` below.
+> This doc reflects the current shipped surface — native TanStack collections plus the durable
+> EventLog replay path; the live names are cited from `src/` below.
 
 ---
 
@@ -79,12 +76,12 @@ version actually installed:
 - `@tanstack/db` is pinned **exactly `0.6.7`** (alpha). Core only exports `createCollection`.
 - `persistedCollectionOptions` is imported from **`@tanstack/db-sqlite-persistence-core`**, *not* `@tanstack/db` core.
 - The prod browser persistence builder (`@tanstack/browser-db-sqlite-persistence`) is pinned **`0.1.11`**,
-  matching the persistence-core pin (DEC-R3). See it in use at
+  matching the persistence-core pin. See it in use at
   [`playground.ts:11-14`](../examples/playground/src/live/playground.ts#L11-L14).
 
 ---
 
-## The two execution surfaces (DEC-R8)
+## The two execution surfaces
 
 This is the load-bearing runtime mechanic. **Mounting a collection happens during render** (inside
 `useLiveQuery`'s queryFn); **the sync loop runs in an effect, off the render path.** They must not share
@@ -135,7 +132,7 @@ closing the long-lived scope at app teardown ([`collection-registry.ts:53-58`](.
 
 ---
 
-## Seams are `Context.Tag` + `Shape` + `Layer` (decision 6)
+## Seams are `Context.Tag` + `Shape` + `Layer`
 
 Every service seam in the library is a **hand-rolled** `Context.Tag` — **never `Effect.Service`** (which
 fuses tag, impl, and default layer, and is being removed in Effect v4). The exact shape:
@@ -161,12 +158,11 @@ The app composes these into the single `loop` layer it passes to `makeLiveRuntim
 catchup `layer`s carry a `HttpClient.HttpClient` requirement; provide the platform HTTP layer at the edge.
 Tests provide `layerMemory` adapters — **no `vi.mock`**, drive the seam through its in-memory layer.
 
-> **Note on persistence (DEC-R3, supersedes DEC-6 for this one seam).** `persistence` is **not** a tag —
+> **Note on persistence — the one seam that is not a tag.** `persistence` is **not** a tag —
 > it is a plain `PersistedCollectionPersistence` **value** the app builds and hands to `makeLiveRuntime`
-> ([`live-runtime.ts:23-24`](../packages/live-collection/src/runtime/live-runtime.ts#L23-L24)). The old
-> `PersistenceBase` tag is retired. This is exactly what makes the mount path synchronous (the value is
-> closed over, not resolved from context). DESIGN.md §2/§3 still describe the tag and an
-> `effectCollectionOptions` creator — both **dead**; the live creator is `liveCollectionOptions`
+> ([`live-runtime.ts:23-24`](../packages/live-collection/src/runtime/live-runtime.ts#L23-L24)).
+> This is exactly what makes the mount path synchronous (the value is
+> closed over, not resolved from context). The live creator is `liveCollectionOptions`
 > ([`index.ts:43-44`](../packages/live-collection/src/index.ts#L43-L44)).
 
 ---
@@ -188,15 +184,15 @@ SyncModels [webhookCollection, …]  →  syncLoop / useLiveSync
 
 `defineCollection` has **two overloads** ([`define-collection.ts:103-104`](../packages/live-collection/src/registry/define-collection.ts#L103-L104)):
 `scopeOf` present ⇒ scoped `(scope: string) => LiveCollection<T>`; absent ⇒ global `() => LiveCollection<T>`.
-It returns a **native** `LiveCollection<T>` — pass it straight to `useLiveQuery`, no wrapper hook (DEC-R1).
+It returns a **native** `LiveCollection<T>` — pass it straight to `useLiveQuery`, no wrapper hook.
 Collection identity is the structured `CollectionKey { entity, scope: Option<string> }`
 ([`collection-key.ts:15-19`](../packages/live-collection/src/registry/collection-key.ts#L15-L19)) — there
 is no string-id grammar; the registry never parses an id, and `serializeKey` is an injective map key only,
 never parsed back ([`collection-key.ts:41-42`](../packages/live-collection/src/registry/collection-key.ts#L41-L42)).
 
 `SyncModels` is a literal **array of handles** — `[webhookCollection, …]` — and the wire model name
-is each handle's `_meta.entity`, written once in `defineCollection` (DEC-R5 as amended: the earlier
-record shape duplicated the name, and a typo'd key silently dropped a model's events). Each handle
+is each handle's `_meta.entity`, written once in `defineCollection` — a record shape would duplicate
+the name, and a typo'd key would silently drop a model's events. Each handle
 carries `_meta: ModelMeta<T>` (`entity`, `schema`, `getKey`, `scopeOf`, `listFn`) that the loop reads
 to decode, route, and snapshot
 ([`define-collection.ts:25-31`](../packages/live-collection/src/registry/define-collection.ts#L25-L31)) —
@@ -225,7 +221,7 @@ const webhooks = defineCollection({
   getKey: webhookKey,
   scopeOf: (w) => w.orgId,
   listFn: (orgId) => Effect.flatMap(WebhookApi, (api) => api.list(orgId)),  // cold/resync snapshot source
-  onInsert: ({ transaction }) =>  // optimistic write path (A.10) — call the server, return the confirmed row
+  onInsert: ({ transaction }) =>  // optimistic write path — call the server, return the confirmed row
     Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)), // library reconciles (Model B)
 })
 
@@ -276,13 +272,13 @@ These are repo-wide rules from [`../CLAUDE.md`](../CLAUDE.md); an example that b
 
 These are deferred or rejected — do not document them as present:
 
-- **Offline-durable writes.** A.10 ships *online* optimistic writes (Model B: confirm via `writeSynced`
+- **Offline-durable writes.** The library ships *online* optimistic writes (Model B: confirm via `writeSynced`
   before resolving). Queueing mutations while offline is deferred.
-- **Unmounted-workspace policy (A.11), throttled watermark flush, a registry eviction backstop, and
+- **An unmounted-workspace policy, throttled watermark flush, a registry eviction backstop, and
   per-target resync** are deferred. Resync today is whole-app `reloadWindow` (Model A);
   `onResync` is the seam where a finer model would slot in
   ([`live-runtime.ts:62-63`](../packages/live-collection/src/runtime/live-runtime.ts#L62-L63)).
-- **Echo suppression / `clientId`** is removed (protocol DEC-11): no `clientId` on events, `SyncContext`,
+- **Echo suppression / `clientId`** is removed: no `clientId` on events, `SyncContext`,
   or the HTTP contract. Reconciliation relies on TanStack's optimistic-mutation confirm, not a server filter.
 
 ---
@@ -291,4 +287,3 @@ These are deferred or rejected — do not document them as present:
 
 - [`./protocol.md`](./protocol.md) — the wire contract: event schemas, sync-group grammar, the squasher, `/catchup` shapes.
 - [`./backend.md`](./backend.md) — implementing the per-app backend against the protocol kit (your responsibility).
-- [`../packages/live-collection/DESIGN.md`](../packages/live-collection/DESIGN.md) — full design history (later sections supersede earlier ones).

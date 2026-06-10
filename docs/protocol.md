@@ -147,8 +147,8 @@ parseGroup(g)                                     // { segments: ["organization"
 
 ### The two relations — `intersects` and `isUnder`
 
-There is **no single `matches` function**; the protocol splits the two relations deliberately
-(protocol DEC-4), because they have different semantics and one of them is ACL-critical.
+There is **no single `matches` function**; the protocol splits the two relations deliberately,
+because they have different semantics and one of them is ACL-critical.
 
 **`intersects(a, b)` — the delivery test (ACL-critical).** Whether two group sets share at least one
 group, by **exact equality, never hierarchical**. An event reaches a subscriber when the event's
@@ -177,7 +177,7 @@ isUnder("organization:abc", "organization:abcd")            // false (segment-wi
 to expand a requested scope against a user's literal groups.
 
 > Subscriber-side brace/alternation sugar (`org:{a,b}:channel:x`) is **deferred** to a future
-> client-side builder that expands to literal scopes before transport (DEC-5). Regex as a
+> client-side builder that expands to literal scopes before transport. Regex as a
 > subscription grammar is **rejected permanently** (ReDoS, non-finite, non-indexable).
 
 ---
@@ -187,7 +187,7 @@ to expand a requested scope against a user's literal groups.
 A `Resync` event tells subscribers to discard part of their local state and re-fetch it — used when
 deltas can't express a change (a permission change, a bulk correction). The blast radius is encoded
 **structurally** as a tagged union — there are **no `__all` / `__group:<id>` / `__model:<Name>`
-sentinel strings anywhere** (protocol DEC-9); the action is the event `_tag`, the target is a typed
+sentinel strings anywhere**; the action is the event `_tag`, the target is a typed
 value:
 
 ```typescript
@@ -204,7 +204,7 @@ export const ResyncTarget = Schema.Union(ResyncAll, ResyncGroup, ResyncModel)
 
 ---
 
-## The squasher (`squash`) — the pure §8 fold
+## The squasher (`squash`) — the pure fold
 
 `squash` collapses a `syncId`-ordered list of **at-rest** `SyncEvent`s into the smallest equivalent
 list, so a catching-up subscriber receives one event per entity instead of its full history. It
@@ -304,7 +304,7 @@ export type GroupsFor = (args: { readonly userId: UserId }) =>
 ```
 
 `model-registry.ts:46`. The backend implements this (it's the source of truth for which groups a user
-may see); catchup uses it server-side (DEC-12 — see below).
+may see); catchup uses it server-side (see below).
 
 ### `defineModelRegistry` — keys *are* the model-name union
 
@@ -340,7 +340,7 @@ carrying `modelName` (the unrecognized name) and `known` (the names this registr
 
 The protocol ships the catchup **request + response schemas, and nothing else**. It does **not**
 define the route, method, status codes, errors, headers, or auth — the implementing backend owns all
-of that and wires these schemas into its own router (protocol DEC-7). The protocol is `effect`-only;
+of that and wires these schemas into its own router. The protocol is `effect`-only;
 `@effect/platform` is **not** a dependency here. `/sync` (SSE) is likewise a backend detail and absent
 from the contract.
 
@@ -355,7 +355,7 @@ export const CatchupResponse = Schema.Struct({
 
 `catchup.ts:19` (`CatchupRequest`), `:28` (`CatchupResponse`).
 
-**No `group` parameter (DEC-12).** A client cannot narrow scope from the wire. The server resolves
+**No `group` parameter.** A client cannot narrow scope from the wire. The server resolves
 the caller's full set of sync groups from their permissions (`GroupsFor`) and returns everything
 visible since `from`. This keeps ACL authority on the server and the request trivial.
 
@@ -427,5 +427,3 @@ and the client must use `compareSyncId` for cursors that can exceed `Number.MAX_
   `CatchupClient`, the `lastSyncId` watermark, and the resync handler.
 - [`backend.md`](./backend.md) — the obligations on *your* backend: implementing `ModelDescriptor` /
   `GroupsFor`, the `/catchup` and `/sync` routes, hydration, and the dispatcher.
-- `packages/protocol/DESIGN.md` — the decisions log (DEC-1…DEC-12) and rationale. Where this doc and
-  DESIGN.md disagree on a signature, **the `src/` line citations above win.**

@@ -10,7 +10,7 @@ it on unmount. The whole binding is one file
 **How you use it.** Mount it once, near your app root, to start sync. Everything else — defining
 collections, reading them, writing them — happens through the main `@triargos/live-collection`
 package and `@tanstack/react-db`. If you reach for a custom subscription hook, stop: that was
-deliberately rejected (DEC-R1 — it would shadow `useLiveQuery` and fail the deletion test).
+deliberately rejected (it would shadow `useLiveQuery` and fail the deletion test).
 
 This doc is frontend-only. The wire contract and the server you sync against are the reader's
 responsibility — see [./protocol.md](./protocol.md) and [./backend.md](./backend.md). For the
@@ -42,7 +42,7 @@ in [./architecture.md](./architecture.md); this page covers how they meet React.
 export function useLiveSync(runtime: LiveRuntime, models: SyncModels): void
 ```
 
-[`packages/react/src/index.ts`](../packages/react/src/index.ts) — DEC-R8.
+[`packages/react/src/index.ts`](../packages/react/src/index.ts).
 
 Forks `runtime.forkLoop(models)` on mount and `Fiber.interrupt`s the returned fiber on unmount. That
 loop is the async transport tier: SSE tail + catchup + cursor/watermark advance + resync. It runs
@@ -76,7 +76,7 @@ touches its `forkLoop` member
 readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void>
 ```
 
-`models: SyncModels` is the **explicit** wiring (DEC-R5 as amended) — there is no auto-registration.
+`models: SyncModels` is the **explicit** wiring — there is no auto-registration.
 It is an array of collection handles from `defineCollection`; only each handle's `_meta` is read (the
 loop reaches live instances through the registry, never by calling the handle)
 ([`packages/live-collection/src/registry/define-collection.ts`](../packages/live-collection/src/registry/define-collection.ts)):
@@ -106,7 +106,7 @@ const { data } = useLiveQuery(() => coll, [orgId]) // reactive read
 
 [`examples/playground/src/routes/WebhooksPage.tsx:21`](../examples/playground/src/routes/WebhooksPage.tsx).
 
-Two read forms are supported and both stay native (DEC-R9):
+Two read forms are supported and both stay native:
 
 - direct: `useLiveQuery(() => webhooks(orgId), [orgId])`
 - join/filter: `useLiveQuery((q) => q.from({ w: coll }))`
@@ -195,13 +195,13 @@ export function App() {
 const coll = pg.webhooks(orgId)
 const { data } = useLiveQuery(() => coll, [orgId])
 // optimistic write via the native path — appears instantly, handler confirms, SSE echoes idempotently:
-coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id (DEC-8)
+coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id
 ```
 
 Writes go through TanStack's native optimistic mutation path; the `onInsert`/`onDelete` handlers you
 passed to `defineCollection` call your server and return the confirmed row (insert) / void (delete),
 and the **library** reconciles via `writeSynced` / `deleteSynced` before resolving (Model B) — apps
-never touch `collection.utils`. Client-minted ids keep the self-echo idempotent (DEC-8).
+never touch `collection.utils`. Client-minted ids keep the self-echo idempotent.
 
 ---
 
@@ -225,12 +225,12 @@ These are deferred — do not wire them expecting them to exist:
 
 - **A provider component / runtime context in this package.** The hook is the whole binding by design;
   apps own their context (the playground uses a plain `createContext`). No `LiveProvider`.
-- **A `useLiveCollection` subscription hook.** Rejected (DEC-R1): collections are native, `useLiveQuery`
-  already subscribes.
-- **Disposing collections on `useLiveSync` unmount.** Intentional (DEC-R8) — registry lifetime is the
+- **A `useLiveCollection` subscription hook.** Deliberately not provided: collections are native,
+  `useLiveQuery` already subscribes.
+- **Disposing collections on `useLiveSync` unmount.** Intentional — registry lifetime is the
   app's. Workspace-switch / logout disposal is a separate explicit call.
 - **Re-forking the loop when `map` changes.** Intentional — `map` is snapshotted; keep it stable.
-- Throttled watermark flush, registry eviction backstop, offline-durable writes, the A.11
+- Throttled watermark flush, registry eviction backstop, offline-durable writes, the
   unmounted-workspace policy, and per-target resync are all deferred at the runtime level — see
   [./architecture.md](./architecture.md).
 

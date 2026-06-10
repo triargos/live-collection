@@ -38,8 +38,8 @@ each cycle (retry on SyncConnectionLost, spaced 3s):
 ```
 
 The cycle is wrapped in `Effect.retry({ while: SyncConnectionLost, schedule: spaced 3s })`, so a
-transport drop re-enters the cycle, **re-runs catchup to heal the disconnect gap**, and reconnects
-(DEC-T4). A live `Resync` raises an internal `ResyncStop` that is caught to end the tail after
+transport drop re-enters the cycle, **re-runs catchup to heal the disconnect gap**, and reconnects.
+A live `Resync` raises an internal `ResyncStop` that is caught to end the tail after
 `onResync` has run ([`sync-loop.ts:278-287`](../packages/live-collection/src/client/sync-loop.ts#L278)).
 
 This document covers catchup → tail and the transport/cursor/dispatch seams. The mount arm
@@ -74,7 +74,7 @@ in the prod adapter ([`sync-transport.ts:28-64`](../packages/live-collection/src
   servers emit `:` comment pings, so a gap longer than `keepAlive` means the connection is dead even
   though no error surfaced — it fails with `SyncConnectionLost({ reason: "keep-alive timeout" })`
   ([`sync-transport.ts:40`](../packages/live-collection/src/client/sync-transport.ts#L40)).
-- **Fails on drop — does not retry internally (DEC-T4).** A server-closed stream is still a drop, so
+- **Fails on drop — does not retry internally.** A server-closed stream is still a drop, so
   the stream is concatenated with `Stream.fail(new SyncConnectionLost({ reason: "stream ended" }))`
   ([`sync-transport.ts:61`](../packages/live-collection/src/client/sync-transport.ts#L61)). The
   orchestrator's outer retry catches it, re-runs catchup, and reconnects. This is **expected, not
@@ -107,7 +107,7 @@ interface CatchupClientShape {
 }
 ```
 
-One-shot. The server resolves the caller's sync groups from their permissions (protocol DEC-12) —
+One-shot. The server resolves the caller's sync groups from their permissions —
 **there is no group parameter**, no client-side narrowing — squashes the missed events with the
 [squasher](./protocol.md), hydrates them, and returns `{ events, lastSyncId }`
 ([catchup.ts:28-32](../packages/protocol/src/catchup.ts#L28)). Each event's `data` stays opaque here.
@@ -133,7 +133,7 @@ CatchupClient.layerMemory(canned)  // test: always returns the canned CatchupRes
 
 ---
 
-## LastSyncIdStore — the durable cursor (decision 5)
+## LastSyncIdStore — the durable cursor
 
 The seam: `yield* LastSyncIdStore`
 ([`last-sync-id-store.ts:55`](../packages/live-collection/src/client/last-sync-id-store.ts#L55)).
@@ -148,7 +148,7 @@ interface LastSyncIdStoreShape {
 
 The single, durable, **global** high-water mark of events this client has applied. It gates catchup
 (`from = cursor ?? "0"`) and advances as catchup responses and live events land. It is deliberately
-**ours, not the framework's `staleTime`** (decision 5 / DEC-T2): `staleTime` resets on reload; a sync
+**ours, not the framework's `staleTime`**: `staleTime` resets on reload; a sync
 cursor must not ([`last-sync-id-store.ts:4-13`](../packages/live-collection/src/client/last-sync-id-store.ts#L4)).
 
 - **`get` is `Option`** — `None` only on a truly cold start; the loop reads it as
@@ -158,10 +158,10 @@ cursor must not ([`last-sync-id-store.ts:4-13`](../packages/live-collection/src/
   ([`last-sync-id-store.ts:22-26`](../packages/live-collection/src/client/last-sync-id-store.ts#L22)).
   `compareSyncId` parses to `bigint`, so it stays exact beyond `Number.MAX_SAFE_INTEGER`
   ([ids.ts:21](../packages/protocol/src/ids.ts#L21)) — never compare `SyncId`s as strings or numbers.
-- **The cursor's single source of truth is the sync stream (DEC-T3)** — `CatchupResponse.lastSyncId`
+- **The cursor's single source of truth is the sync stream** — `CatchupResponse.lastSyncId`
   and each live `event.syncId`. A `listFn` returns rows only; it does not move the cursor.
 - **`clear`** is used only by the live-resync reload path; the next start then catches up cold from
-  `"0"` and re-snapshots (DEC-T6) ([`sync-loop.ts:251-255`](../packages/live-collection/src/client/sync-loop.ts#L251)).
+  `"0"` and re-snapshots ([`sync-loop.ts:251-255`](../packages/live-collection/src/client/sync-loop.ts#L251)).
 
 ### Layers
 
@@ -199,17 +199,17 @@ this seam — never cast ([`sync-loop.ts:117`](../packages/live-collection/src/c
 An **unknown model name is skipped entirely** (a newer server may emit more)
 ([`sync-loop.ts:102-103`](../packages/live-collection/src/client/sync-loop.ts#L102)).
 
-> **Snapshot reconcile (DEC-T9).** `snapshotInstance` replaces an instance's contents with a server
+> **Snapshot reconcile.** `snapshotInstance` replaces an instance's contents with a server
 > `listFn`: upsert every fetched row (`writeSynced`) and delete the absent ones
 > (`deleteSynced` for `currentKeys − fetchedKeys`), so a snapshot is a true replacement, not a merge
 > ([`sync-loop.ts:147-158`](../packages/live-collection/src/client/sync-loop.ts#L147)).
 
 ---
 
-## Resync — blunt and context-split (DEC-T6 / DEC-E9)
+## Resync — blunt and context-split
 
 `Resync` is the server's "your view is stale, rebuild it" signal. The read path handles it **bluntly**:
-the resync `target` is ignored entirely — no per-target dispose, no `groupScope` hook (DEC-T6). The
+the resync `target` is ignored entirely — no per-target dispose, no `groupScope` hook. The
 behaviour splits on *where* the resync arrives:
 
 - **In a catchup response** ⇒ **snapshot every mounted model in place** (`snapshotAll`) and record the
@@ -219,11 +219,11 @@ behaviour splits on *where* the resync arrives:
   raise `ResyncStop` to end the tail (Model A — a full reload)
   ([`sync-loop.ts:250-255`](../packages/live-collection/src/client/sync-loop.ts#L250)). `onResync` is an
   injected `Effect<void>` (prod: `reloadWindow`), keeping core framework-neutral and the reload
-  assertable in tests (DEC-T7, [live-runtime.ts:62-63](../packages/live-collection/src/runtime/live-runtime.ts#L62)).
+  assertable in tests ([live-runtime.ts:62-63](../packages/live-collection/src/runtime/live-runtime.ts#L62)).
 
 A resync that passed **while a scope was unmounted** is caught at mount time: a single **global**
 `lastResyncAt` (newest resync syncId, monotonic) forces a `Bootstrap` decision rather than a stale
-replay (DEC-E9) — see [./replay-on-mount.md](./replay-on-mount.md).
+replay — see [./replay-on-mount.md](./replay-on-mount.md).
 
 ---
 
@@ -296,20 +296,20 @@ const defaultOptions: SyncLoopOptions = {
 ```
 
 Keep the newest `perModel` rows per model and `total` overall, pruning every `everyEvents` ingests.
-Tune against the backend's catchup retention and your working-set size — see DEC-E7/E8 and
+Tune against the backend's catchup retention and your working-set size — see
 [./replay-on-mount.md](./replay-on-mount.md).
 
 ---
 
 ## Not built / deferred
 
-- **Throttled watermark flush** while mounted (a DEC-E3 optimization to shorten reload replay).
-- **Per-target resync** — kept blunt and global via `lastResyncAt` (DEC-E9); the resync `target` is
+- **Throttled watermark flush** while mounted (an optimization to shorten reload replay).
+- **Per-target resync** — kept blunt and global via `lastResyncAt`; the resync `target` is
   carried on the wire but not acted on.
 - **Incremental workspace-switch bootstrap** as a first-class path (handled today via the mount arm's
-  bootstrap decision; the A.11 unmounted-workspace eviction policy is deferred).
+  bootstrap decision; an unmounted-workspace eviction policy is deferred).
 - **Offline-durable writes** — the read path persists what it sees, but the write path is online-only
-  today (see the write-path docs / A.10).
+  today (see the write-path docs).
 
 > **Pin versions.** `@tanstack/db` is pinned exactly at **0.6.7** (alpha) and the browser persistence
 > adapter at **0.1.11**; the persistence surface shifts between alphas. Verify any persistence call

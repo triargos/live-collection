@@ -49,7 +49,7 @@ The decision ladder, top to bottom
 | --- | --- | --- |
 | `baseWatermark` is `None` | `Bootstrap` | never had a base — fetch one |
 | `base >= cursor` | `Skip` | base already complete to the cursor |
-| a resync passed since `base` (`lastResyncAt > base`) | `Bootstrap` | the resync invalidated the local log (DEC-E9) |
+| a resync passed since `base` (`lastResyncAt > base`) | `Bootstrap` | the resync invalidated the local log |
 | `floor > base` | `Bootstrap` | pruned past the base — the gap is no longer in the log |
 | otherwise | `Replay` | the log fully covers `(base, cursor]` |
 
@@ -58,8 +58,8 @@ are opaque *positions*, and the system is gap-tolerant). A missing `cursor` is t
 
 **`modelFloor` is the prune boundary, not the oldest event.** `None` means *nothing has been pruned*,
 so the log is complete from the start and replay is safe; `Some(f)` means events below `f` were
-deleted, so replay is safe only when `f <= base`. (This is DEC-E10: an early cut had `None ⇒
-Bootstrap`, which made the common "caught up → a few events → remount" path always bootstrap. Wrong.)
+deleted, so replay is safe only when `f <= base`. (Treating `None` as `Bootstrap` would make the
+common "caught up → a few events → remount" path always bootstrap — replay is the correct outcome.)
 
 ---
 
@@ -150,9 +150,9 @@ encodes the contract: a query with `scope: Some(s)` returns that scope's rows **
 ([`sync-loop.ts:138`](../packages/live-collection/src/client/sync-loop.ts)), never casting the wire
 shape.
 
-### DEC-E13a — why the IDB index is on `modelName` alone
+### Why the IDB index is on `modelName` alone
 
-This supersedes the `[modelName, scope]` compound index in the original design sketch. The IndexedDB
+The IndexedDB
 adapter ([`event-log-store.ts:179`](../packages/live-collection/src/client/event-log-store.ts)) keys
 events by `syncId` (PK) and indexes only `modelName`. `read` and `prune` narrow with that index (or
 `getAll` the cap-bounded store), then **filter, sort, and retain in memory** with `compareSyncId`. Two
@@ -194,7 +194,7 @@ export interface PrunePlan {
 }
 ```
 
-Two caps (DEC-E7), denominated in **events (size), not wall-clock** — that's why there is no
+Two caps, denominated in **events (size), not wall-clock** — that's why there is no
 `createdAt` on a row:
 
 - **`perModel`** — per-model isolation. A chatty model can't evict a quiet model's gap.
@@ -217,14 +217,13 @@ The loop calls `prune` every `everyEvents` ingests; the defaults are
 
 ## The three invariants
 
-Correctness rests on these (named in code and in DESIGN.md's EventLog section):
+Correctness rests on these (named in code):
 
 1. **Idempotency.** Application is key-addressed upsert/delete (`writeSynced` / `deleteSynced` by
    `ModelId`) in `syncId` order. Replaying a dominated event is a no-op, so an under-estimated
    `baseWatermark` only re-applies events the collection already has. Replay flows through the **same**
    `applyWrite` / `applyDelete` path as live ingest and catchup — it never touches the
-   optimistic-mutation handlers ([`sync-loop.ts:138`](../packages/live-collection/src/client/sync-loop.ts),
-   DEC-E6).
+   optimistic-mutation handlers ([`sync-loop.ts:138`](../packages/live-collection/src/client/sync-loop.ts)).
 2. **Floor-guard.** Never `Replay` when `floor > base` — `Bootstrap` instead
    ([`mount-decision.ts:37`](../packages/live-collection/src/client/mount-decision.ts)). The one line
    that keeps the prune cap from corrupting the base.
@@ -249,9 +248,9 @@ The three arms ([`sync-loop.ts:225-244`](../packages/live-collection/src/client/
   `setBaseWatermark({ key, at: cursor })`.
 
 The base watermark is written **once per mount, at `onMount` completion** — no dispose-writes, no
-per-event writes, no flush (DEC-E3). A mounted instance that rode a catchup is marked complete to
+per-event writes, no flush. A mounted instance that rode a catchup is marked complete to
 `lastSyncId` so its later mount skips instead of re-bootstrapping (which an empty `listFn` would turn
-into a wipe — DEC-E11, [`sync-loop.ts:178`](../packages/live-collection/src/client/sync-loop.ts)).
+into a wipe — [`sync-loop.ts:178`](../packages/live-collection/src/client/sync-loop.ts)).
 
 See [`./architecture.md`](./architecture.md) for the loop, registry, and factory as a whole.
 
@@ -311,7 +310,7 @@ watermarks, and `lastResync` each survive a fresh layer scope over the same data
 
 ## The backend contract
 
-Replay is frontend-only, but it rests on **one** server obligation (DEC-E8; full wire contract in
+Replay is frontend-only, but it rests on **one** server obligation (full wire contract in
 [`./protocol.md`](./protocol.md) and [`./backend.md`](./backend.md)):
 
 > A `/catchup` request whose `from` is **below the server's retention floor MUST return a `Resync`**,
@@ -321,19 +320,19 @@ Otherwise cursor-completeness breaks and replay would apply over a hole. Retenti
 axes: the **client** caps (`perModel` / `total`, in events, bounding local replay) and **server**
 retention (wall-clock, bounding the offline gap) — and the latter surfaces to the client *only* as a
 `Resync`. The client never computes a cursor's age. A resync ingested while a scope was unmounted
-bumps the global `lastResyncAt`, which forces that scope to `Bootstrap` on its next mount (DEC-E9);
+bumps the global `lastResyncAt`, which forces that scope to `Bootstrap` on its next mount;
 resync events are not themselves appended to the log.
 
 ---
 
 ## Not built (deferred)
 
-These are flagged in DESIGN.md but intentionally absent today:
+These are intentionally absent today:
 
-- **Throttled flush of `baseWatermark` while mounted** — would shorten replay after a reload (DEC-E3
-  optimization). Today the watermark is written only at `onMount` completion.
+- **Throttled flush of `baseWatermark` while mounted** — would shorten replay after a reload. Today
+  the watermark is written only at `onMount` completion.
 - **Registry eviction backstop** — collections stay resident until an explicit `dispose*`; there is no
   idle/LRU eviction.
 - **Per-target resync** — resync stays blunt and global via `lastResyncAt` rather than per `SyncGroup`.
-- **Offline-durable writes** and the unmounted-workspace policy (A.11) — separate workstreams, not part
+- **Offline-durable writes** and the unmounted-workspace policy — separate workstreams, not part
   of this path.

@@ -33,7 +33,7 @@ const runtime = makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
 ```
 createCollection(
   persistedCollectionOptions({
-    persistence,                       // ← the closed-over VALUE from the runtime (DEC-R3)
+    persistence,                       // ← the closed-over VALUE from the runtime
     id: serializeKey(key),             // ← stable per (entity, scope)
     schemaVersion: deriveSchemaVersion(schema),
     ...liveCollectionOptions({ getKey })   // ← our inner creator
@@ -43,7 +43,7 @@ createCollection(
 
 ---
 
-## `persistence` is a closed-over VALUE, not a tag (DEC-R3)
+## `persistence` is a closed-over VALUE, not a tag
 
 Persistence is **not** an Effect service tag. It is a plain `PersistedCollectionPersistence` value the
 app constructs and passes to `makeLiveRuntime`, which stores it on the runtime
@@ -68,14 +68,14 @@ mount path is `Effect.runSync(registry.getOrCreate({ key, make }))`, and `make` 
 discharges ([`define-collection.ts:131-151`](../packages/live-collection/src/registry/define-collection.ts)). Because
 persistence is closed over rather than a context dependency, that Effect is `Effect<A, never, never>` and
 `runSync` can never hit an async boundary. A persistence **tag** would force the mount path through async
-layer resolution — illegal at render time. This is DEC-R3, which **revises** the original Bucket-A
-`PersistenceBase` *tag* (DESIGN §3) — that tag is dead; do not cite it.
+layer resolution — illegal at render time. Persistence therefore stays a plain value; never introduce a
+persistence service tag.
 
 ---
 
 ## Browser (prod): OPFS via `@tanstack/browser-db-sqlite-persistence`
 
-The library ships **no** browser persistence builder — the app owns it (DEC-R3). In production you build
+The library ships **no** browser persistence builder — the app owns it. In production you build
 the value from the official package, pinned **`0.1.11`**:
 
 ```ts
@@ -100,9 +100,8 @@ const persistence = createBrowserWASQLitePersistence({ database })              
 > `optimizeDeps.exclude` **both** `@tanstack/browser-db-sqlite-persistence` and `@journeyapps/wa-sqlite`,
 > or the worker/wasm URLs break.
 
-> **`createOpfsSQLitePersistence` does not exist.** Older handoffs/DESIGN prose referenced a fictional
-> `createOpfsSQLitePersistence`. The real API is the `openBrowserWASQLiteOPFSDatabase` →
-> `createBrowserWASQLitePersistence` pair above.
+> **`createOpfsSQLitePersistence` does not exist.** The real API is the
+> `openBrowserWASQLiteOPFSDatabase` → `createBrowserWASQLitePersistence` pair above.
 
 ### Per-tab databases
 
@@ -118,7 +117,7 @@ per-tab session.
 
 `persistedCollectionOptions` and `PersistedCollectionPersistence` come from
 **`@tanstack/db-sqlite-persistence-core`**, *not* `@tanstack/db` core — core only exports
-`createCollection` (decision 2). That is the import the library itself uses
+`createCollection`. That is the import the library itself uses
 ([`define-collection.ts:8`](../packages/live-collection/src/registry/define-collection.ts),
 [`live-runtime.ts:2`](../packages/live-collection/src/runtime/live-runtime.ts)).
 
@@ -137,7 +136,7 @@ swapping the engine. It is test infra only; never ship it as a browser builder.
 ## `liveCollectionOptions({ getKey })` — the inner creator
 
 `liveCollectionOptions` is the **inner** options creator: the live-sync analogue of TanStack's
-`queryCollectionOptions` (DEC-R4). You spread its result into `persistedCollectionOptions`, exactly as the
+`queryCollectionOptions`. You spread its result into `persistedCollectionOptions`, exactly as the
 TanStack docs spread `queryCollectionOptions`. It contributes the live-sync fields; `persistence`,
 `schemaVersion`, and `id` are added at the outer level by `defineCollection`'s `make`.
 
@@ -154,14 +153,14 @@ The fields it sets ([`live-collection-options.ts:13-20`](../packages/live-collec
 | field | value | why |
 |---|---|---|
 | `getKey` | your `(entity) => ModelId` | branded key extractor |
-| `gcTime` | `Infinity` | the **registry** is the sole GC (DEC-A10) — never let TanStack evict |
-| `syncMode` | `"eager"` | load the persisted base on start, not query-driven (DEC-A5) |
+| `gcTime` | `Infinity` | the **registry** is the sole GC — never let TanStack evict |
+| `syncMode` | `"eager"` | load the persisted base on start, not query-driven |
 | `startSync` | `true` | start sync on mount → session captured + hydration runs |
 | `utils` | `SyncWrite<T>` | `writeSynced` / `deleteSynced`, hosted in `utils` |
 | `sync` | a **network-free** `SyncConfig` | installs the session holder, then `markReady` |
 
 The `sync` it returns does **no network I/O**. It only installs the [`SyncSession`](#the-sync-session-holder)
-behind `utils.writeSynced` / `deleteSynced` and signals ready (DEC-T1). Server truth reaches the store
+behind `utils.writeSynced` / `deleteSynced` and signals ready. Server truth reaches the store
 through the **sync loop** writing to `utils`, never through this `sync`. That is the whole point of the A.3
 gate: a cold mount is fed by **OPFS only**, because the collection's own `sync` never lists.
 
@@ -185,7 +184,7 @@ through. Synced writes reflect confirmed server truth and are never rolled back
 export interface SyncWrite<T> {
   readonly writeSynced: (entity: T) => Effect.Effect<void>   // upsert; idempotent
   readonly deleteSynced: (id: ModelId) => Effect.Effect<void> // no-op if absent
-  // + a structural-only index so utils is a Record<string, Fn> for useLiveQuery joins (DEC-R9)
+  // + a structural-only index so utils is a Record<string, Fn> for useLiveQuery joins
 }
 ```
 
@@ -195,7 +194,7 @@ export interface SyncWrite<T> {
 
 `persistedCollectionOptions` takes a numeric `schemaVersion`; when it changes, the local base is dumped and
 rebuilt. We **derive** it from your Effect Schema so a model change resets the base automatically — no
-manual version to bump or forget (DEC-A4):
+manual version to bump or forget:
 
 ```ts
 export const deriveSchemaVersion = (schema: Schema.Schema.Any): number
@@ -203,7 +202,7 @@ export const deriveSchemaVersion = (schema: Schema.Schema.Any): number
 
 - The hash input is `String(schema.ast)` — the schema's full structural type string, which folds in **types
   and brands** (not just field names). So `name: string → number` (same field name) still bumps the version.
-  That matters because we **trust** the local base (DEC-A2): a missed type change would silently keep
+  That matters because we **trust** the local base: a missed type change would silently keep
   stale-typed rows ([`schema-version.ts:8-12`](../packages/live-collection/src/persistence/schema-version.ts)).
 - It is **FNV-1a 32-bit → uint32**, the same family TanStack uses for table names
   ([`schema-version.ts:19-27`](../packages/live-collection/src/persistence/schema-version.ts)).
@@ -217,7 +216,7 @@ You don't call this directly in app code; `defineCollection` calls it for you wi
 
 ## The A.3 three-step gate
 
-The persistence design is a hard gate (decision 7): persistence is not rolled out across entities until the
+The persistence design is a hard gate: persistence is not rolled out across entities until the
 three-step flow is verified against the alpha. The flow:
 
 1. **Hydrate-from-storage.** A mount reads its rows from the local SQLite base (`syncMode: "eager"`).

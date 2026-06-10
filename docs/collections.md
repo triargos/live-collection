@@ -32,7 +32,7 @@ export function defineCollection<T extends object, R = never>(config: ScopedConf
 
 The split is load-bearing. A single optional `scopeOf?` would infer `Args = unknown` and force a
 phantom argument onto global call sites; the two overloads keep `webhookCollection()` and
-`webhookCollection(orgId)` each exactly as wide as they need to be (DEC-R10).
+`webhookCollection(orgId)` each exactly as wide as they need to be.
 
 ### Shared config
 
@@ -68,7 +68,7 @@ provides it into `listFn` and every handler, so they reach the loop as `R = neve
 - **Scoped** (`ScopedBase`): `scopeOf: (entity: T) => string` and
   `listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>, never, R>` — one instance per scope.
   `scopeOf` is the **only** place your app's "workspace" notion enters the library; the library
-  itself stays scope-generic (DEC-R6 / DEC-R10). The dispatcher reads the scope straight off each
+  itself stays scope-generic. The dispatcher reads the scope straight off each
   decoded event via `scopeOf`.
 
 > The handle also carries `_meta` (`ModelMeta<T>`) — `entity`, `schema`, `getKey`, `scopeOf`,
@@ -96,8 +96,8 @@ export interface CollectionKey<A> {
 }
 ```
 
-There is **deliberately no string grammar** — no separator, no glob, no escaping (DEC-9, the same
-structure-over-sentinels choice the protocol made for resync targets). The library never *parses* an
+There is **deliberately no string grammar** — no separator, no glob, no escaping (the same
+structure-over-sentinels choice the protocol makes for resync targets). The library never *parses* an
 id. Keys are minted only by the factory, through two constructors
 ([`collection-key.ts:22-34`](../packages/live-collection/src/registry/collection-key.ts#L22)):
 
@@ -131,7 +131,7 @@ export type LiveCollection<T extends object> = Collection<T, ModelId, SyncWrite<
   ([`sync-write.ts:17-19`](../packages/live-collection/src/dispatch/sync-write.ts#L17)).
   The dispatcher and your optimistic handlers reconcile through these; the UI never calls them.
 - `TSchema = never` — the schema-less overload. Rows are already decoded and branded at the dispatch
-  seam, so TanStack does no validation of its own (DEC-A1).
+  seam, so TanStack does no validation of its own.
 
 Because it *is* a TanStack collection, the UI uses the native API directly: `useLiveQuery(coll)` to
 read, and `coll.insert(...)` / `coll.update(...)` / `coll.delete(...)` to write (which trigger your
@@ -167,7 +167,7 @@ And the read side, from
 const coll = pg.webhooks(orgId)               // mount-or-fetch the (Webhook, orgId) instance
 const { data } = useLiveQuery(() => coll, [orgId])
 // ...
-coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id (DEC-8)
+coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id
 ```
 
 Note the **client-minted id**: minting it here keeps the self-echo idempotent and avoids any
@@ -177,7 +177,7 @@ temp-id swap.
 
 ## Scoping is the lever for large data
 
-Persistence backend is **not** how large data stays small — scoping is (decision 4). A collection's
+Persistence backend is **not** how large data stays small — scoping is. A collection's
 working set lives in memory under either persistence backend. Per-workspace collections plus
 windowed queries keep that set bounded:
 
@@ -211,8 +211,8 @@ You reach it as `runtime.registry`.
 
 **`getOrCreate` is synchronous, `dispose*` is asynchronous.** Mount has to be `runSync`-able so the
 handle can be called inline in render; `persistence` is a closed-over value and only `Scope` is
-required of `make`, which the registry discharges, so there is no async boundary on the mount path
-(DEC-R8). Disposal, by contrast, closes a child scope and runs the collection's `cleanup()`
+required of `make`, which the registry discharges, so there is no async boundary on the mount path.
+Disposal, by contrast, closes a child scope and runs the collection's `cleanup()`
 finalizer, which is async ([`define-collection.ts:131-151`](../packages/live-collection/src/registry/define-collection.ts#L131),
 [`collection-registry.ts:126-159`](../packages/live-collection/src/registry/collection-registry.ts#L126)).
 
@@ -234,13 +234,13 @@ Each collection is built in its own **child scope** forked from the registry's l
 - **Drop one collection** → `dispose(key)`.
 
 > Note: the loop fiber's lifetime is the app's, separate from the registry. Interrupting the loop
-> does **not** dispose collections, and disposing collections does not stop the loop (DEC-R8).
+> does **not** dispose collections, and disposing collections does not stop the loop.
 
 ---
 
 ## Not built (and why)
 
-- **Unmounted-workspace policy (A.11)** — what to do with deltas for a scope no UI currently mounts
+- **Unmounted-workspace policy** — what to do with deltas for a scope no UI currently mounts
   (drop / buffer / lazy-replay) is deferred. Today an unmounted scope simply isn't healed until it's
   mounted again.
 - **Registry eviction backstop** — no LRU/idle eviction; instances live until an explicit `dispose*`
