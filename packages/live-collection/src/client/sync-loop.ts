@@ -25,27 +25,37 @@ type Inbox =
 /** Internal control signal: a live resync was seen, so stop the tail (it must not be retried). */
 class ResyncStop extends Data.TaggedError("ResyncStop")<{}> {}
 
-/** Log-retention knobs: keep the newest `perModel` per model and `total` overall, pruning every `everyEvents` ingests. */
+/**
+ * Event-log retention knobs: keep the newest `perModel` events per model and `total`
+ * overall, pruning once every `everyEvents` ingested events.
+ */
 export interface SyncLoopOptions {
   readonly prune: { readonly perModel: number; readonly total: number; readonly everyEvents: number }
 }
 
-/** Generous defaults (tune against the browser proof + the backend's catchup retention). */
+/** Generous defaults — tune against your models' churn and the backend's catchup retention. */
 const defaultOptions: SyncLoopOptions = { prune: { perModel: 1000, total: 5000, everyEvents: 100 } }
 
 /**
- * The read-path loop (DEC-R7) with the durable EventLog folded in. Behaviour is the locked transport
- * tier (DEC-T1…T9) plus replay-on-mount: every received event is **logged** (even when dropped for an
- * unmounted scope), so a collection that mounts after its events streamed past can converge by
- * **replaying the local log** instead of a network `listFn`.
+ * The sync loop — the whole read path as one forever-running Effect: catch up from the
+ * stored cursor, then tail the live SSE stream, applying each event to the mounted
+ * collections, recording it in the durable event log, and advancing the cursor. On a
+ * dropped connection it retries the cycle (catchup heals the gap). A collection that
+ * mounts mid-flight is healed from its freshness metadata: skipped if already complete,
+ * replayed from the local log, or bootstrapped via its `listFn`.
  *
- * - Application (`applyWrite`/`applyDelete`) is **source-agnostic** — live, catchup, and replay all go
- *   through it; only the cursor/log *recording* is ingest-specific.
- * - Watermark policy (when to skip/replay/bootstrap, what a catchup makes complete) lives in the
- *   {@link makeMountHealer | mount-healer} — the loop dispatches to it and never writes watermarks itself.
- * - A catchup `Resync` ⇒ snapshot every model + bump `lastResyncAt`; a live `Resync` ⇒ reload + stop.
+ * Most apps never call this directly — `makeLiveRuntime` wires it and `useLiveSync` (or
+ * `runtime.forkLoop`) forks it. Call it yourself only when composing the runtime by hand
+ * (e.g. a custom host without `LiveRuntime`); then provide the five service tags in the
+ * `R` channel and fork it once.
  *
- * Runs forever — fork it (`useLiveSync`). Error channel is `never`: drops retry, `ResyncStop` is caught.
+ * `onResync` runs when a **live** `Resync` event arrives (server-declared "local state
+ * is unsalvageable"): the loop clears the cursor, runs `onResync` (prod: reload the
+ * window), and stops. A `Resync` inside a catchup response instead re-snapshots every
+ * mounted collection in place.
+ *
+ * Runs forever — fork it. The error channel is `never`: connection drops retry
+ * internally and one undecodable event is skipped, never fatal.
  */
 export const syncLoop = (
   models: SyncModels,
@@ -65,7 +75,7 @@ export const syncLoop = (
 
     let ingestsSincePrune = 0 // single-fibered (merged inbox), so a plain counter is safe
 
-    // The routing index: wire model name === entity (one name, DEC-R5 amendment).
+    // The routing index: the wire model name IS the entity name (one name, written once).
     const metaByName = new Map<string, ModelMeta<any>>()
     for (const { _meta } of models) metaByName.set(_meta.entity, _meta)
 
@@ -154,8 +164,8 @@ export const syncLoop = (
             ),
           )
 
-    // Replace one mounted instance's contents with the server's current rows (DEC-T9 reconcile):
-    // one truncate+writes sync transaction — no read of current keys, so it cannot race hydration.
+    // Replace one mounted instance's contents with the server's current rows: one truncate+writes
+    // sync transaction — no read of current keys, so it cannot race hydration.
     const snapshotInstance = (
       meta: ModelMeta<any>,
       scope: Option.Option<string>,

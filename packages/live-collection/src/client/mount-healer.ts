@@ -17,7 +17,7 @@ export type Writable = { readonly utils: SyncWrite<unknown> }
  * stay the loop's source-agnostic dispatch; the healer owns only the policy of when to use which.
  */
 export interface MountHealerDeps {
-  /** The loop's routing index: wire model name (=== entity, DEC-R5 amendment) → its meta. */
+  /** The loop's routing index: wire model name (=== the entity name) → its meta. */
   readonly models: ReadonlyMap<string, ModelMeta<any>>
   readonly registry: CollectionRegistryShape
   readonly store: LastSyncIdStoreShape
@@ -34,12 +34,12 @@ export interface MountHealerDeps {
 
 /**
  * The mount-healer: everything that decides and records how complete a collection's base is.
- * Loop-internal (DEC-E1) — its only caller is `syncLoop`; it is a module, not a tag.
+ * Loop-internal — its only caller is `syncLoop`; it is a module, not a tag.
  *
  * It owns the **watermark policy** end to end: the per-mount decision (`heal` →
- * skip/replay/bootstrap, DEC-E*), the idempotent every-cycle pass (`healAllMounted`), and the
- * post-catchup completeness stamps (`onCatchupApplied`, DEC-E11 as amended). The loop keeps
- * application (apply/ingest/snapshot) and routing; nothing else writes watermarks.
+ * skip/replay/bootstrap), the idempotent every-cycle pass (`healAllMounted`), and the
+ * post-catchup completeness stamps (`onCatchupApplied`). The loop keeps application
+ * (apply/ingest/snapshot) and routing; nothing else writes watermarks.
  */
 export interface MountHealer {
   /** Heal one collection from its freshness metadata: Skip / Replay / Bootstrap. Idempotent. */
@@ -58,7 +58,7 @@ export interface MountHealer {
    * already `>= from`, or no watermark when `from = "0"` (cursor-completeness ⇒ the full visible
    * state was delivered). An instance mounted mid-flight with a gap below `from` keeps its watermark
    * and heals in its own `heal` — stamping it here would silently skip that heal: a scope deep-linked
-   * on a warm-cursor start would render only the delta window, durably (DEC-E11 amendment).
+   * on a warm-cursor start would render only the delta window, durably.
    */
   readonly onCatchupApplied: (args: {
     readonly from: SyncId
@@ -86,7 +86,7 @@ export const makeMountHealer = (deps: MountHealerDeps): MountHealer => {
     Effect.gen(function* () {
       const meta = models.get(key.entity)
       if (meta === undefined) return
-      const modelName = ModelName.make(key.entity) // wire name === entity (DEC-R5 amendment)
+      const modelName = ModelName.make(key.entity) // the wire model name IS the entity name
 
       const baseWatermark = yield* log.getBaseWatermark(key)
       const cursor = yield* store.get

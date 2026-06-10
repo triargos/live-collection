@@ -1,25 +1,26 @@
 /**
- * `@triargos/live-collection` — the frontend live-sync engine.
+ * `@triargos/live-collection` — local-first live collections for Effect + TanStack DB.
  *
- * Internal module layout:
- *   registry/     CollectionRegistry, CollectionKey, defineCollection (runtime-bound handle)
- *   dispatch/     the SyncWrite contract (the synced-store write path)
- *   persistence/  liveCollectionOptions (inner creator) over TanStack DB 0.6
- *   client/       SSE transport, catchup, lastSyncId store, the sync loop
- *   runtime/      makeLiveRuntime (two-surface: sync registry+persistence | async loop)
+ * Collections are **native** TanStack collections, persisted locally (SQLite) and kept
+ * in sync with your backend over a live event stream plus catchup. Getting started:
  *
- * The app makes a `persistence` value + a `LiveRuntime`, declares one `defineCollection` per model,
- * and wires them with an explicit `SyncMap` to `useLiveSync` (in `@triargos/live-collection-react`).
- * Collections are native TanStack collections — pass them straight to `useLiveQuery`.
+ * 1. Build the app-wide runtime once at startup: `makeLiveRuntime`.
+ * 2. Declare one `defineCollection` per synced model — it returns the collection handle.
+ * 3. Start the sync loop near your app root: `useLiveSync(runtime, [webhookCollection, …])`
+ *    (from `@triargos/live-collection-react`), or `runtime.forkLoop(models)` outside React.
+ * 4. Read with `useLiveQuery`, write optimistically with `collection.insert/update/delete`.
+ *
+ * The hero type is `LiveCollection<T>` — what a collection handle returns. The wire
+ * contract shared with your backend lives in `@triargos/live-collection-protocol`.
  */
 import type { SyncEvent } from "@triargos/live-collection-protocol"
 
-/** Re-exported so consumers and the dispatch layer share one contract type. */
+/** Re-exported from `@triargos/live-collection-protocol` so consumers share one contract type. */
 export type { SyncEvent }
 
 // registry/ — generic collection cache + the runtime-bound collection handle. makeRegistry stays
 // public: composing syncLoop manually (without makeLiveRuntime) needs the registry as a VALUE shared
-// between the mount path and the loop's layer — the playground's replay lab is the reference consumer.
+// between the mount path and the loop's layer.
 export * from "./registry/collection-key.js"
 export * from "./registry/collection-registry.js"
 export * from "./registry/define-collection.js"
@@ -39,12 +40,11 @@ export * from "./client/sync-loop.js"
 // runtime/ — the live runtime that owns infra and forks the loop
 export * from "./runtime/live-runtime.js"
 
-// persistence/ — the per-entity options creator over TanStack DB 0.6
-//   LiveCollection<T> is the hero type: a native TanStack Collection whose `utils` host the synced
-//   write path. liveCollectionOptions is the inner creator defineCollection's `make` spreads into
-//   persistedCollectionOptions; deriveSchemaVersion drives DEC-A6 dump-and-rebuild.
+// persistence/ — LiveCollection<T> (the hero type) and the building blocks for assembling
+// a persisted collection by hand (defineCollection uses them internally).
 export type { LiveCollection } from "./persistence/live-collection.js"
 export * from "./persistence/live-collection-options.js"
 export * from "./persistence/schema-version.js"
 
+/** The library's version, for diagnostics. */
 export const LIB_VERSION = "0.0.0"

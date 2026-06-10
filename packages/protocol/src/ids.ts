@@ -17,6 +17,17 @@ export type SyncId = typeof SyncId.Type
  * Orders `SyncId`s by numeric magnitude. Parses to `bigint` so it stays exact for
  * cursors beyond `Number.MAX_SAFE_INTEGER`. Cursors need not be contiguous; advance a
  * stored cursor with `Order.max(compareSyncId)(previous, next)`.
+ *
+ * @example
+ * ```ts
+ * import { Order } from "effect"
+ * import { compareSyncId, SyncId } from "@triargos/live-collection-protocol"
+ *
+ * compareSyncId(SyncId.make("9"), SyncId.make("10")) // -1 — numeric, not lexicographic
+ *
+ * // Advance a stored cursor monotonically:
+ * const next = Order.max(compareSyncId)(current, incoming)
+ * ```
  */
 export const compareSyncId: Order.Order<SyncId> = Order.mapInput(Order.bigint, BigInt)
 

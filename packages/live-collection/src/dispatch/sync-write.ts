@@ -2,13 +2,14 @@ import type { Effect } from "effect"
 import type { ModelId } from "@triargos/live-collection-protocol"
 
 /**
- * The synced-store write path of a collection: how server-authoritative state is applied to
- * the local baseline. This is distinct from the optimistic-mutation path the UI writes through
- * — synced writes reflect confirmed server truth and must not be rolled back.
+ * The synced-store write path of a collection, hosted on `collection.utils`: how
+ * server-authoritative state is applied to the local baseline. This is distinct from the
+ * optimistic-mutation path the UI writes through (`collection.insert/update/delete`) —
+ * synced writes reflect confirmed server truth and are never rolled back.
  *
- * A live collection implements this; the sync dispatcher is the primary caller, applying events
- * decoded from the server. `writeSynced` is an upsert — both inserts and updates simply make the
- * local row match the server's.
+ * The sync loop is the primary caller, applying events decoded from the server. Apps
+ * normally don't call these directly — reach for them only when feeding the store from a
+ * source the library doesn't manage.
  *
  * @typeParam T - the collection's entity type
  */
@@ -18,17 +19,18 @@ export interface SyncWrite<T> {
   /** Remove the entity with `id` from the local baseline. A no-op if it isn't present. */
   readonly deleteSynced: (id: ModelId) => Effect.Effect<void>
   /**
-   * Replace the **entire** local baseline with `rows`, in one sync transaction (truncate + writes) —
-   * applied atomically to the in-memory store and the persisted table. This is the snapshot reconcile
-   * (DEC-T9): rows absent from `rows` are gone afterwards, with no read of the current keys (so it
-   * cannot race background hydration).
+   * Replace the **entire** local baseline with `rows`, in one sync transaction (truncate
+   * + writes) — applied atomically to the in-memory store and the persisted table. Rows
+   * absent from `rows` are gone afterwards, with no read of the current keys (so it
+   * cannot race background hydration). The sync loop uses this to reconcile snapshots.
    */
   readonly replaceSynced: (rows: ReadonlyArray<T>) => Effect.Effect<void>
   /**
-   * Structural-only index so `SyncWrite<T>` is a `Record<string, Fn>` (TanStack's `UtilsRecord` index
-   * shape) — which is what `useLiveQuery((q) => q.from({ … }))` requires of a collection's `utils`
-   * (DEC-R9). `(...args: never[]) => unknown` (NOT `any`) is the widest function the two real methods
-   * both satisfy; it carries no callable surface of its own. The named members above are what callers use.
+   * Structural-only index so `SyncWrite<T>` matches TanStack's `UtilsRecord` shape —
+   * which is what `useLiveQuery((q) => q.from({ … }))` requires of a collection's
+   * `utils`. `(...args: never[]) => unknown` (NOT `any`) is the widest function the real
+   * methods all satisfy; it carries no callable surface of its own. The named members
+   * above are what callers use.
    */
   readonly [util: string]: (...args: never[]) => unknown
 }

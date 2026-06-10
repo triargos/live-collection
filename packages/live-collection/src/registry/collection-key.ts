@@ -5,12 +5,11 @@ import { Option } from "effect"
  * nothing else — `entity` (the model name) and `scope` (`None` for a global collection,
  * `Some` for one scoped to a workspace/org/etc.) — which are exactly the dimensions
  * disposal matches on. There is deliberately **no string grammar**: the library never
- * parses an id, so there is no separator, no glob, no escaping (the same structure-over-
- * sentinels choice the protocol made for resync targets).
+ * parses an id, so there is no separator, no glob, no escaping.
  *
- * `A` is a phantom carrying the decoded entity type, so {@link CollectionRegistry.getById}
- * recovers it without an unchecked decode. Keys are minted only by the collection factory
- * (`defineCollection`), so key ↔ entity-type stays 1:1 by construction.
+ * `A` is a phantom type parameter carrying the collection's instance type, so the
+ * registry's `getById` recovers it without an unchecked decode. Keys are minted by
+ * `defineCollection`, so key ↔ instance-type stays 1:1 by construction.
  */
 export interface CollectionKey<A> {
   readonly entity: string

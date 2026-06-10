@@ -51,6 +51,18 @@ export type GroupsFor = (args: {
  * Defines a model registry, checking that every descriptor's `modelName` equals its
  * key — a mismatched or mistyped name is a compile error. The result's keys form the
  * app's model-name union: `type ModelName = keyof typeof registry`.
+ *
+ * @example
+ * ```ts
+ * const registry = defineModelRegistry({
+ *   Webhook: {
+ *     modelName: "Webhook", // must equal the key — checked at compile time
+ *     schema: Webhook,
+ *     hydrate: (id, ctx) => webhookRepo.findVisible(id, ctx),
+ *   },
+ * })
+ * type AppModelName = keyof typeof registry // "Webhook" | …
+ * ```
  */
 export const defineModelRegistry = <
   const R extends Record<string, ModelDescriptor<string, any, any>>
@@ -72,6 +84,16 @@ export class UnknownModelError extends Schema.TaggedError<UnknownModelError>()(
  * with the narrowed literal when it's registered, or `Left(UnknownModelError)` when
  * it isn't — letting the caller skip the event instead of failing the stream, so a
  * client stays forward-compatible with a backend that knows more models than it does.
+ *
+ * @example
+ * ```ts
+ * const knownNames = Object.keys(registry) as Array<keyof typeof registry>
+ *
+ * Either.match(narrowModelName(knownNames, event.modelName), {
+ *   onLeft: () => Effect.logDebug(`skipping unknown model ${event.modelName}`),
+ *   onRight: (name) => dispatch(registry[name], event), // name: "Webhook" | …
+ * })
+ * ```
  */
 export const narrowModelName = <N extends string>(
   known: ReadonlyArray<N>,

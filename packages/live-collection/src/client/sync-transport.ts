@@ -3,21 +3,22 @@ import { HttpClient, HttpClientResponse } from "@effect/platform"
 import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
 
 /**
- * The live connection dropped — it ended, errored, or fell silent past the keep-alive window. It is
- * **expected**, not exceptional: the orchestrator's retry catches it, re-runs catchup to heal the
- * disconnect gap, and reconnects (DEC-T4). The `reason` carries why, for logs.
+ * The live connection dropped — it ended, errored, or fell silent past the keep-alive
+ * window. It is **expected**, not exceptional: the sync loop's retry catches it, re-runs
+ * catchup to heal the disconnect gap, and reconnects. The `reason` carries why, for logs.
  */
 export class SyncConnectionLost extends Schema.TaggedError<SyncConnectionLost>()("SyncConnectionLost", {
   reason: Schema.String,
 }) {}
 
 /**
- * The one app-wide SSE connection to `GET /sync`, decoded. {@link SyncTransportShape.connect} hides
- * SSE line-framing, the keep-alive timeout, text/JSON decoding, and {@link HydratedSyncEventEnvelope}
- * decoding (a malformed line is skipped and logged, never fatal — a newer server may emit shapes this
- * client can't parse). It carries every arm including `Resync`; the orchestrator splits them. The
- * stream **fails** with {@link SyncConnectionLost} on drop rather than retrying internally, so each
- * reconnect re-runs catchup.
+ * The one app-wide live event stream — an SSE connection to the backend's sync endpoint,
+ * decoded. {@link SyncTransportShape.connect} hides SSE line-framing, the keep-alive
+ * timeout, text/JSON decoding, and {@link HydratedSyncEventEnvelope} decoding (a
+ * malformed line is skipped and logged, never fatal — a newer server may emit shapes
+ * this client can't parse). It carries every arm including `Resync`; the sync loop
+ * splits them. The stream **fails** with {@link SyncConnectionLost} on drop rather than
+ * retrying internally, so each reconnect re-runs catchup first.
  */
 export interface SyncTransportShape {
   readonly connect: Stream.Stream<HydratedSyncEventEnvelope, SyncConnectionLost>
@@ -72,21 +73,34 @@ const makeHttp = (config: {
       Stream.mapError((error) =>
         error instanceof SyncConnectionLost ? error : new SyncConnectionLost({ reason: error.message }),
       ),
-      // A server-closed stream is still a drop — surface it so the orchestrator reconnects.
+      // A server-closed stream is still a drop — surface it so the sync loop reconnects.
       Stream.concat(Stream.fail(new SyncConnectionLost({ reason: "stream ended" }))),
     )
     return { connect }
   })
 
-/** The seam: `yield* SyncTransport`. */
+/**
+ * The live-stream service tag. Provide one of its layers as part of the `loop` layer
+ * handed to `makeLiveRuntime`:
+ *
+ * @example
+ * ```ts
+ * SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" })
+ * // requires an HttpClient, e.g.:  Layer.provide(FetchHttpClient.layer)
+ * ```
+ */
 export class SyncTransport extends Context.Tag("SyncTransport")<SyncTransport, SyncTransportShape>() {
-  /** Prod: `GET {url}` as an SSE stream over the platform `HttpClient`. */
+  /**
+   * SSE default: `GET {url}` as a server-sent-event stream over the platform
+   * `HttpClient` (provide e.g. `FetchHttpClient.layer`). Set `keepAlive` above your
+   * server's ping interval — a silence longer than it counts as a dropped connection.
+   */
   static readonly layer = (config: {
     readonly url: string
     readonly keepAlive: Duration.DurationInput
   }): Layer.Layer<SyncTransport, never, HttpClient.HttpClient> => Layer.effect(SyncTransport, makeHttp(config))
 
-  /** Test: events drained from a queue; shutting the queue surfaces {@link SyncConnectionLost}. */
+  /** In-memory — events drained from a queue; shutting the queue down surfaces {@link SyncConnectionLost}. For tests. */
   static readonly layerMemory = (
     events: Queue.Dequeue<HydratedSyncEventEnvelope>,
   ): Layer.Layer<SyncTransport> =>

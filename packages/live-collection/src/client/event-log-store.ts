@@ -20,10 +20,14 @@ export interface LoggedEvent {
 }
 
 /**
- * The durable client-side event log + its sync metadata — the one home for "what events have we
- * received" and "how complete is each collection's base." Append is fed by the same single ingest as
- * the live store; `read` serves replay slices; `floor` is the per-model **prune boundary** that guards
- * replay; watermarks (`B_X`) and `lastResyncAt` gate the mount decision.
+ * The durable client-side event log + its sync metadata — the one home for "what events
+ * have we received" and "how complete is each collection's local base." It is what lets
+ * a collection that mounts late converge by replaying locally logged events instead of
+ * re-fetching over the network.
+ *
+ * `append` is fed by the sync loop's single ingest path; `read` serves replay slices;
+ * `floor` is the per-model **prune boundary** that guards replay; the base watermarks
+ * and `lastResync` gate the on-mount skip/replay/bootstrap decision.
  */
 export interface EventLogStoreShape {
   /** Append received events; upsert by `syncId` so catchup/tail overlap dedupes for free. */
@@ -43,7 +47,7 @@ export interface EventLogStoreShape {
   /** The model's prune boundary: `None` ⇒ nothing pruned (complete from the start); `Some(f)` ⇒ deleted below `f`. */
   readonly floor: (modelName: ModelName) => Effect.Effect<Option.Option<SyncId>>
 
-  /** `B_X` — the syncId through which this collection's base is complete. */
+  /** The collection's base watermark: the syncId through which its local base is known complete. */
   readonly getBaseWatermark: (key: CollectionKey<unknown>) => Effect.Effect<Option.Option<SyncId>>
   readonly setBaseWatermark: (a: { readonly key: CollectionKey<unknown>; readonly at: SyncId }) => Effect.Effect<void>
   /** The newest resync the client has ingested (monotonic) — invalidates replay across it. */
@@ -266,11 +270,20 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
     }
   })
 
-/** The seam: `yield* EventLogStore`. */
+/**
+ * The event-log service tag. Provide one of its layers as part of the `loop` layer
+ * handed to `makeLiveRuntime`:
+ *
+ * @example
+ * ```ts
+ * EventLogStore.layer({ databaseName: "myapp-eventlog" }) // browser, durable
+ * EventLogStore.layerMemory                               // tests/SSR, non-durable
+ * ```
+ */
 export class EventLogStore extends Context.Tag("EventLogStore")<EventLogStore, EventLogStoreShape>() {
-  /** Test/dev: `Ref`-backed, non-durable. */
+  /** In-memory (`Ref`-backed), non-durable — for tests and SSR. */
   static readonly layerMemory: Layer.Layer<EventLogStore> = Layer.effect(EventLogStore, makeMemory)
-  /** Prod: durable IndexedDB. Opens (and closes on scope-out) `databaseName` ?? `live-collection-eventlog`. */
+  /** Browser default: durable IndexedDB. Opens (and closes on scope-out) `databaseName` ?? `"live-collection-eventlog"`. */
   static readonly layer = (options?: { readonly databaseName?: string }): Layer.Layer<EventLogStore> =>
     Layer.scoped(EventLogStore, makeIndexedDb(options?.databaseName ?? DEFAULT_DATABASE_NAME))
 }

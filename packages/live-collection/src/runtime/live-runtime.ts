@@ -8,36 +8,71 @@ import { SyncTransport } from "../client/sync-transport.js"
 import { EventLogStore } from "../client/event-log-store.js"
 import { syncLoop } from "../client/sync-loop.js"
 
-/** The deps the async sync loop needs; the app supplies them as one merged layer (`loop`). */
+/**
+ * The services the sync loop needs: the live stream, the catchup client, the durable
+ * cursor, and the durable event log. The app supplies them as one merged layer — the
+ * `loop` argument of {@link makeLiveRuntime}.
+ */
 export type LoopDeps = SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore
 
 /**
- * The two-surface live runtime (DEC-R8). The **mount** surface (`registry` + `persistence`) is a sync
- * value the collection handles `runSync` against during render. The **loop** surface (`forkLoop`) runs
- * the async catchup/cursor/tail fiber off the render path. The registry is shared into the loop, so
- * dispatch writes to exactly the instances the UI mounted.
+ * The app-wide live-sync runtime, built once at startup by {@link makeLiveRuntime} and
+ * passed to every `defineCollection`. It has two surfaces: the **mount** surface
+ * (`registry` + `persistence`) is synchronous, so collection handles can mount during
+ * render; the **loop** surface (`forkLoop`) runs the async catchup/tail fiber off the
+ * render path. Both share one registry, so the loop writes to exactly the instances the
+ * UI mounted.
  */
 export interface LiveRuntime {
-  /** Built once in a long-lived scope; the handle mounts against it (sync). */
+  /**
+   * The collection registry — the canonical instance cache. Use it for lifecycle calls:
+   * `disposeScope(orgId)` when leaving a workspace, `disposeAll()` on logout.
+   */
   readonly registry: CollectionRegistryShape
-  /** App-owned persistence value, threaded into each collection's `make`. */
+  /** The app-owned persistence value (local SQLite), threaded into each collection it builds. */
   readonly persistence: PersistedCollectionPersistence
-  /** Fork the forever sync loop for `models`. Interrupt the returned fiber to stop it (does NOT
-   *  dispose collections — registry lifetime is the app's, DEC-R8). Called by `useLiveSync` on mount.
-   *  Last call wins: forking while a previous loop is still running interrupts the previous one (two
-   *  concurrent loops would split the registry's single-consumer `mounts` queue between them). */
+  /**
+   * Fork the forever sync loop for `models`. Interrupt the returned fiber to stop it —
+   * this stops syncing but does NOT dispose collections (registry lifetime is the
+   * app's). `useLiveSync` calls this on mount. Last call wins: forking while a previous
+   * loop is still running interrupts the previous one (two concurrent loops would fight
+   * over the registry's single-consumer mount queue).
+   */
   readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void>
   /** Tear down the loop runtime and the registry's long-lived scope (app teardown / logout). */
   readonly dispose: () => void
 }
 
 /**
- * Build a {@link LiveRuntime}. `persistence` is the app value (prod: `createBrowserWASQLitePersistence({
- * database })` from `@tanstack/browser-db-sqlite-persistence`, where `database` is opened once at startup
- * via `await openBrowserWASQLiteOPFSDatabase({ databaseName })`);
- * `loop` is the transport/catchup/cursor layer; `onResync` is the live-resync action (prod:
- * {@link reloadWindow}). The registry is created synchronously in a long-lived scope and also handed
- * to the loop's ManagedRuntime via `Layer.succeed`, so both surfaces share one instance.
+ * Build the app-wide {@link LiveRuntime} — once, at startup, before defining collections.
+ *
+ * - `persistence`: the local-SQLite persistence value. In the browser, open the database
+ *   once and wrap it (see the example).
+ * - `loop`: one merged layer providing {@link LoopDeps} — the transport, catchup client,
+ *   cursor store, and event log.
+ * - `onResync`: what to do when the server declares local state unsalvageable via a live
+ *   `Resync` event. {@link reloadWindow} (the recommended default) reloads the app; the
+ *   next start then re-fetches from scratch.
+ *
+ * @example
+ * ```ts
+ * import { openBrowserWASQLiteOPFSDatabase, createBrowserWASQLitePersistence } from "@tanstack/browser-db-sqlite-persistence"
+ * import { FetchHttpClient } from "@effect/platform"
+ * import { Layer } from "effect"
+ *
+ * const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "myapp" })
+ *
+ * export const runtime = makeLiveRuntime({
+ *   persistence: createBrowserWASQLitePersistence({ database }),
+ *   loop: Layer.mergeAll(
+ *     SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
+ *     CatchupClient.layer({ url: "/api/catchup" }),
+ *     LastSyncIdStore.layer,
+ *     EventLogStore.layer(),
+ *   ).pipe(Layer.provide(FetchHttpClient.layer)),
+ *   onResync: reloadWindow,
+ * })
+ * ```
  */
 export const makeLiveRuntime = (config: {
   readonly persistence: PersistedCollectionPersistence
@@ -78,5 +113,9 @@ export const makeLiveRuntime = (config: {
   }
 }
 
-/** The default prod resync action: reload the whole app (Model A, DEC-T6/T7). */
+/**
+ * The recommended `onResync` action: reload the whole app. The reloaded app starts with
+ * a cleared cursor, catches up cold, and re-snapshots — the simplest way to guarantee
+ * convergence after the server invalidates local state.
+ */
 export const reloadWindow: Effect.Effect<void> = Effect.sync(() => window.location.reload())

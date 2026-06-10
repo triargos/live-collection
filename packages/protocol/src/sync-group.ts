@@ -19,7 +19,15 @@ export const SyncGroup = Schema.NonEmptyString.pipe(
 )
 export type SyncGroup = typeof SyncGroup.Type
 
-/** Builds a group from its path segments. Inverse of {@link parseGroup}. */
+/**
+ * Builds a group from its path segments. Inverse of {@link parseGroup}.
+ *
+ * @example
+ * ```ts
+ * deriveGroup(["organization", orgId])                  // "organization:abc"
+ * deriveGroup(["organization", orgId, "channel", chId]) // "organization:abc:channel:xyz"
+ * ```
+ */
 export const deriveGroup = (
   segments: NonEmptyReadonlyArray<string>
 ): SyncGroup => SyncGroup.make(segments.join(":"))
@@ -36,6 +44,12 @@ export const parseGroup = (
  * event reaches a subscriber when the event's groups intersect the subscriber's.
  * Matching is by exact equality and is never hierarchical — a child group does not
  * match its parent — so a private sub-group can't leak to members of a broader one.
+ *
+ * @example
+ * ```ts
+ * // event.syncGroups vs. the groups this subscriber may see:
+ * if (intersects(event.syncGroups, subscriberGroups)) deliver(event)
+ * ```
  */
 export const intersects = (
   a: ReadonlyArray<SyncGroup>,

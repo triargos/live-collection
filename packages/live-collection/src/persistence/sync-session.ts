@@ -18,9 +18,9 @@ export interface SyncSession<T> {
 /**
  * Builds the utils-hosted {@link SyncWrite} and the `provide` the `sync` closure calls once on
  * start. `utils.writeSynced`/`deleteSynced` are constructed at config time, but the session only
- * exists once `sync()` runs — so a one-shot `Deferred` bridges them (DESIGN §4 / DEC-A11): a write
- * issued before the session is provided simply waits. Sound because the collection is kept alive
- * with `gcTime: Infinity` (DEC-A10), so `sync()` is captured exactly once and never restarts.
+ * exists once `sync()` runs — so a one-shot `Deferred` bridges them: a write issued before the
+ * session is provided simply waits. Sound because the collection is kept alive with
+ * `gcTime: Infinity`, so `sync()` is captured exactly once and never restarts.
  */
 export const makeSyncWrite = <T>(): Effect.Effect<{
   readonly syncWrite: SyncWrite<T>

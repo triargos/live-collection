@@ -12,11 +12,15 @@ import {
 import { type CollectionKey, serializeKey } from "./collection-key.js";
 
 /**
- * The registry's interface — the seam. A long-lived, generic cache of live collection
- * handles keyed by {@link CollectionKey}. It hands out the *canonical* instance for a key
- * (every caller for a given key gets the same object) and owns teardown. It knows nothing
- * about entities, workspaces, or TanStack: a collection's teardown is whatever finalizers
- * its `make` registered.
+ * A long-lived, generic cache of live collection instances keyed by
+ * {@link CollectionKey}. It hands out the *canonical* instance for a key (every caller
+ * for a given key gets the same object) and owns teardown. It knows nothing about
+ * entities, workspaces, or TanStack: a collection's teardown is whatever finalizers its
+ * `make` registered.
+ *
+ * Apps usually touch it through `runtime.registry`, for lifecycle calls such as
+ * `disposeScope(orgId)` when leaving a workspace or `disposeAll()` on logout —
+ * mounting goes through the collection handles, which call into here.
  */
 export interface CollectionRegistryShape {
   /**
@@ -46,8 +50,9 @@ export interface CollectionRegistryShape {
   readonly dispose: (key: CollectionKey<unknown>) => Effect.Effect<void>;
   /**
    * Emits a key the **first** time {@link CollectionRegistryShape.getOrCreate} builds it (not on cache
-   * hits). The sync loop drains it to heal a freshly-mounted collection (skip/replay/bootstrap). Backed
-   * by an unbounded queue, so `getOrCreate`'s `offer` stays synchronous (the mount path is `runSync`).
+   * hits). The sync loop drains it to heal a freshly-mounted collection (skip/replay/bootstrap).
+   * Single-consumer — exactly one running sync loop should read it. Backed by an unbounded queue, so
+   * `getOrCreate`'s `offer` stays synchronous (the mount path is `runSync`).
    */
   readonly mounts: Stream.Stream<CollectionKey<unknown>>;
   /** Tear down and evict every collection whose `scope` equals `scope` (globals untouched). */
@@ -170,10 +175,16 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
     });
   });
 
-/** The seam: `yield* CollectionRegistry`. Implementation is {@link CollectionRegistry.layer}. */
+/**
+ * The registry service tag: `yield* CollectionRegistry` inside an Effect. Most apps
+ * never provide this themselves — `makeLiveRuntime` builds a registry and shares it
+ * between the mount path and the sync loop. Provide {@link CollectionRegistry.layer}
+ * directly only when composing `syncLoop` by hand.
+ */
 export class CollectionRegistry extends Context.Tag("CollectionRegistry")<
   CollectionRegistry,
   CollectionRegistryShape
 >() {
+  /** The default implementation; collections live until the layer's scope closes. */
   static readonly layer = Layer.scoped(CollectionRegistry, makeRegistry);
 }

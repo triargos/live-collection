@@ -5,7 +5,7 @@ import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-col
 /**
  * A catchup request failed — the response wasn't 2xx, the connection broke, or the body didn't
  * decode against {@link CatchupResponse}. It is a **modeled, recoverable** failure on purpose: the
- * orchestrator logs it and tails the live stream anyway (a transient catchup miss is healed on the
+ * sync loop logs it and tails the live stream anyway (a transient catchup miss is healed on the
  * next reconnect), so the read path degrades gracefully instead of crashing.
  */
 export class CatchupFailed extends Schema.TaggedError<CatchupFailed>()("CatchupFailed", {
@@ -14,10 +14,10 @@ export class CatchupFailed extends Schema.TaggedError<CatchupFailed>()("CatchupF
 }) {}
 
 /**
- * Fetches the events a subscriber missed since a cursor — `GET /catchup?from=`. One-shot. The server
- * resolves the caller's groups from their permissions (protocol DEC-12), squashes, hydrates, and
- * returns `{ events, lastSyncId }`; each event's `data` stays opaque here, decoded per-model later at
- * the dispatch seam.
+ * Fetches the events this client missed since a cursor — `GET /catchup?from=`. One-shot.
+ * The server resolves the caller's visible groups from their permissions, squashes,
+ * hydrates, and returns `{ events, lastSyncId }`; each event's `data` stays opaque here
+ * and is decoded against the matching model schema later, at the dispatch seam.
  */
 export interface CatchupClientShape {
   readonly fetch: (request: CatchupRequest) => Effect.Effect<CatchupResponse, CatchupFailed>
@@ -37,12 +37,21 @@ const makeHttp = (config: { readonly url: string }): Effect.Effect<CatchupClient
     }
   })
 
-/** The seam: `yield* CatchupClient`. */
+/**
+ * The catchup service tag. Provide one of its layers as part of the `loop` layer handed
+ * to `makeLiveRuntime`:
+ *
+ * @example
+ * ```ts
+ * CatchupClient.layer({ url: "/api/catchup" })
+ * // requires an HttpClient, e.g.:  Layer.provide(FetchHttpClient.layer)
+ * ```
+ */
 export class CatchupClient extends Context.Tag("CatchupClient")<CatchupClient, CatchupClientShape>() {
-  /** Prod: `GET {url}?from=` over the platform `HttpClient`. */
+  /** HTTP default: `GET {url}?from=` over the platform `HttpClient` (provide e.g. `FetchHttpClient.layer`). */
   static readonly layer = (config: { readonly url: string }): Layer.Layer<CatchupClient, never, HttpClient.HttpClient> =>
     Layer.effect(CatchupClient, makeHttp(config))
-  /** Test: always returns the canned response. */
+  /** In-memory — always returns the given canned response; for tests. */
   static readonly layerMemory = (response: CatchupResponse): Layer.Layer<CatchupClient> =>
     Layer.succeed(CatchupClient, { fetch: () => Effect.succeed(response) })
 }

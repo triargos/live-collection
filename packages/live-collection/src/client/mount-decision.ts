@@ -29,7 +29,7 @@ export const decideOnMount = (i: {
   if (Option.isNone(i.baseWatermark)) return MountDecision.Bootstrap // no base ever ⇒ fetch one
   const base = i.baseWatermark.value
 
-  // A resync since the base invalidates it regardless of cursor position (D9). Checked BEFORE the
+  // A resync since the base invalidates it regardless of cursor position. Checked BEFORE the
   // Skip short-circuit: a cleared cursor (live resync seen, next catchup not yet landed or failed)
   // coerces to "0" below, and `base >= "0"` would otherwise present invalidated state as current.
   const resyncAfter = Option.exists(i.lastResyncAt, (r) => compareSyncId(r, base) > 0)
