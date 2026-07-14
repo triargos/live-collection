@@ -1,0 +1,33 @@
+{
+  "name": "@pi-demo/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pi-demo frontend: React Router SPA over @triargos/live-collection — OPFS-persisted collections, live SSE sync, and joined live queries (todos ⋈ projects).",
+  "scripts": {
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.96.1",
+    "@journeyapps/wa-sqlite": "^1.4.1",
+    "@pi-demo/shared": "workspace:*",
+    "@tanstack/browser-db-sqlite-persistence": "0.1.11",
+    "@tanstack/db": "0.6.7",
+    "@tanstack/react-db": "^0.1.85",
+    "@triargos/live-collection": "workspace:*",
+    "@triargos/live-collection-protocol": "workspace:*",
+    "@triargos/live-collection-react": "workspace:*",
+    "effect": "^3.21.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.0"
+  }
+}

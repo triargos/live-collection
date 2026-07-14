@@ -1,0 +1,27 @@
+{
+  "name": "@pi-demo/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pi-demo reference backend: Effect HttpApi (CRUD + catchup) + raw SSE route over an in-memory sync event log and Effect PubSub bus.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.96.1",
+    "@effect/platform-node": "^0.107.0",
+    "@pi-demo/shared": "workspace:*",
+    "@triargos/live-collection-protocol": "workspace:*",
+    "effect": "^3.21.2"
+  },
+  "devDependencies": {
+    "@effect/vitest": "^0.29.0",
+    "@triargos/live-collection": "workspace:*",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "vitest": "^3.2.0"
+  }
+}
