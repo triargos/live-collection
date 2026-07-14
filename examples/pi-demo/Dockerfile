@@ -27,8 +27,8 @@ RUN corepack enable
 COPY --from=builder /app /app
 
 ENV NODE_ENV=production
-ENV PORT=3050
+ENV PORT=3000
 ENV STATIC_DIR=/app/examples/pi-demo/web/dist
-EXPOSE 3050
+ENV PORT=3000
 
 CMD ["pnpm", "--filter", "@pi-demo/server", "start"]
