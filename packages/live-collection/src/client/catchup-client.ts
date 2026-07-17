@@ -5,7 +5,7 @@ import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-col
 /**
  * A catchup request failed — the response wasn't 2xx, the connection broke, or the body didn't
  * decode against {@link CatchupResponse}. It is a **modeled, recoverable** failure on purpose: the
- * sync loop logs it and tails the live stream anyway (a transient catchup miss is healed on the
+ * broker logs it and tails the live stream anyway (a transient catchup miss is healed on the
  * next reconnect), so the read path degrades gracefully instead of crashing.
  */
 export class CatchupFailed extends Schema.TaggedError<CatchupFailed>()("CatchupFailed", {

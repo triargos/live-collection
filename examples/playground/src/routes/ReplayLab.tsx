@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { Effect, Option } from "effect"
+import { Effect } from "effect"
 import { type CollectionKey, scopedKey } from "@triargos/live-collection"
 import { CheckCircle2, Database, Power, PowerOff, RotateCcw, Sparkles, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge.js"
@@ -13,15 +13,14 @@ import { useDebugLog } from "../debug/use-debug-bus.js"
 // the lab can be unmounted at will. Reset bumps the generation to a *fresh* scope, the cleanest wipe: a
 // new scope has no base watermark and no logged events, so it starts the cycle over from zero.
 const SCOPE_BASE = "replay-lab"
-type Counted = { readonly keys: () => Iterable<unknown> }
-const keyFor = (scope: string): CollectionKey<Counted> => scopedKey<Counted>({ entity: "Webhook", scope })
+const keyFor = (scope: string): CollectionKey<unknown> => scopedKey({ entity: "Webhook", scope })
 
-type Registry = ReturnType<typeof usePlayground>["runtime"]["registry"]
-const peek = (registry: Registry, key: CollectionKey<Counted>): { mounted: boolean; rows: number } =>
-  Option.match(Effect.runSync(registry.getById(key)), {
-    onNone: () => ({ mounted: false, rows: 0 }),
-    onSome: (c) => ({ mounted: true, rows: Array.from(c.keys()).length }),
-  })
+const peek = (pg: ReturnType<typeof usePlayground>, scope: string): { mounted: boolean; rows: number } => {
+  const collection = pg.mounted.get(scope)
+  return collection === undefined
+    ? { mounted: false, rows: 0 }
+    : { mounted: true, rows: Array.from(collection.keys()).length }
+}
 
 /** Which action the demo nudges you toward next — drives the highlighted button + the status line. */
 type Step = "mount-1" | "unmount" | "seed" | "mount-2" | "done"
@@ -46,11 +45,11 @@ export function ReplayLab() {
   const scope = `${SCOPE_BASE}-${gen}`
   const labKey = useMemo(() => keyFor(scope), [scope])
 
-  const [{ mounted, rows }, setState] = useState(() => peek(pg.runtime.registry, labKey))
-  const refresh = () => setState(peek(pg.runtime.registry, labKey))
+  const [{ mounted, rows }, setState] = useState(() => peek(pg, scope))
+  const refresh = () => setState(peek(pg, scope))
   useEffect(() => {
-    setState(peek(pg.runtime.registry, labKey)) // re-sync immediately when the scope changes (Reset)
-    const handle = setInterval(() => setState(peek(pg.runtime.registry, labKey)), 400)
+    setState(peek(pg, scope)) // re-sync immediately when the scope changes (Reset)
+    const handle = setInterval(() => setState(peek(pg, scope)), 400)
     return () => clearInterval(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labKey])
@@ -76,14 +75,23 @@ export function ReplayLab() {
   }
   const unmount = () => {
     // dispose closes the collection's scope, which runs its async `cleanup()` finalizer — NOT runSync-safe.
-    void Effect.runPromise(pg.runtime.registry.dispose(labKey)).then(refresh, refresh)
+    void Effect.runPromise(pg.runtime.registry.dispose(labKey)).then(
+      () => {
+        pg.mounted.delete(scope)
+        refresh()
+      },
+      refresh,
+    )
   }
   const seed = () => {
     pg.controls.seedRemote({ orgId: scope, url: `https://lab.example/hook-${seeded + 1}` })
     setSeeded((n) => n + 1)
   }
   const reset = () => {
-    if (mounted) Effect.runFork(pg.runtime.registry.dispose(labKey)) // fire-and-forget teardown of the old scope
+    if (mounted) {
+      Effect.runFork(pg.runtime.registry.dispose(labKey))
+      pg.mounted.delete(scope)
+    }
     setSeeded(0)
     setEverMounted(false)
     setGen((g) => g + 1) // fresh scope ⇒ clean slate

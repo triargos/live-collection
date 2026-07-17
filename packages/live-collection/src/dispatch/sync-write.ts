@@ -7,7 +7,7 @@ import type { ModelId } from "@triargos/live-collection-protocol"
  * optimistic-mutation path the UI writes through (`collection.insert/update/delete`) —
  * synced writes reflect confirmed server truth and are never rolled back.
  *
- * The sync loop is the primary caller, applying events decoded from the server. Apps
+ * The collection drain is the primary caller, applying events decoded from the server. Apps
  * normally don't call these directly — reach for them only when feeding the store from a
  * source the library doesn't manage.
  *
@@ -22,7 +22,7 @@ export interface SyncWrite<T> {
    * Replace the **entire** local baseline with `rows`, in one sync transaction (truncate
    * + writes) — applied atomically to the in-memory store and the persisted table. Rows
    * absent from `rows` are gone afterwards, with no read of the current keys (so it
-   * cannot race background hydration). The sync loop uses this to reconcile snapshots.
+   * cannot race background hydration). The collection drain uses this to reconcile snapshots.
    */
   readonly replaceSynced: (rows: ReadonlyArray<T>) => Effect.Effect<void>
   /**

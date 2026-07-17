@@ -128,12 +128,12 @@ packages/
                     #   src/registry/    CollectionRegistry (tag+layer), CollectionKey, defineCollection
                     #   src/dispatch/    the SyncWrite contract (writeSynced/deleteSynced/replaceSynced)
                     #   src/persistence/ liveCollectionOptions (inner creator), schema-version, sync-session
-                    #   src/client/      SyncTransport (SSE), CatchupClient, LastSyncIdStore, EventLogStore,
-                    #                    mount-decision + mount-healer (internal), syncLoop
-                    #   src/runtime/     makeLiveRuntime (two-surface: sync registry+persistence | async loop)
+                    #   src/client/      SyncTransport, CatchupClient, LastSyncIdStore, EventLogStore,
+                    #                    SyncBroker (single ingest fiber + per-collection subscriptions)
+                    #   src/runtime/     makeLiveRuntime (sync mount surface + async broker/drain runtime)
                     #   public hero: LiveCollection<T> — a NATIVE TanStack collection from defineCollection.
   react/            # @triargos/live-collection-react      deps: react, @tanstack/react-db, + main
-                    #   useLiveSync(runtime, models) — fork the loop on mount, interrupt on unmount.
+                    #   useLiveSync(runtime) — fork broker ingest on mount, interrupt on unmount.
                     #   Reads use @tanstack/react-db's useLiveQuery directly (no wrapper, DEC-R1).
 
 examples/           # NOT published, NOT packages — workspace apps
@@ -143,7 +143,7 @@ examples/           # NOT published, NOT packages — workspace apps
 
 Dependency DAG (acyclic): `protocol → live-collection → react`. Inside `live-collection` each seam
 module hosts its own hand-rolled tag + default layers (`layer` / `layerMemory`); the app composes
-them at the edge (the `loop` layer handed to `makeLiveRuntime`).
+them at the edge (the `sync` layer handed to `makeLiveRuntime`).
 
 > **Decided:** the external backend imports `@triargos/live-collection-protocol` from the company
 > registry, so it stays a separate package and is scoped as a **contract kit** — schemas, the pure
@@ -167,7 +167,8 @@ them at the edge (the `loop` layer handed to `makeLiveRuntime`).
 7. **The A.3 persistence spike is a hard gate.** Do not roll persistence out across entities until the three-step flow (hydrate-from-storage → no full re-list → catchup deltas persist via the sync source) is verified against the alpha. (Spec §A.1.)
 8. **Echo suppression / `clientId` is removed for now** (protocol DEC-11). The spec's §10 server-side `clientId` filter is in tension with TanStack DB's optimistic-mutation reconciliation (which expects the synced store to confirm your own writes) and withholds the server-transformed value from the originator. If an id is ever reintroduced, it belongs as a **client-side reconciliation key** (Replicache `lastMutationID` style), not a server filter — and only if testing proves it necessary. Until then, no `clientId` on events, `SyncContext`, or the HTTP contract; no `DomainEvent` change required.
 9. **Collection identity is a *structured* `CollectionKey {entity, scope: Option<string>}` — NOT the spec §14 string-id + `globToRegex` glob.** The registry never parses an id (no separator, escaping, or `*` semantics); disposal matches on the structured fields (`disposeScope` = scope equality). This is the same structure-over-sentinels choice the protocol made for resync targets (DEC-9). One instance per `(entity, scope)`; variants-within-a-scope are deferred (would be an additive `variant: Option<string>` dimension that `disposeScope` ignores — never folded into `scope`, which would break workspace teardown).
-10. **`defineCollection` is the typed skin; `MountRef` is the handle.** `defineCollection` has **two overloads** — global (`() => MountRef`, no `scopeOf`) and scoped (`(args) => MountRef`, `scopeOf` present). The split is load-bearing: a single `scopeOf?` signature infers `Args = unknown` and forces a phantom arg on global calls. `scopeOf: (args) => string` is the **only** place an app's "workspace" notion appears — the library stays scope-generic (the locked answer to "should workspace leak into the generic package?": no). `MountRef extends Effectable.Class` (yieldable: `yield* webhookCollection(orgId)` mounts via the registry), surface is bare — `.key` + `commit()` only; disposal/lookup go through the registry, the sole orchestrator. `R` discharges `Scope` via `Exclude<R, Scope>`, mirroring `getOrCreate`.
+10. **`defineCollection` is the typed skin and returns native TanStack collections.** It has two overloads: global (`() => LiveCollection<T>`, no `scopeOf`) and scoped (`(scope: string) => LiveCollection<T>`, `scopeOf` present). The split is load-bearing: `scopeOf` is the only place an app's workspace concept enters the package. Mounting remains synchronous and referentially stable through the registry's `getOrCreate`; each first mount forks that collection's broker drain in its child scope. The registry is only a lifetime table (`getOrCreate` + selective disposal), never a router or lookup API.
+11. **Client sync uses `SyncBroker`, not a central collection manager.** One broker fiber owns catchup, the multiplexed SSE connection, durable cursor/log, pruning, and a `PubSub`; every collection subscribes itself and sequentially drains `Snapshot | Upsert | Delete` signals into its own synced store. Replay and live tail are one stream. Subscribers decode model data, filter scoped upserts after decode, fan deletes across all scopes of the model, and call batched `markApplied` only after application. A resync emits in-place `Snapshot` signals (no `onResync`, no page reload); all targets are currently treated globally, with target-aware fan-out deferred. The broker logs all models even while unmounted so late mounts replay locally. Public startup is `makeLiveRuntime({ persistence, sync })` + `forkSync()` / `useLiveSync(runtime)`; there is no `SyncModels` list.
 
 ### Anti-references — do NOT replicate (spec §B)
 

@@ -21,7 +21,7 @@ export function _typeCheck(runtime: LiveRuntime, orgId: string): void {
   })
 
   // The explicit models array — the wire name comes from each handle's `_meta.entity` (DEC-R5 amendment).
-  useLiveSync(runtime, [webhookCollection])
+  useLiveSync(runtime)
 
   // Direct-collection overload — the native read: data is the entity rows, no wrapper.
   const direct = useLiveQuery(() => webhookCollection(orgId), [orgId])

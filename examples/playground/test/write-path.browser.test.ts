@@ -49,9 +49,9 @@ describe("write path over OPFS (browser)", () => {
 
       // ── phase 1: writes with the live loop running ──
       const fake = makeFakeBackend()
-      const runtime = makeLiveRuntime({ persistence, loop: fake.loop, onResync: Effect.void })
+      const runtime = makeLiveRuntime({ persistence, sync: fake.sync })
       const webhooks = webhookCollection(runtime, fake.services)
-      const fiber = runtime.forkLoop([webhooks])
+      const fiber = runtime.forkSync()
       const coll = webhooks("org-1")
       yield* Effect.promise(() => coll.preload())
 
@@ -76,7 +76,7 @@ describe("write path over OPFS (browser)", () => {
 
       // ── phase 2: reload — fresh runtime over the SAME OPFS database, no loop ──
       const fake2 = makeFakeBackend()
-      const runtime2 = makeLiveRuntime({ persistence, loop: fake2.loop, onResync: Effect.void })
+      const runtime2 = makeLiveRuntime({ persistence, sync: fake2.sync })
       const webhooks2 = webhookCollection(runtime2, fake2.services)
       const coll2 = webhooks2("org-1")
       yield* Effect.promise(() => coll2.preload())

@@ -6,8 +6,8 @@
  *
  * 1. Build the app-wide runtime once at startup: `makeLiveRuntime`.
  * 2. Declare one `defineCollection` per synced model — it returns the collection handle.
- * 3. Start the sync loop near your app root: `useLiveSync(runtime, [webhookCollection, …])`
- *    (from `@triargos/live-collection-react`), or `runtime.forkLoop(models)` outside React.
+ * 3. Start broker ingest near your app root with `useLiveSync(runtime)`
+ *    (from `@triargos/live-collection-react`), or `runtime.forkSync()` outside React.
  * 4. Read with `useLiveQuery`, write optimistically with `collection.insert/update/delete`.
  *
  * The hero type is `LiveCollection<T>` — what a collection handle returns. The wire
@@ -18,9 +18,7 @@ import type { SyncEvent } from "@triargos/live-collection-protocol"
 /** Re-exported from `@triargos/live-collection-protocol` so consumers share one contract type. */
 export type { SyncEvent }
 
-// registry/ — generic collection cache + the runtime-bound collection handle. makeRegistry stays
-// public: composing syncLoop manually (without makeLiveRuntime) needs the registry as a VALUE shared
-// between the mount path and the loop's layer.
+// registry/ — collection lifetime table, structured keys, and runtime-bound handles.
 export * from "./registry/collection-key.js"
 export * from "./registry/collection-registry.js"
 export * from "./registry/define-collection.js"
@@ -28,16 +26,15 @@ export * from "./registry/define-collection.js"
 // dispatch/ — the synced-store write path contract
 export * from "./dispatch/sync-write.js"
 
-// client/ — SSE transport, catchup, durable cursor, the durable event log, the sync loop.
-// (mount-decision, mount-healer, prune-plan, and sync-session are internal policy/plumbing —
-// reachable behaviorally through syncLoop and the collection utils, not part of the API.)
+// client/ — SSE transport, catchup, durable cursor/log, and the subscription broker.
+// (prune-plan and sync-session are internal policy/plumbing.)
 export * from "./client/last-sync-id-store.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
 export * from "./client/event-log-store.js"
-export * from "./client/sync-loop.js"
+export * from "./client/sync-broker.js"
 
-// runtime/ — the live runtime that owns infra and forks the loop
+// runtime/ — the live runtime that owns infra and forks broker ingest
 export * from "./runtime/live-runtime.js"
 
 // persistence/ — LiveCollection<T> (the hero type) and the building blocks for assembling

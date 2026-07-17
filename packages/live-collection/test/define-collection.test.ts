@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, type Scope, Stream } from "effect"
+import { Effect, Option, Schema, type Scope } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelId } from "@triargos/live-collection-protocol"
 import type { CollectionRegistryShape } from "../src/registry/collection-registry.js"
@@ -27,10 +27,6 @@ const fakeRuntime = () => {
         if (!built.has(id)) built.set(id, { __stub: id })
         return built.get(id) as A
       }),
-    getById: <A>(key: CollectionKey<A>) =>
-      Effect.sync(() => Option.fromNullable(built.get(serializeKey(key)) as A | undefined)),
-    getByEntity: () => Effect.succeed([]),
-    mounts: Stream.empty,
     dispose: () => Effect.void,
     disposeScope: () => Effect.void,
     disposeAllScoped: () => Effect.void,
@@ -67,22 +63,6 @@ describe("defineCollection — runtime-bound handle", () => {
     })
     assert.strictEqual(user(), user())
     assert.deepStrictEqual(keys[0], { entity: "User", scope: Option.none() }) // global key, no scope
-  })
-
-  it("the mounted instance is found in the registry under its (entity, scope) key", () => {
-    const { runtime } = fakeRuntime()
-    const webhook = defineCollection({
-      runtime,
-      entity: "Webhook",
-      schema: Webhook,
-      getKey: (w) => k(w.id),
-      scopeOf: (w) => w.orgId,
-      listFn: () => Effect.succeed([]),
-    })
-
-    const instance = webhook("org-1")
-    const found = Effect.runSync(runtime.registry.getById(scopedKey({ entity: "Webhook", scope: "org-1" })))
-    assert.deepStrictEqual(found, Option.some(instance)) // handle and registry agree on identity
   })
 
   it("_meta carries entity, scopeOf and the snapshot listFn the loop reads", () => {

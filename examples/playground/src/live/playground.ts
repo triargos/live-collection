@@ -2,11 +2,10 @@ import { Effect, Layer } from "effect"
 import {
   defineCollection,
   EventLogStore,
+  type LiveCollection,
   type LiveRuntime,
   makeLiveRuntime,
-  reloadWindow,
   type ScopedHandle,
-  type SyncModels,
 } from "@triargos/live-collection"
 import {
   createBrowserWASQLitePersistence,
@@ -26,12 +25,14 @@ import { Webhook, webhookKey } from "./schema.js"
  * to OPFS. Reload to hydrate from OPFS; open a second tab to watch writes sync across tabs.
  *
  * Everything observable hangs off here for the debug panel: the {@link DebugBus} traffic log, the backend
- * {@link BackendControls} (failure injection, resync, server reset), the registry, and the {@link SyncModels}.
+ * {@link BackendControls} (failure injection, resync, server reset), and the registry lifetime controls.
  */
 export interface Playground {
   readonly runtime: LiveRuntime
-  readonly models: SyncModels
+  readonly models: ReadonlyArray<ScopedHandle<Webhook>>
   readonly webhooks: ScopedHandle<Webhook>
+  /** App-owned debug index; the registry deliberately exposes no routing/peek surface. */
+  readonly mounted: Map<string, LiveCollection<Webhook>>
   readonly bus: DebugBus
   readonly controls: BackendControls
   readonly tabId: string
@@ -46,10 +47,10 @@ export const createPlayground = async (): Promise<Playground> => {
   const backend = makeSharedBackend({ bus, tabId })
   // EventLogStore (replay-on-mount) — durable IndexedDB, per-tab so two tabs are independent clients (one
   // origin-shared default DB would clobber each other's log/watermarks). Survives reload; powers replay.
-  const loop = Layer.merge(backend.loop, EventLogStore.layer({ databaseName: `${dbName}-eventlog` }))
-  const runtime = makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
+  const sync = Layer.merge(backend.sync, EventLogStore.layer({ databaseName: `${dbName}-eventlog` }))
+  const runtime = makeLiveRuntime({ persistence, sync })
 
-  const webhooks = defineCollection({
+  const rawWebhooks = defineCollection({
     runtime,
     services: backend.services,
     entity: "Webhook",
@@ -65,5 +66,15 @@ export const createPlayground = async (): Promise<Playground> => {
       Effect.flatMap(WebhookApi, (api) => api.remove(transaction.mutations[0]!.key)),
   })
 
-  return { runtime, models: [webhooks], webhooks, bus, controls: backend.controls, tabId }
+  const mounted = new Map<string, LiveCollection<Webhook>>()
+  const webhooks = Object.assign(
+    (scope: string) => {
+      const collection = rawWebhooks(scope)
+      mounted.set(scope, collection)
+      return collection
+    },
+    { _meta: rawWebhooks._meta },
+  ) as ScopedHandle<Webhook>
+
+  return { runtime, models: [webhooks], webhooks, mounted, bus, controls: backend.controls, tabId }
 }

@@ -1,6 +1,4 @@
 import { useEffect } from "react"
-import { Effect, Option } from "effect"
-import { serializeKey } from "@triargos/live-collection"
 import type { Playground } from "../live/playground.js"
 
 /** A change message as TanStack DB delivers it to `subscribeChanges`. */
@@ -31,39 +29,30 @@ export function useStoreTaps(pg: Playground): void {
     const subscriptions = new Map<string, { readonly unsubscribe: () => void }>()
 
     const sweep = (): void => {
-      for (const entity of pg.models.map((m) => m._meta.entity)) {
-        const mounted = Effect.runSync(pg.runtime.registry.getByEntity<Watchable>(entity))
-        for (const { key, collection } of mounted) {
-          const id = serializeKey(key)
-          if (subscriptions.has(id)) continue
-          const scope = Option.getOrElse(key.scope, () => "—")
-
-          // Rows loaded from OPFS arrive as change events while `preload()` is in flight, so treat that
-          // window as the hydrate phase; everything after preload resolves is a live store mutation
-          // (a `writeSynced`/`deleteSynced` from the loop, or an optimistic write).
-          let phase: "hydrate" | "live" = "hydrate"
-          const subscription = collection.subscribeChanges(
-            (changes) => {
-              for (const change of changes) {
-                const id8 = String(change.key).slice(0, 8)
-                if (phase === "hydrate") {
-                  pg.bus.push({ direction: "in", channel: "hydrate", label: `${entity}(${scope}) ${id8} ← OPFS` })
-                } else {
-                  pg.bus.push({
-                    direction: change.type === "delete" ? "info" : "in",
-                    channel: "store",
-                    label: `${change.type} ${entity}(${scope}) ${id8}`,
-                  })
-                }
+      for (const [scope, collection] of pg.mounted as ReadonlyMap<string, Watchable>) {
+        if (subscriptions.has(scope)) continue
+        let phase: "hydrate" | "live" = "hydrate"
+        const subscription = collection.subscribeChanges(
+          (changes) => {
+            for (const change of changes) {
+              const id8 = String(change.key).slice(0, 8)
+              if (phase === "hydrate") {
+                pg.bus.push({ direction: "in", channel: "hydrate", label: `Webhook(${scope}) ${id8} ← OPFS` })
+              } else {
+                pg.bus.push({
+                  direction: change.type === "delete" ? "info" : "in",
+                  channel: "store",
+                  label: `${change.type} Webhook(${scope}) ${id8}`,
+                })
               }
-            },
-            { includeInitialState: true },
-          )
-          void collection.preload().then(() => {
-            phase = "live"
-          })
-          subscriptions.set(id, subscription)
-        }
+            }
+          },
+          { includeInitialState: true },
+        )
+        void collection.preload().then(() => {
+          phase = "live"
+        })
+        subscriptions.set(scope, subscription)
       }
     }
 

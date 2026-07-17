@@ -29,7 +29,7 @@ function ProjectTodos({ bundle }: { readonly bundle: AppBundle }) {
 }
 
 export function App({ bundle }: { readonly bundle: AppBundle }) {
-  useLiveSync(bundle.runtime, bundle.models)
+  useLiveSync(bundle.runtime)
 
   useEffect(() => {
     if (!consumeCreatedSession(bundle.session)) return

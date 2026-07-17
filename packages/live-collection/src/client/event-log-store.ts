@@ -4,16 +4,12 @@ import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
 import { prunePlan } from "./prune-plan.js"
 
 /**
- * The at-rest log row — schema-agnostic (wire form), re-decoded on replay. It is an {@link AppliedEvent}
- * (modelName/tag/modelId/data) plus the two columns the store indexes on: `syncId` (PK, order, dedupe)
- * and `scope` (the read filter). `scope` is `None` for a global instance's event *or* a `Delete`
- * (which carries no data to derive a scope from); the two never collide because an entity is uniformly
- * global or scoped.
+ * The at-rest log row — schema-agnostic wire form, re-decoded by each subscriber on replay.
+ * The broker is model-blind, so scope is derived and filtered only after the subscriber decodes data.
  */
 export interface LoggedEvent {
   readonly syncId: SyncId
   readonly modelName: ModelName
-  readonly scope: Option.Option<string>
   readonly tag: "Insert" | "Update" | "Delete"
   readonly modelId: ModelId
   readonly data: Option.Option<unknown>
@@ -25,7 +21,7 @@ export interface LoggedEvent {
  * a collection that mounts late converge by replaying locally logged events instead of
  * re-fetching over the network.
  *
- * `append` is fed by the sync loop's single ingest path; `read` serves replay slices;
+ * `append` is fed by the broker's single ingest path; `read` serves replay slices;
  * `floor` is the per-model **prune boundary** that guards replay; the base watermarks
  * and `lastResync` gate the on-mount skip/replay/bootstrap decision.
  */
@@ -33,13 +29,11 @@ export interface EventLogStoreShape {
   /** Append received events; upsert by `syncId` so catchup/tail overlap dedupes for free. */
   readonly append: (rows: ReadonlyArray<LoggedEvent>) => Effect.Effect<void>
   /**
-   * The replay slice for one collection — its model's events after `since` (exclusive), syncId-ordered.
-   * `scope` `None` ⇒ the whole model (a global instance); `Some(s)` ⇒ that scope's rows plus the
-   * model's scope-less `Delete`s (which fan across scopes, exactly as live dispatch does).
+   * The replay slice for one model after `since` (exclusive), syncId-ordered.
+   * Scoped subscribers decode and filter this bounded per-model slice themselves.
    */
   readonly read: (args: {
     readonly modelName: ModelName
-    readonly scope: Option.Option<string>
     readonly since: SyncId
   }) => Effect.Effect<ReadonlyArray<LoggedEvent>>
   /** Trim the log: per-model keep newest `perModel`, then globally keep newest `total`. */
@@ -59,13 +53,7 @@ export interface EventLogStoreShape {
 const advance = (current: Option.Option<SyncId>, next: SyncId): SyncId =>
   Option.match(current, { onNone: () => next, onSome: (c) => Order.max(compareSyncId)(c, next) })
 
-const scopeMatches = (query: Option.Option<string>, row: Option.Option<string>): boolean =>
-  Option.match(query, {
-    onNone: () => true, // global model ⇒ every row of the model
-    onSome: (s) => Option.match(row, { onNone: () => true, onSome: (rs) => rs === s }), // scope rows + scope-less Deletes
-  })
-
-/** In-memory adapter over `Ref`s — the loop's behavior tests. */
+/** In-memory adapter over `Ref`s — broker behavior tests. */
 const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
   const rows = yield* Ref.make(new Map<string, LoggedEvent>()) // keyed by syncId ⇒ upsert dedupe
   const watermarks = yield* Ref.make(new Map<string, SyncId>()) // keyed by serializeKey(key)
@@ -79,13 +67,11 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
         for (const row of incoming) next.set(row.syncId, row)
         return next
       }),
-    read: ({ modelName, scope, since }) =>
+    read: ({ modelName, since }) =>
       Ref.get(rows).pipe(
         Effect.map((m) =>
           [...m.values()]
-            .filter(
-              (r) => r.modelName === modelName && compareSyncId(r.syncId, since) > 0 && scopeMatches(scope, r.scope),
-            )
+            .filter((r) => r.modelName === modelName && compareSyncId(r.syncId, since) > 0)
             .sort((a, b) => compareSyncId(a.syncId, b.syncId)),
         ),
       ),
@@ -125,13 +111,12 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
 
 /**
  * The at-rest IDB record for one log row: the plain, structured-clonable mirror of {@link LoggedEvent}.
- * `Option`s flatten to `string | null` (`scope`) / `unknown | null` (`data`) at the seam and decode back
- * on read — the store round-trips opaque wire `data`; the model schema re-decodes it later in replay.
+ * `data` flattens to `unknown | null` at the seam and decodes back on read. The store round-trips
+ * opaque wire data; the model schema re-decodes it later in the subscriber.
  */
 const StoredEvent = Schema.Struct({
   syncId: SyncId,
   modelName: ModelName,
-  scope: Schema.OptionFromNullOr(Schema.String),
   tag: Schema.Literal("Insert", "Update", "Delete"),
   modelId: ModelId,
   data: Schema.OptionFromNullOr(Schema.Unknown),
@@ -195,7 +180,7 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
         Effect.orDie,
       )
 
-    // Monotonic write: read the current cursor, keep the larger, persist. (Sequential under the loop.)
+    // Monotonic write: read the current cursor, keep the larger, persist. (Sequential under broker ingest.)
     const advanceMetaSyncId = (key: string, at: SyncId): Effect.Effect<void> =>
       getMetaSyncId(key).pipe(
         Effect.flatMap((current) =>
@@ -224,15 +209,13 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
           ),
         ),
 
-      read: ({ modelName, scope, since }) =>
+      read: ({ modelName, since }) =>
         Effect.promise(() =>
           requestResult(db.transaction(EVENTS, "readonly").objectStore(EVENTS).index(BY_MODEL).getAll(modelName)),
         ).pipe(
           Effect.flatMap(decodeAll),
           Effect.map((rows) =>
-            rows
-              .filter((r) => compareSyncId(r.syncId, since) > 0 && scopeMatches(scope, r.scope))
-              .sort((a, b) => compareSyncId(a.syncId, b.syncId)),
+            rows.filter((r) => compareSyncId(r.syncId, since) > 0).sort((a, b) => compareSyncId(a.syncId, b.syncId)),
           ),
         ),
 

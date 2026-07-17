@@ -1,6 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react"
-import { Effect, Option } from "effect"
-import { serializeKey } from "@triargos/live-collection"
+import { scopedKey, serializeKey } from "@triargos/live-collection"
 import { Boxes, Server } from "lucide-react"
 import { cn } from "@/lib/utils.js"
 import type { Playground } from "../live/playground.js"
@@ -12,23 +11,13 @@ interface RegistryRow {
   readonly count: number
 }
 
-type Counted = { readonly keys: () => Iterable<unknown> }
-
-const readRegistry = (pg: Playground): ReadonlyArray<RegistryRow> => {
-  const rows: Array<RegistryRow> = []
-  for (const entity of pg.models.map((m) => m._meta.entity)) {
-    const mounted = Effect.runSync(pg.runtime.registry.getByEntity<Counted>(entity))
-    for (const { key, collection } of mounted) {
-      rows.push({
-        entity,
-        scope: Option.getOrElse(key.scope, () => "—"),
-        tableId: serializeKey(key),
-        count: Array.from(collection.keys()).length,
-      })
-    }
-  }
-  return rows
-}
+const readRegistry = (pg: Playground): ReadonlyArray<RegistryRow> =>
+  [...pg.mounted].map(([scope, collection]) => ({
+    entity: "Webhook",
+    scope,
+    tableId: serializeKey(scopedKey({ entity: "Webhook", scope })),
+    count: Array.from(collection.keys()).length,
+  }))
 
 function Section({
   icon: Icon,

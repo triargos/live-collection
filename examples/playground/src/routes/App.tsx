@@ -12,7 +12,7 @@ import { WebhooksPage } from "./WebhooksPage.js"
 // near the root, so the whole app shares one loop. The DebugPanel overlays it as a slide-over.
 export function App() {
   const pg = usePlayground()
-  useLiveSync(pg.runtime, pg.models)
+  useLiveSync(pg.runtime)
   useStoreTaps(pg) // tap the local-store read path (hydrate + writeSynced/deleteSynced) into the debug bus
   return (
     <div className="min-h-dvh">
