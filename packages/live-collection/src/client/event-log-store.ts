@@ -80,7 +80,7 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
         Effect.flatMap((m) => {
           const plan = prunePlan({ rows: [...m.values()], perModel, total })
           return Ref.set(rows, new Map(plan.keep.map((r) => [r.syncId, r] as const))).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               Ref.update(floors, (f) => {
                 const next = new Map(f)
                 for (const [model, at] of plan.deletedHighWater) {
@@ -93,13 +93,13 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
           )
         }),
       ),
-    floor: (modelName) => Ref.get(floors).pipe(Effect.map((f) => Option.fromNullable(f.get(modelName)))),
-    getBaseWatermark: (key) => Ref.get(watermarks).pipe(Effect.map((m) => Option.fromNullable(m.get(serializeKey(key))))),
+    floor: (modelName) => Ref.get(floors).pipe(Effect.map((f) => Option.fromNullishOr(f.get(modelName)))),
+    getBaseWatermark: (key) => Ref.get(watermarks).pipe(Effect.map((m) => Option.fromNullishOr(m.get(serializeKey(key))))),
     setBaseWatermark: ({ key, at }) =>
       Ref.update(watermarks, (m) => {
         const next = new Map(m)
         const id = serializeKey(key)
-        next.set(id, advance(Option.fromNullable(m.get(id)), at))
+        next.set(id, advance(Option.fromNullishOr(m.get(id)), at))
         return next
       }),
     getLastResync: Ref.get(lastResync),
@@ -117,7 +117,7 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
 const StoredEvent = Schema.Struct({
   syncId: SyncId,
   modelName: ModelName,
-  tag: Schema.Literal("Insert", "Update", "Delete"),
+  tag: Schema.Literals(["Insert", "Update", "Delete"]),
   modelId: ModelId,
   data: Schema.OptionFromNullOr(Schema.Unknown),
 })
@@ -175,7 +175,7 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
     const getMetaSyncId = (key: string): Effect.Effect<Option.Option<SyncId>> =>
       Effect.promise(() => requestResult(db.transaction(META, "readonly").objectStore(META).get(key))).pipe(
         Effect.flatMap((value) =>
-          value === undefined ? Effect.succeedNone : Schema.decodeUnknown(SyncId)(value).pipe(Effect.asSome),
+          value === undefined ? Effect.succeedNone : Schema.decodeUnknownEffect(SyncId)(value).pipe(Effect.asSome),
         ),
         Effect.orDie,
       )
@@ -193,11 +193,11 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
       )
 
     const decodeAll = (raw: unknown): Effect.Effect<ReadonlyArray<LoggedEvent>> =>
-      Schema.decodeUnknown(StoredEvents)(raw).pipe(Effect.orDie)
+      Schema.decodeUnknownEffect(StoredEvents)(raw).pipe(Effect.orDie)
 
     return {
       append: (incoming) =>
-        Schema.encode(StoredEvents)(incoming).pipe(
+        Schema.encodeEffect(StoredEvents)(incoming).pipe(
           Effect.orDie,
           Effect.flatMap((stored) =>
             Effect.promise(async () => {
@@ -263,10 +263,10 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
  * EventLogStore.layerMemory                               // tests/SSR, non-durable
  * ```
  */
-export class EventLogStore extends Context.Tag("EventLogStore")<EventLogStore, EventLogStoreShape>() {
+export class EventLogStore extends Context.Service<EventLogStore, EventLogStoreShape>()("EventLogStore") {
   /** In-memory (`Ref`-backed), non-durable — for tests and SSR. */
   static readonly layerMemory: Layer.Layer<EventLogStore> = Layer.effect(EventLogStore, makeMemory)
   /** Browser default: durable IndexedDB. Opens (and closes on scope-out) `databaseName` ?? `"live-collection-eventlog"`. */
   static readonly layer = (options?: { readonly databaseName?: string }): Layer.Layer<EventLogStore> =>
-    Layer.scoped(EventLogStore, makeIndexedDb(options?.databaseName ?? DEFAULT_DATABASE_NAME))
+    Layer.effect(EventLogStore, makeIndexedDb(options?.databaseName ?? DEFAULT_DATABASE_NAME))
 }

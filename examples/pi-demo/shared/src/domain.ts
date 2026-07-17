@@ -15,7 +15,7 @@ import { deriveGroup, ModelId, ModelName, type SyncGroup } from "@triargos/live-
  * group (`session:<code>`) its rows and events are tagged with.
  */
 export const SessionCode = Schema.String.pipe(
-  Schema.pattern(/^[A-Z0-9]{6}$/),
+  Schema.check(Schema.isPattern(/^[A-Z0-9]{6}$/)),
   Schema.brand("SessionCode"),
 )
 export type SessionCode = typeof SessionCode.Type

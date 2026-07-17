@@ -22,7 +22,7 @@ const makeMemory: Effect.Effect<ProjectRepoShape> = Effect.gen(function* () {
       Ref.get(rows).pipe(
         Effect.map((map) => Array.from(map.values()).filter((row) => row.sessionId === session)),
       ),
-    find: (id) => Ref.get(rows).pipe(Effect.map((map) => Option.fromNullable(map.get(id)))),
+    find: (id) => Ref.get(rows).pipe(Effect.map((map) => Option.fromNullishOr(map.get(id)))),
     upsert: (row) =>
       Ref.modify(rows, (map) => {
         const kind = map.has(row.id) ? "Update" as const : "Insert" as const
@@ -48,9 +48,6 @@ const makeMemory: Effect.Effect<ProjectRepoShape> = Effect.gen(function* () {
   }
 })
 
-export class ProjectRepo extends Context.Tag("pi-demo/ProjectRepo")<
-  ProjectRepo,
-  ProjectRepoShape
->() {
+export class ProjectRepo extends Context.Service<ProjectRepo, ProjectRepoShape>()("pi-demo/ProjectRepo") {
   static readonly layerMemory: Layer.Layer<ProjectRepo> = Layer.effect(ProjectRepo, makeMemory)
 }

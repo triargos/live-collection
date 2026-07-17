@@ -1,6 +1,6 @@
-import { Chunk, Effect, Layer, Queue, Stream } from "effect"
+import { Cause, Effect, Layer, Option, Queue, Stream } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import { HttpClient, HttpClientResponse } from "@effect/platform"
+import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import {
   type HydratedSyncEventEnvelope,
   ModelId,
@@ -40,7 +40,7 @@ describe("SyncTransport", () => {
         transport.connect.pipe(Stream.take(2), Stream.runCollect),
       ).pipe(Effect.provide(SyncTransport.layerMemory(queue)))
       assert.deepStrictEqual(
-        Chunk.toReadonlyArray(taken).map((e) => ("modelId" in e ? e.modelId : undefined)),
+        taken.map((e) => ("modelId" in e ? e.modelId : undefined)),
         [ModelId.make("a"), ModelId.make("b")],
       )
     }))
@@ -66,7 +66,7 @@ describe("SyncTransport", () => {
         transport.connect.pipe(Stream.take(2), Stream.runCollect),
       ).pipe(Effect.provide(httpTransport(() => new Response(body, { status: 200 }))))
       assert.deepStrictEqual(
-        Chunk.toReadonlyArray(taken).map((e) => ("modelId" in e ? e.modelId : undefined)),
+        taken.map((e) => ("modelId" in e ? e.modelId : undefined)),
         [ModelId.make("a"), ModelId.make("b")],
       )
     }))
@@ -77,9 +77,10 @@ describe("SyncTransport", () => {
         Effect.provide(httpTransport(() => new Response("unauthorized", { status: 401 }))),
         Effect.exit,
       )
-      if (exit._tag === "Failure" && exit.cause._tag === "Fail") {
-        assert.instanceOf(exit.cause.error, SyncConnectionLost)
-        assert.include(exit.cause.error.reason, "401") // the status, not "stream ended"
+      const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none()
+      if (Option.isSome(error)) {
+        assert.instanceOf(error.value, SyncConnectionLost)
+        assert.include(error.value.reason, "401") // the status, not "stream ended"
       } else {
         assert.fail("expected a SyncConnectionLost failure")
       }
@@ -93,8 +94,9 @@ describe("SyncTransport", () => {
         Stream.runDrain(transport.connect),
       ).pipe(Effect.provide(SyncTransport.layerMemory(queue)), Effect.exit)
       assert.isTrue(exit._tag === "Failure")
-      if (exit._tag === "Failure" && exit.cause._tag === "Fail") {
-        assert.instanceOf(exit.cause.error, SyncConnectionLost)
+      const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none()
+      if (Option.isSome(error)) {
+        assert.instanceOf(error.value, SyncConnectionLost)
       } else {
         assert.fail("expected a SyncConnectionLost failure")
       }

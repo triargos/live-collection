@@ -31,10 +31,10 @@ const rowCount = (collection: { readonly keys: () => Iterable<unknown> }): numbe
 
 const waitUntil = (condition: () => boolean, label: string): Effect.Effect<void> => {
   const attempt: Effect.Effect<void> = Effect.suspend(() =>
-    condition() ? Effect.void : Effect.sleep(Duration.millis(10)).pipe(Effect.zipRight(attempt)),
+    condition() ? Effect.void : Effect.sleep(Duration.millis(10)).pipe(Effect.andThen(attempt)),
   )
   return attempt.pipe(
-    Effect.timeoutFail({ duration: Duration.seconds(8), onTimeout: () => new Error(`timeout: ${label}`) }),
+    Effect.timeoutOrElse({ duration: Duration.seconds(8), orElse: () => Effect.fail(new Error(`timeout: ${label}`) ) }),
     Effect.orDie,
   )
 }
@@ -81,7 +81,7 @@ const run = (body: (context: Ctx) => Effect.Effect<void>): Effect.Effect<void> =
     }).pipe(
       Effect.ensuring(
         Fiber.interrupt(fiber).pipe(
-          Effect.zipRight(Effect.sync(() => runtime.dispose())),
+          Effect.andThen(Effect.sync(() => runtime.dispose())),
           Effect.asVoid,
         ),
       ),

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpClient } from "@effect/platform"
+import { HttpClient } from "effect/unstable/http"
 import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
 
 /**
@@ -8,7 +8,7 @@ import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-col
  * broker logs it and tails the live stream anyway (a transient catchup miss is healed on the
  * next reconnect), so the read path degrades gracefully instead of crashing.
  */
-export class CatchupFailed extends Schema.TaggedError<CatchupFailed>()("CatchupFailed", {
+export class CatchupFailed extends Schema.TaggedErrorClass<CatchupFailed>()("CatchupFailed", {
   from: SyncId,
   reason: Schema.String,
 }) {}
@@ -31,7 +31,7 @@ const makeHttp = (config: { readonly url: string }): Effect.Effect<CatchupClient
       fetch: (request) =>
         client.get(`${config.url}?from=${request.from}`).pipe(
           Effect.flatMap((response) => response.json),
-          Effect.flatMap(Schema.decodeUnknown(CatchupResponse)),
+          Effect.flatMap(Schema.decodeUnknownEffect(CatchupResponse)),
           Effect.mapError((cause) => new CatchupFailed({ from: request.from, reason: cause.message })),
         ),
     }
@@ -47,7 +47,7 @@ const makeHttp = (config: { readonly url: string }): Effect.Effect<CatchupClient
  * // requires an HttpClient, e.g.:  Layer.provide(FetchHttpClient.layer)
  * ```
  */
-export class CatchupClient extends Context.Tag("CatchupClient")<CatchupClient, CatchupClientShape>() {
+export class CatchupClient extends Context.Service<CatchupClient, CatchupClientShape>()("CatchupClient") {
   /** HTTP default: `GET {url}?from=` over the platform `HttpClient` (provide e.g. `FetchHttpClient.layer`). */
   static readonly layer = (config: { readonly url: string }): Layer.Layer<CatchupClient, never, HttpClient.HttpClient> =>
     Layer.effect(CatchupClient, makeHttp(config))

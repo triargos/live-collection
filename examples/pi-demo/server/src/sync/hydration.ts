@@ -1,4 +1,4 @@
-import { Effect, Either, Option, Schema } from "effect"
+import { Effect, Option, Result, Schema } from "effect"
 import { Project, ProjectId, Todo, TodoId } from "@pi-demo/shared"
 import {
   defineModelRegistry,
@@ -46,7 +46,7 @@ export const hydrateEvents = (args: {
       }
 
       const known = narrowModelName(modelNames, event.modelName)
-      if (Either.isLeft(known)) {
+      if (Result.isFailure(known)) {
         yield* Effect.logDebug(`Skipping unknown model ${event.modelName}`)
         continue
       }
@@ -63,17 +63,17 @@ export const hydrateEvents = (args: {
         continue
       }
 
-      const data = yield* (known.right === "Project"
+      const data = yield* (known.success === "Project"
         ? registry.Project.hydrate(event.modelId, args.ctx).pipe(
             Effect.flatMap(Option.match({
               onNone: () => Effect.succeed(Option.none<unknown>()),
-              onSome: (row) => Schema.encode(Project)(row).pipe(Effect.map(Option.some)),
+              onSome: (row) => Schema.encodeEffect(Project)(row).pipe(Effect.map(Option.some)),
             })),
           )
         : registry.Todo.hydrate(event.modelId, args.ctx).pipe(
             Effect.flatMap(Option.match({
               onNone: () => Effect.succeed(Option.none<unknown>()),
-              onSome: (row) => Schema.encode(Todo)(row).pipe(Effect.map(Option.some)),
+              onSome: (row) => Schema.encodeEffect(Todo)(row).pipe(Effect.map(Option.some)),
             })),
           ))
       if (Option.isNone(data)) {

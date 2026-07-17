@@ -19,9 +19,9 @@ const count = (coll: { keys: () => Iterable<ModelId> }) => Array.from(coll.keys(
 
 const waitUntil = (cond: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() =>
-    cond() ? Effect.void : Effect.sleep(Duration.millis(10)).pipe(Effect.zipRight(waitUntil(cond))),
+    cond() ? Effect.void : Effect.sleep(Duration.millis(10)).pipe(Effect.andThen(waitUntil(cond))),
   ).pipe(
-    Effect.timeoutFail({ duration: Duration.seconds(5), onTimeout: () => new Error("condition not met") }),
+    Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.fail(new Error("condition not met") ) }),
     Effect.orDie,
   )
 

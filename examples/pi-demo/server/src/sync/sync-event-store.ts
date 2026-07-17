@@ -53,10 +53,7 @@ const makeMemory: Effect.Effect<SyncEventStoreShape> = Effect.gen(function* () {
   }
 })
 
-export class SyncEventStore extends Context.Tag("pi-demo/SyncEventStore")<
-  SyncEventStore,
-  SyncEventStoreShape
->() {
+export class SyncEventStore extends Context.Service<SyncEventStore, SyncEventStoreShape>()("pi-demo/SyncEventStore") {
   static readonly layerMemory: Layer.Layer<SyncEventStore> = Layer.effect(
     SyncEventStore,
     makeMemory,

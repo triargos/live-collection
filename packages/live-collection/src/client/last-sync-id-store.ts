@@ -33,7 +33,7 @@ const STORAGE_KEY = "live-collection:lastSyncId"
 const makeLocalStorage: Effect.Effect<LastSyncIdStoreShape> = Effect.sync(() => {
   const decode = Schema.decodeUnknownOption(SyncId)
   const get: Effect.Effect<Option.Option<SyncId>> = Effect.sync(() =>
-    Option.fromNullable(localStorage.getItem(STORAGE_KEY)).pipe(Option.flatMap(decode)),
+    Option.fromNullishOr(localStorage.getItem(STORAGE_KEY)).pipe(Option.flatMap(decode)),
   )
   return {
     get,
@@ -66,10 +66,10 @@ const makeMemory: Effect.Effect<LastSyncIdStoreShape> = Effect.gen(function* () 
  * )
  * ```
  */
-export class LastSyncIdStore extends Context.Tag("LastSyncIdStore")<
+export class LastSyncIdStore extends Context.Service<
   LastSyncIdStore,
   LastSyncIdStoreShape
->() {
+>()("LastSyncIdStore") {
   /** Browser default: a single `localStorage` entry, durable across reloads. */
   static readonly layer: Layer.Layer<LastSyncIdStore> = Layer.effect(LastSyncIdStore, makeLocalStorage)
   /** In-memory (a `Ref`) — for tests and SSR; resets on every run. */

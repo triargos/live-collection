@@ -17,7 +17,7 @@ const k = (s: string) => ModelId.make(s)
 
 interface Opts<T extends object> {
   readonly id: string
-  readonly schema: Schema.Schema<T, any, never>
+  readonly schema: Schema.Codec<T, any>
   readonly getKey: (r: T) => ModelId
 }
 const rowOpts: Opts<Row> = { id: "gate-row", schema: Row, getKey: (r) => k(r.id) }
@@ -61,14 +61,11 @@ const reloadUntil = <T extends object, A>(
   const attempt = (): Effect.Effect<A> =>
     withMount(persistence, opts, (c) => Effect.sync(() => read(c))).pipe(
       Effect.flatMap((a) =>
-        predicate(a) ? Effect.succeed(a) : Effect.sleep(Duration.millis(5)).pipe(Effect.zipRight(attempt())),
+        predicate(a) ? Effect.succeed(a) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())),
       ),
     )
   return attempt().pipe(
-    Effect.timeoutFail({
-      duration: Duration.seconds(2),
-      onTimeout: () => new Error("persisted state did not settle within 2s"),
-    }),
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("persisted state did not settle within 2s")) }),
     Effect.orDie,
   )
 }

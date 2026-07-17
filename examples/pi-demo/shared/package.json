@@ -11,8 +11,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@effect/platform": "^0.96.1",
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^3.21.2"
+    "effect": "^4.0.0-beta.98"
   }
 }

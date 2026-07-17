@@ -28,10 +28,10 @@ export type CatchupRequest = typeof CatchupRequest.Type
  * @example
  * ```ts
  * // Backend handler sketch — the route, auth, and errors are yours:
- * const { from } = yield* Schema.decodeUnknown(CatchupRequest)(request.query)
+ * const { from } = yield* Schema.decodeUnknownEffect(CatchupRequest)(request.query)
  * const visible = yield* eventLog.since({ from, groups: yield* groupsFor({ userId }) })
  * const events = yield* hydrateAll(squash(visible))
- * return yield* Schema.encode(CatchupResponse)({ events, lastSyncId })
+ * return yield* Schema.encodeEffect(CatchupResponse)({ events, lastSyncId })
  * ```
  */
 export const CatchupResponse = Schema.Struct({

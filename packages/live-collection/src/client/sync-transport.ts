@@ -1,5 +1,5 @@
-import { Context, type Duration, Effect, Layer, Option, type Queue, Schema, Stream } from "effect"
-import { HttpClient, HttpClientResponse } from "@effect/platform"
+import { Context, type Duration, Effect, Layer, type Queue, Schema, Stream } from "effect"
+import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
 
 /**
@@ -7,7 +7,7 @@ import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
  * window. It is **expected**, not exceptional: the broker's retry catches it, re-runs
  * catchup to heal the disconnect gap, and reconnects. The `reason` carries why, for logs.
  */
-export class SyncConnectionLost extends Schema.TaggedError<SyncConnectionLost>()("SyncConnectionLost", {
+export class SyncConnectionLost extends Schema.TaggedErrorClass<SyncConnectionLost>()("SyncConnectionLost", {
   reason: Schema.String,
 }) {}
 
@@ -24,11 +24,11 @@ export interface SyncTransportShape {
   readonly connect: Stream.Stream<HydratedSyncEventEnvelope, SyncConnectionLost>
 }
 
-const decodeEvent = Schema.decode(Schema.parseJson(HydratedSyncEventEnvelope))
+const decodeEvent = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
 
 const makeHttp = (config: {
   readonly url: string
-  readonly keepAlive: Duration.DurationInput
+  readonly keepAlive: Duration.Input
 }): Effect.Effect<SyncTransportShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     // filterStatusOk: a non-2xx response is a connection failure (carrying the status), not an
@@ -39,37 +39,39 @@ const makeHttp = (config: {
     const lines = HttpClientResponse.stream(client.get(config.url)).pipe(
       Stream.decodeText(),
       Stream.splitLines,
-      Stream.timeoutFail(() => new SyncConnectionLost({ reason: "keep-alive timeout" }), config.keepAlive),
+      Stream.timeoutOrElse({
+        duration: config.keepAlive,
+        orElse: () => Stream.fail(new SyncConnectionLost({ reason: "keep-alive timeout" })),
+      }),
     )
     // SSE framing: an event's payload is the \n-join of its consecutive `data:` lines, dispatched at
     // the first empty line (one leading space after the colon is stripped, per spec). Comment and
     // other field lines reset the keep-alive above but contribute nothing; pending data at stream
     // end (no closing blank line) is discarded, also per spec.
     const payloads = lines.pipe(
-      Stream.mapAccum([] as ReadonlyArray<string>, (pending, line) => {
+      Stream.mapAccum(() => [] as ReadonlyArray<string>, (pending, line) => {
         if (line.length === 0) {
-          return [[], pending.length === 0 ? Option.none<string>() : Option.some(pending.join("\n"))]
+          return [[], pending.length === 0 ? [] : [pending.join("\n")]]
         }
         if (line.startsWith("data:")) {
-          return [[...pending, line.slice("data:".length).replace(/^ /, "")], Option.none<string>()]
+          return [[...pending, line.slice("data:".length).replace(/^ /, "")], []]
         }
-        return [pending, Option.none<string>()]
+        return [pending, []]
       }),
-      Stream.filterMap((payload) => payload),
     )
     const connect = payloads.pipe(
       Stream.filter((payload) => payload.length > 0),
       Stream.mapEffect((payload) =>
         decodeEvent(payload).pipe(
-          Effect.map(Option.some),
-          Effect.catchAll((error) =>
+          Effect.map((event) => [event]),
+          Effect.catch((error) =>
             Effect.logWarning(`[SyncTransport] dropping undecodable event: ${error.message}`).pipe(
-              Effect.as(Option.none<HydratedSyncEventEnvelope>()),
+              Effect.as([] as ReadonlyArray<HydratedSyncEventEnvelope>),
             ),
           ),
         ),
       ),
-      Stream.filterMap((option) => option),
+      Stream.flatMap(Stream.fromIterable),
       Stream.mapError((error) =>
         error instanceof SyncConnectionLost ? error : new SyncConnectionLost({ reason: error.message }),
       ),
@@ -89,7 +91,7 @@ const makeHttp = (config: {
  * // requires an HttpClient, e.g.:  Layer.provide(FetchHttpClient.layer)
  * ```
  */
-export class SyncTransport extends Context.Tag("SyncTransport")<SyncTransport, SyncTransportShape>() {
+export class SyncTransport extends Context.Service<SyncTransport, SyncTransportShape>()("SyncTransport") {
   /**
    * SSE default: `GET {url}` as a server-sent-event stream over the platform
    * `HttpClient` (provide e.g. `FetchHttpClient.layer`). Set `keepAlive` above your
@@ -97,7 +99,7 @@ export class SyncTransport extends Context.Tag("SyncTransport")<SyncTransport, S
    */
   static readonly layer = (config: {
     readonly url: string
-    readonly keepAlive: Duration.DurationInput
+    readonly keepAlive: Duration.Input
   }): Layer.Layer<SyncTransport, never, HttpClient.HttpClient> => Layer.effect(SyncTransport, makeHttp(config))
 
   /** In-memory — events drained from a queue; shutting the queue down surfaces {@link SyncConnectionLost}. For tests. */
@@ -106,6 +108,7 @@ export class SyncTransport extends Context.Tag("SyncTransport")<SyncTransport, S
   ): Layer.Layer<SyncTransport> =>
     Layer.succeed(SyncTransport, {
       connect: Stream.fromQueue(events).pipe(
+        Stream.catchCause(() => Stream.fail(new SyncConnectionLost({ reason: "transport closed" }))),
         Stream.concat(Stream.fail(new SyncConnectionLost({ reason: "transport closed" }))),
       ),
     })

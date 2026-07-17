@@ -25,7 +25,7 @@ describe("SyncDispatcher", () => {
       const dispatcher = yield* SyncDispatcher
       const store = yield* SyncEventStore
       const queue = yield* bus.subscribe
-      const receive = yield* Stream.runHead(Stream.fromQueue(queue)).pipe(Effect.fork)
+      const receive = yield* Stream.runHead(Stream.fromSubscription(queue)).pipe(Effect.forkChild)
 
       const persisted = yield* dispatcher.dispatch(PendingInsert.make({
         modelName: PROJECT_MODEL,

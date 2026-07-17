@@ -18,18 +18,18 @@ import { Webhook } from "./schema.js"
  * `create`/`remove` can fail with {@link BackendRejected} when failure injection fires (the panel toggle),
  * which is what makes TanStack roll the optimistic write back.
  */
-export class WebhookApi extends Context.Tag("WebhookApi")<
+export class WebhookApi extends Context.Service<
   WebhookApi,
   {
     readonly create: (w: Webhook) => Effect.Effect<Webhook, BackendRejected>
     readonly remove: (id: ModelId) => Effect.Effect<void, BackendRejected>
     readonly list: (orgId: string) => Effect.Effect<ReadonlyArray<Webhook>>
   }
->() {}
+>()("WebhookApi") {}
 
 /** The fake server refused a mutation (failure injection) — the modeled failure that triggers rollback. */
-export class BackendRejected extends Schema.TaggedError<BackendRejected>()("BackendRejected", {
-  operation: Schema.Literal("create", "delete"),
+export class BackendRejected extends Schema.TaggedErrorClass<BackendRejected>()("BackendRejected", {
+  operation: Schema.Literals(["create", "delete"]),
   id: Schema.String,
 }) {}
 
@@ -77,10 +77,10 @@ const BC_NAME = "lc:playground:sync"
 // Boundary codecs — the localStorage log and the BroadcastChannel messages are the wire here, so they are
 // decoded against the protocol envelope schema, never cast (CLAUDE.md: never cast the wire shape).
 const LogSchema = Schema.Array(HydratedSyncEventEnvelope)
-const decodeLog = Schema.decode(Schema.parseJson(LogSchema))
-const encodeLog = Schema.encode(Schema.parseJson(LogSchema))
-const decodeEnvelope = Schema.decode(Schema.parseJson(HydratedSyncEventEnvelope))
-const encodeEnvelope = Schema.encode(Schema.parseJson(HydratedSyncEventEnvelope))
+const decodeLog = Schema.decodeEffect(Schema.fromJsonString(LogSchema))
+const encodeLog = Schema.encodeEffect(Schema.fromJsonString(LogSchema))
+const decodeEnvelope = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
+const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
 
 const insertEnvelope = (syncId: SyncId, w: Webhook): HydratedSyncEventEnvelope => ({
   _tag: "Insert",
@@ -120,11 +120,11 @@ const resyncEnvelope = (syncId: SyncId): HydratedSyncEventEnvelope => ({
 export const makeSharedBackend = (config: {
   readonly bus: DebugBus
   readonly tabId: string
-  readonly delays?: { readonly tail?: Duration.DurationInput; readonly list?: Duration.DurationInput }
+  readonly delays?: { readonly tail?: Duration.Input; readonly list?: Duration.Input }
 }): SharedBackend => {
   const { bus, tabId } = config
-  const tail = Duration.decode(config.delays?.tail ?? Duration.millis(120))
-  const listDelay = Duration.decode(config.delays?.list ?? Duration.millis(80))
+  const tail = Duration.fromInputUnsafe(config.delays?.tail ?? Duration.millis(120))
+  const listDelay = Duration.fromInputUnsafe(config.delays?.list ?? Duration.millis(80))
 
   const settings = { failureRate: 0 }
   const channel = new BroadcastChannel(BC_NAME)
@@ -171,7 +171,7 @@ export const makeSharedBackend = (config: {
       const rows = new Map<string, Webhook>()
       for (const event of log) {
         if (event._tag === "Insert" || event._tag === "Update") {
-          const w = yield* Schema.decodeUnknown(Webhook)(event.data).pipe(Effect.orDie)
+          const w = yield* Schema.decodeUnknownEffect(Webhook)(event.data).pipe(Effect.orDie)
           rows.set(w.id, w)
         } else if (event._tag === "Delete") {
           rows.delete(event.modelId)
@@ -182,7 +182,7 @@ export const makeSharedBackend = (config: {
 
   const rejects = (): boolean => Math.random() < settings.failureRate
 
-  const api: Context.Tag.Service<WebhookApi> = {
+  const api: Context.Service.Shape<typeof WebhookApi> = {
     create: (w) =>
       Effect.gen(function* () {
         yield* bus.tap({ direction: "out", channel: "mutation", label: `create webhook → ${w.url}`, payload: w })
@@ -208,7 +208,7 @@ export const makeSharedBackend = (config: {
       }),
     list: (orgId) =>
       Effect.sleep(listDelay).pipe(
-        Effect.zipRight(readLog),
+        Effect.andThen(readLog),
         Effect.flatMap(deriveRows),
         Effect.map((rows) => Array.from(rows.values()).filter((w) => w.orgId === orgId)),
         Effect.tap((rows) =>
@@ -223,7 +223,7 @@ export const makeSharedBackend = (config: {
   const catchup = Layer.succeed(CatchupClient, {
     fetch: ({ from }) =>
       Effect.sleep(tail).pipe(
-        Effect.zipRight(readLog),
+        Effect.andThen(readLog),
         Effect.flatMap((log) => {
           // compareSyncId, never Number(): syncIds are exact beyond MAX_SAFE_INTEGER (protocol ids.ts).
           const events = log.filter((e) => compareSyncId(e.syncId, from) > 0)
@@ -238,12 +238,12 @@ export const makeSharedBackend = (config: {
   // Other tabs' broadcasts land here and feed this tab's SSE tail. Decode at the boundary; a bad message
   // is logged and dropped, never fatal.
   channel.onmessage = (event) => {
-    const decoded = Effect.runSync(Effect.either(decodeEnvelope(String(event.data))))
-    if (decoded._tag === "Left") {
+    const decoded = Effect.runSync(Effect.result(decodeEnvelope(String(event.data))))
+    if (decoded._tag === "Failure") {
       bus.push({ direction: "error", channel: "broadcast", label: "dropped undecodable cross-tab message" })
       return
     }
-    const env = decoded.right
+    const env = decoded.success
     const id = env._tag === "Resync" ? "All" : env.modelId
     bus.push({ direction: "in", channel: "sync", label: `cross-tab ${env._tag} #${env.syncId} (${id.slice(0, 8)})`, payload: env })
     Effect.runSync(Queue.offer(queue, env))

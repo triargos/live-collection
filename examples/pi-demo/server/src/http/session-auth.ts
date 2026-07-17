@@ -1,4 +1,4 @@
-import { HttpServerRequest } from "@effect/platform"
+import { HttpServerRequest } from "effect/unstable/http"
 import {
   CurrentSession,
   SessionAuth,
@@ -10,7 +10,7 @@ import { Effect, Layer, Schema } from "effect"
 const decodeSessionCode = (raw: string | undefined) =>
   raw === undefined
     ? new UnauthorizedError({ reason: "missing x-session-code header" })
-    : Schema.decodeUnknown(SessionCode)(raw.trim().toUpperCase()).pipe(
+    : Schema.decodeUnknownEffect(SessionCode)(raw.trim().toUpperCase()).pipe(
         Effect.mapError(() => new UnauthorizedError({ reason: "invalid x-session-code header" })),
       )
 
@@ -19,7 +19,11 @@ const authenticate = Effect.gen(function* () {
   return yield* decodeSessionCode(request.headers["x-session-code"])
 })
 
-export const SessionAuthLive = Layer.succeed(SessionAuth, authenticate)
+export const SessionAuthLive: Layer.Layer<SessionAuth> = Layer.succeed(SessionAuth, (httpEffect) =>
+  authenticate.pipe(
+    Effect.flatMap((session) => httpEffect.pipe(Effect.provideService(CurrentSession, session))),
+  ),
+)
 
 export const sessionCodeFromRequest = (request: HttpServerRequest.HttpServerRequest) =>
   decodeSessionCode(request.headers["x-session-code"])

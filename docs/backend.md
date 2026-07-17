@@ -44,19 +44,19 @@ The `action` column maps to the protocol's tag vocabulary `Insert` / `Update` / 
 
 The bus is the pub/sub primitive: a producer publishes one persisted event, every live `/sync` connection receives it, and each connection filters by its own groups before forwarding. Start with an in-memory Effect `PubSub`; the seam lets you swap in Redis pub/sub or Postgres `LISTEN`/`NOTIFY` for multi-node later without changing call sites.
 
-Model it as a `Context.Tag` + `interface …Shape` + separate `make` + `.layer` — **never `Effect.Service`**.
+Model it as a `Context.Service<Self, Shape>()("Name")` + `interface …Shape` + separate `make` + `.layer`.
 
 ```typescript
-import { Context, Effect, Layer, PubSub, Queue, Scope } from "effect"
+import { Context, Effect, Layer, PubSub, Scope } from "effect"
 import type { SyncEvent } from "@triargos/live-collection-protocol"
 
 interface SyncEventBusShape {
   readonly publish: (event: SyncEvent) => Effect.Effect<void>
-  readonly subscribe: () => Effect.Effect<Queue.Dequeue<SyncEvent>, never, Scope.Scope>
+  readonly subscribe: () => Effect.Effect<PubSub.Subscription<SyncEvent>, never, Scope.Scope>
 }
 
-class SyncEventBus extends Context.Tag("SyncEventBus")<SyncEventBus, SyncEventBusShape>() {
-  static readonly layer = Layer.scoped(
+class SyncEventBus extends Context.Service<SyncEventBus, SyncEventBusShape>()("SyncEventBus") {
+  static readonly layer = Layer.effect(
     SyncEventBus,
     Effect.gen(function* () {
       const hub = yield* PubSub.unbounded<SyncEvent>()
@@ -69,7 +69,7 @@ class SyncEventBus extends Context.Tag("SyncEventBus")<SyncEventBus, SyncEventBu
 }
 ```
 
-A single broadcast channel; every subscriber sees every event. Group filtering is **per-connection**, downstream of the bus — the bus does not know about ACLs. `subscribe` returns a scoped `Dequeue`, so disposing a connection's `Scope` tears the subscription down.
+A single broadcast channel; every subscriber sees every event. Group filtering is **per-connection**, downstream of the bus — the bus does not know about ACLs. `subscribe` returns a scoped `PubSub.Subscription`, so disposing a connection's `Scope` tears the subscription down.
 
 ---
 
@@ -85,10 +85,10 @@ interface SyncEventDispatcherShape {
   readonly dispatch: (event: PendingSyncEvent) => Effect.Effect<SyncEvent>
 }
 
-class SyncEventDispatcher extends Context.Tag("SyncEventDispatcher")<
+class SyncEventDispatcher extends Context.Service<
   SyncEventDispatcher,
   SyncEventDispatcherShape
->() {
+>()("SyncEventDispatcher") {
   static readonly layer = Layer.effect(
     SyncEventDispatcher,
     Effect.gen(function* () {
@@ -99,7 +99,7 @@ class SyncEventDispatcher extends Context.Tag("SyncEventDispatcher")<
           Effect.gen(function* () {
             const persisted = yield* repo.append(event) // DB fills syncId + createdAt
             yield* bus.publish(persisted).pipe(
-              Effect.catchAll((cause) =>
+              Effect.catch((cause) =>
                 // Best-effort: the row is durable, catchup heals missed live deliveries.
                 Effect.logWarning("sync bus publish failed").pipe(Effect.annotateLogs({ cause }))
               )
@@ -164,7 +164,7 @@ import { Schema } from "effect"
 import { CatchupRequest, CatchupResponse, squash } from "@triargos/live-collection-protocol"
 
 // Decode the query at the boundary — never read `from` as a raw string downstream.
-const { from } = yield* Schema.decodeUnknown(CatchupRequest)(query)
+const { from } = yield* Schema.decodeUnknownEffect(CatchupRequest)(query)
 ```
 
 The handler's obligations, in order:
@@ -177,10 +177,10 @@ The handler's obligations, in order:
 6. **Hydrate** with the model registry's batched `hydrateMany` — **one call per `modelName`, not one per event**. Without batching this is the N+1 problem in disguise. Hydration carries the caller's `SyncContext` so it applies ACL: an entity the caller can no longer see hydrates to `Option.none()`.
 7. **Return** `{ events, lastSyncId }` encoded through `CatchupResponse`, where each event is a `HydratedSyncEventEnvelope` (`data` as opaque JSON, decoded against the model schema on the client).
 
-The retention-too-old case must be a typed outcome, not a throw. Model it as a `Schema.TaggedError` your route maps to its status code:
+The retention-too-old case must be a typed outcome, not a throw. Model it as a `Schema.TaggedErrorClass` your route maps to its status code:
 
 ```typescript
-class CatchupTooOld extends Schema.TaggedError<CatchupTooOld>()("CatchupTooOld", {
+class CatchupTooOld extends Schema.TaggedErrorClass<CatchupTooOld>()("CatchupTooOld", {
   from: SyncId,
   oldestRetained: SyncId
 }) {}
@@ -277,10 +277,10 @@ All of these are infrastructure defects, not domain failures: `Effect.orDie` the
 
 This backend is per-app and lives outside this repo, but the same conventions the library holds itself to make the seams interoperate cleanly:
 
-- **No `throw`, no `new Error(...)` across boundaries.** Model domain failures as `Schema.TaggedError` (e.g. `CatchupTooOld`); infrastructure failures are defects — `Effect.orDie`. Never `Effect.catchAllCause` (it swallows defects).
+- **No `throw`, no `new Error(...)` across boundaries.** Model domain failures as `Schema.TaggedErrorClass` (e.g. `CatchupTooOld`); infrastructure failures are defects — `Effect.orDie`. Never `Effect.catchCause` (it swallows defects).
 - **`Option` over null.** The wire's `data: T | null` decodes to `Option<T>` at the boundary; pass `Option` through hydration; convert back to the nullable field only at the final encode.
 - **Object args when a function has more than one of its own parameters** — `groupsFor({ userId })`, `ResyncGroup.make({ group })`.
-- **Seams are `Context.Tag` + `interface <Name>Shape` + a separate `make` + `<Name>.layer`** — never `Effect.Service` (it fuses tag/impl/default-layer and is being removed in Effect v4).
+- **Seams are `Context.Service<Self, Shape>()("Name")` + `interface <Name>Shape` + a separate `make` + `<Name>.layer`** — keep service construction and adapters separate.
 - **Brand ids only at boundaries.** `SyncId.make` / `ModelName.make` / `deriveGroup` belong in row decoders and request handlers; inside the app the values already carry their brands.
 
 ---

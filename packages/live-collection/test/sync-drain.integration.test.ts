@@ -34,9 +34,9 @@ const event = (syncId: string, data: unknown, id = `w-${syncId}`): HydratedSyncE
 
 const waitUntil = (condition: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() =>
-    condition() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.zipRight(waitUntil(condition))),
+    condition() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(condition))),
   ).pipe(
-    Effect.timeoutFail({ duration: Duration.seconds(2), onTimeout: () => new Error("condition not met") }),
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("condition not met") ) }),
     Effect.orDie,
   )
 
@@ -59,7 +59,7 @@ const withRuntime = <A>(
     return yield* use({ runtime, events }).pipe(
       Effect.ensuring(
         Fiber.interrupt(fiber).pipe(
-          Effect.zipRight(Effect.sync(() => runtime.dispose())),
+          Effect.andThen(Effect.sync(() => runtime.dispose())),
           Effect.asVoid,
         ),
       ),
@@ -114,12 +114,12 @@ describe("defineCollection broker drain", () => {
           schema: Webhook,
           getKey: (row) => key(row.id),
           scopeOf: (row) => row.orgId,
-          listFn: () => Ref.set(entered, true).pipe(Effect.zipRight(Effect.never)),
+          listFn: () => Ref.set(entered, true).pipe(Effect.andThen(Effect.never)),
         })
         webhooks("org-1")
         yield* waitUntil(() => Effect.runSync(Ref.get(entered)))
         yield* runtime.registry.disposeScope("org-1").pipe(
-          Effect.timeoutFail({ duration: Duration.seconds(1), onTimeout: () => new Error("drain was not interrupted") }),
+          Effect.timeoutOrElse({ duration: Duration.seconds(1), orElse: () => Effect.fail(new Error("drain was not interrupted") ) }),
           Effect.orDie,
         )
       }),

@@ -25,7 +25,7 @@ interface FakeApiShape {
   readonly deleteWebhook: (id: ModelId) => Effect.Effect<void>
   readonly list: Effect.Effect<ReadonlyArray<Webhook>>
 }
-class FakeApi extends Context.Tag("FakeApi")<FakeApi, FakeApiShape>() {}
+class FakeApi extends Context.Service<FakeApi, FakeApiShape>()("FakeApi") {}
 
 const fakeApiLayer = (log: Array<string>, rows: ReadonlyArray<Webhook> = []): Layer.Layer<FakeApi> =>
   Layer.succeed(FakeApi, {
@@ -35,8 +35,8 @@ const fakeApiLayer = (log: Array<string>, rows: ReadonlyArray<Webhook> = []): La
   })
 
 const waitUntil = (cond: () => boolean): Effect.Effect<void> =>
-  Effect.suspend(() => (cond() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.zipRight(waitUntil(cond))))).pipe(
-    Effect.timeoutFail({ duration: Duration.seconds(2), onTimeout: () => new Error("condition not met") }),
+  Effect.suspend(() => (cond() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(cond))))).pipe(
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("condition not met") ) }),
     Effect.orDie,
   )
 
@@ -86,7 +86,7 @@ const makeWebhooks = (runtime: LiveRuntime, services: Services): ScopedHandle<We
 const onReload = <A>(persistence: PersistedCollectionPersistence, services: Services, use: (webhooks: ScopedHandle<Webhook>) => Effect.Effect<A>): Effect.Effect<A> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
-    const registry = yield* Scope.extend(makeRegistry, scope)
+    const registry = yield* Scope.provide(makeRegistry, scope)
     const runtime = inertRuntime(registry, persistence)
     const result = yield* use(makeWebhooks(runtime, services))
     yield* Scope.close(scope, Exit.void)
@@ -108,9 +108,9 @@ const reloadUntilHas = (persistence: PersistedCollectionPersistence, services: S
         yield* Effect.sleep(Duration.millis(10)) // let hydration settle
         return coll.has(key)
       }),
-    ).pipe(Effect.flatMap((has) => (has === want ? Effect.succeed(has) : Effect.sleep(Duration.millis(5)).pipe(Effect.zipRight(attempt())))))
+    ).pipe(Effect.flatMap((has) => (has === want ? Effect.succeed(has) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())))))
   return attempt().pipe(
-    Effect.timeoutFail({ duration: Duration.seconds(2), onTimeout: () => new Error(`reload has(${key}) never settled to ${want}`) }),
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error(`reload has(${key}) never settled to ${want}`) ) }),
     Effect.orDie,
   )
 }
@@ -141,7 +141,7 @@ describe("write path — optimistic mutations", () => {
     Effect.gen(function* () {
       const { persistence, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
-      const registry = yield* Scope.extend(makeRegistry, scope)
+      const registry = yield* Scope.provide(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,
@@ -199,7 +199,7 @@ describe("write path — optimistic mutations", () => {
     Effect.gen(function* () {
       const { persistence, log, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
-      const registry = yield* Scope.extend(makeRegistry, scope)
+      const registry = yield* Scope.provide(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = makeWebhooks(runtime, services)
 
@@ -242,7 +242,7 @@ describe("write path — optimistic mutations", () => {
         ),
       )
       const scope = yield* Scope.make()
-      const registry = yield* Scope.extend(makeRegistry, scope)
+      const registry = yield* Scope.provide(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,

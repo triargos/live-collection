@@ -1,5 +1,5 @@
-import { HttpLayerRouter, HttpServerResponse } from "@effect/platform"
-import { Effect, Either, Schema, Stream } from "effect"
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { Effect, Result, Schema, Stream } from "effect"
 import { sessionGroup } from "@pi-demo/shared"
 import {
   HydratedSyncEventEnvelope,
@@ -12,23 +12,23 @@ import { SyncEventBus } from "../sync/sync-event-bus.js"
 import { hydrateEvents } from "../sync/hydration.js"
 import { sessionCodeFromRequest } from "./session-auth.js"
 
-const encodeEnvelope = Schema.encode(
-  Schema.parseJson(HydratedSyncEventEnvelope),
+const encodeEnvelope = Schema.encodeEffect(
+  Schema.fromJsonString(HydratedSyncEventEnvelope),
 )
 
-export const SseRoute = HttpLayerRouter.add("GET", "/api/sync", (request) =>
+export const SseRoute = HttpRouter.add("GET", "/api/sync", (request) =>
   Effect.gen(function* () {
-    const decoded = yield* Effect.either(sessionCodeFromRequest(request))
-    if (Either.isLeft(decoded)) return HttpServerResponse.empty({ status: 401 })
+    const decoded = yield* Effect.result(sessionCodeFromRequest(request))
+    if (Result.isFailure(decoded)) return HttpServerResponse.empty({ status: 401 })
 
-    const session = decoded.right
+    const session = decoded.success
     const bus = yield* SyncEventBus
     const projects = yield* ProjectRepo
     const todos = yield* TodoRepo
     const allowed = [sessionGroup(session)]
-    const queue = yield* bus.subscribe
+    const subscription = yield* bus.subscribe
 
-    const events = Stream.fromQueue(queue).pipe(
+    const events = Stream.fromSubscription(subscription).pipe(
       Stream.filter((event) => intersects(event.syncGroups, allowed)),
       Stream.mapEffect((event) =>
         hydrateEvents({
@@ -39,7 +39,7 @@ export const SseRoute = HttpLayerRouter.add("GET", "/api/sync", (request) =>
           Effect.provideService(TodoRepo, todos),
         ),
       ),
-      Stream.mapConcat((hydrated) => hydrated),
+      Stream.flatMap(Stream.fromIterable),
       Stream.mapEffect((event) =>
         encodeEnvelope(event).pipe(Effect.map((json) => `data: ${json}\n\n`)),
       ),

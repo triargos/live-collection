@@ -88,12 +88,12 @@ Because the id is the app's and the server preserves it, the SSE self-echo carri
 
 ## Failure ⇒ rollback
 
-A handler is an Effect. If it **fails** (a `Schema.TaggedError`, or any error in the channel), the bridged Promise rejects and **TanStack rolls the optimistic write back** — the row that appeared instantly disappears. The reconcile runs only on success (it's chained after the handler with `Effect.flatMap`), so a failed handler never reaches `writeSynced`. Model your backend's "no" as a tagged error and `Effect.fail` it; never `throw`, never `new Error` across the boundary. The playground's fake server does this with `BackendRejected`:
+A handler is an Effect. If it **fails** (a `Schema.TaggedErrorClass`, or any error in the channel), the bridged Promise rejects and **TanStack rolls the optimistic write back** — the row that appeared instantly disappears. The reconcile runs only on success (it's chained after the handler with `Effect.flatMap`), so a failed handler never reaches `writeSynced`. Model your backend's "no" as a tagged error and `Effect.fail` it; never `throw`, never `new Error` across the boundary. The playground's fake server does this with `BackendRejected`:
 
 ```ts
 // examples/playground/src/live/shared-backend.ts:30
-export class BackendRejected extends Schema.TaggedError<BackendRejected>()("BackendRejected", {
-  operation: Schema.Literal("create", "delete"),
+export class BackendRejected extends Schema.TaggedErrorClass<BackendRejected>()("BackendRejected", {
+  operation: Schema.Literals(["create", "delete"]),
   id: Schema.String,
 }) {}
 ```
@@ -124,18 +124,18 @@ const webhooks = defineCollection({
 })
 ```
 
-The service it discharges is a plain `Context.Tag` seam — in production this would be your HTTP client; failures are modeled, not thrown:
+The service it discharges is a plain `Context.Service` seam — in production this would be your HTTP client; failures are modeled, not thrown:
 
 ```ts
 // examples/playground/src/live/shared-backend.ts:20
-export class WebhookApi extends Context.Tag("WebhookApi")<
+export class WebhookApi extends Context.Service<
   WebhookApi,
   {
     readonly create: (w: Webhook) => Effect.Effect<Webhook, BackendRejected>
     readonly remove: (id: ModelId) => Effect.Effect<void, BackendRejected>
     readonly list: (orgId: string) => Effect.Effect<ReadonlyArray<Webhook>>
   }
->() {}
+>()("WebhookApi") {}
 ```
 
 The UI never sees any of this. It reads the native collection and writes through it directly:

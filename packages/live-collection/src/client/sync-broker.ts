@@ -58,7 +58,7 @@ export interface SyncBrokerOptions {
     readonly maxEventsTotal: number
     readonly trimEveryEvents: number
   }
-  readonly watermarkFlushEvery?: Duration.DurationInput
+  readonly watermarkFlushEvery?: Duration.Input
 }
 
 type PublishedItem =
@@ -107,7 +107,7 @@ const signalFromRow = (row: LoggedEvent): SyncSignal =>
 
 const defaultOptions = {
   retention: { maxEventsPerModel: 1000, maxEventsTotal: 5000, trimEveryEvents: 100 },
-  watermarkFlushEvery: "100 millis" as Duration.DurationInput,
+  watermarkFlushEvery: "100 millis" as Duration.Input,
 }
 
 const make = (options: SyncBrokerOptions = {}): Effect.Effect<
@@ -136,7 +136,7 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
 
     yield* Effect.addFinalizer(() => flushWatermarks)
     yield* Effect.sleep(watermarkFlushEvery).pipe(
-      Effect.zipRight(flushWatermarks),
+      Effect.andThen(flushWatermarks),
       Effect.forever,
       Effect.forkScoped,
     )
@@ -153,14 +153,14 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
     }
 
     const subscribe: SyncBrokerShape["subscribe"] = ({ modelName, scope }) =>
-      Stream.unwrapScoped(
+      Stream.unwrap(
         Effect.gen(function* () {
           const queue = yield* PubSub.subscribe(published)
           const key = keyFor(modelName, scope)
           const id = serializeKey(key)
           const durableBase = yield* log.getBaseWatermark(key)
           const pendingBase = yield* Ref.get(pending).pipe(
-            Effect.map((watermarks) => Option.fromNullable(watermarks.get(id)?.at)),
+            Effect.map((watermarks) => Option.fromNullishOr(watermarks.get(id)?.at)),
           )
           const baseWatermark = Option.match(pendingBase, {
             onNone: () => durableBase,
@@ -186,16 +186,15 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
             ...(decision === "Snapshot" ? [SyncSignal.Snapshot({ at })] : []),
             ...rows.map(signalFromRow),
           ]
-          const tail = Stream.fromQueue(queue).pipe(
-            Stream.mapAccum(head, (lastEmitted, item) => {
+          const tail = Stream.fromSubscription(queue).pipe(
+            Stream.mapAccum(() => head, (lastEmitted, item) => {
               if (compareSyncId(item._tag === "Resync" ? item.at : item.row.syncId, lastEmitted) <= 0) {
-                return [lastEmitted, Option.none<SyncSignal>()]
+                return [lastEmitted, []]
               }
-              if (item._tag === "Resync") return [item.at, Option.some(SyncSignal.Snapshot({ at: item.at }))]
-              if (item.row.modelName !== modelName) return [lastEmitted, Option.none<SyncSignal>()]
-              return [item.row.syncId, Option.some(signalFromRow(item.row))]
+              if (item._tag === "Resync") return [item.at, [SyncSignal.Snapshot({ at: item.at })]]
+              if (item.row.modelName !== modelName) return [lastEmitted, []]
+              return [item.row.syncId, [signalFromRow(item.row)]]
             }),
-            Stream.filterMap((signal) => signal),
           )
           return Stream.concat(Stream.fromIterable(replay), tail)
         }),
@@ -226,9 +225,9 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
               data: Option.some(event.data),
             }
       return log.append([row]).pipe(
-        Effect.zipRight(PubSub.publish(published, { _tag: "Event", row })),
-        Effect.zipRight(cursorStore.set(event.syncId)),
-        Effect.zipRight(trimIfNeeded()),
+        Effect.andThen(PubSub.publish(published, { _tag: "Event", row })),
+        Effect.andThen(cursorStore.set(event.syncId)),
+        Effect.andThen(trimIfNeeded()),
         Effect.asVoid,
       )
     }
@@ -236,8 +235,8 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
     const ingestLive = (event: HydratedSyncEventEnvelope): Effect.Effect<void> =>
       event._tag === "Resync"
         ? log.setLastResync(event.syncId).pipe(
-            Effect.zipRight(cursorStore.set(event.syncId)),
-            Effect.zipRight(PubSub.publish(published, { _tag: "Resync", at: event.syncId })),
+            Effect.andThen(cursorStore.set(event.syncId)),
+            Effect.andThen(PubSub.publish(published, { _tag: "Resync", at: event.syncId })),
             Effect.asVoid,
           )
         : ingestEntity(event)
@@ -249,14 +248,14 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
       const resyncs = response.events.filter((event) => event._tag === "Resync")
       if (resyncs.length > 0) {
         return Effect.forEach(resyncs, (event) => log.setLastResync(event.syncId), { discard: true }).pipe(
-          Effect.zipRight(cursorStore.set(response.lastSyncId)),
-          Effect.zipRight(PubSub.publish(published, { _tag: "Resync", at: response.lastSyncId })),
+          Effect.andThen(cursorStore.set(response.lastSyncId)),
+          Effect.andThen(PubSub.publish(published, { _tag: "Resync", at: response.lastSyncId })),
           Effect.asVoid,
         )
       }
       return Effect.forEach(response.events, (event) => (event._tag === "Resync" ? Effect.void : ingestEntity(event)), {
         discard: true,
-      }).pipe(Effect.zipRight(cursorStore.set(response.lastSyncId)))
+      }).pipe(Effect.andThen(cursorStore.set(response.lastSyncId)))
     }
 
     const cycle = Effect.gen(function* () {
@@ -284,10 +283,10 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
     return { subscribe, markApplied, start }
   })
 
-export class SyncBroker extends Context.Tag("SyncBroker")<SyncBroker, SyncBrokerShape>() {
+export class SyncBroker extends Context.Service<SyncBroker, SyncBrokerShape>()("SyncBroker") {
   static readonly layer = (options?: SyncBrokerOptions): Layer.Layer<
     SyncBroker,
     never,
     SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore
-  > => Layer.scoped(SyncBroker, make(options))
+  > => Layer.effect(SyncBroker, make(options))
 }

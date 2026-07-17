@@ -1,4 +1,5 @@
-import { FastCheck as fc, Schema } from "effect"
+import { Schema } from "effect"
+import * as fc from "effect/testing/FastCheck"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -8,7 +9,7 @@ import {
   SyncGroup
 } from "../src/sync-group.js"
 
-const decode = Schema.decodeUnknownEither(SyncGroup)
+const decode = Schema.decodeUnknownResult(SyncGroup)
 const g = (s: string): SyncGroup => Schema.decodeUnknownSync(SyncGroup)(s)
 
 // Arbitrary literal groups: 1-4 segments of colon-free, non-empty tokens.
@@ -20,13 +21,13 @@ const groupArb: fc.Arbitrary<SyncGroup> = fc
 describe("SyncGroup schema", () => {
   it("accepts well-formed colon paths", () => {
     for (const raw of ["user:bob", "organization:abc:channel:xyz", "a"]) {
-      assert.strictEqual(decode(raw)._tag, "Right", `expected ${raw} to decode`)
+      assert.strictEqual(decode(raw)._tag, "Success", `expected ${raw} to decode`)
     }
   })
 
   it("rejects empty segments and the empty string", () => {
     for (const raw of ["", ":", "a:", ":a", "a::b", "organization:"]) {
-      assert.strictEqual(decode(raw)._tag, "Left", `expected ${raw} rejected`)
+      assert.strictEqual(decode(raw)._tag, "Failure", `expected ${raw} rejected`)
     }
   })
 })

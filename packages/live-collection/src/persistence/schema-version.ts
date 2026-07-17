@@ -1,4 +1,4 @@
-import type { Schema } from "effect"
+import { type Schema, SchemaRepresentation } from "effect"
 
 /**
  * Derives the TanStack `schemaVersion` (a number) from an Effect Schema, so a model
@@ -6,8 +6,8 @@ import type { Schema } from "effect"
  * to bump or forget. `defineCollection` calls this for you; use it directly only when
  * assembling a persisted collection by hand.
  *
- * The hash input is `String(schema.ast)` — the schema's full structural type string,
- * e.g. `{ readonly id: nonEmptyString & Brand<"ModelId">; readonly name: string }`. It
+ * The hash input is the JSON representation derived from `schema.ast` — the schema's
+ * full structural shape, including fields, checks, and brands. It
  * folds in **types and brands**, not just field names, so changing `name: string` to
  * `name: number` still changes the version. That matters because the library trusts the
  * local base: a missed type change would silently keep stale-typed rows.
@@ -18,8 +18,8 @@ import type { Schema } from "effect"
  *
  * FNV-1a 32-bit → `uint32`, the same family TanStack itself uses for table names.
  */
-export const deriveSchemaVersion = (schema: Schema.Schema.Any): number => {
-  const signature = String(schema.ast)
+export const deriveSchemaVersion = (schema: Schema.Top): number => {
+  const signature = JSON.stringify(SchemaRepresentation.fromAST(schema.ast))
   let hash = 2166136261
   for (let i = 0; i < signature.length; i++) {
     hash ^= signature.charCodeAt(i)

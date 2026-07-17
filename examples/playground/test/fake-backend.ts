@@ -26,11 +26,11 @@ export interface FakeBackend {
 const GROUP = SyncGroup.make("playground")
 
 export const makeFakeBackend = (config?: {
-  readonly delays?: { readonly tail?: Duration.DurationInput; readonly list?: Duration.DurationInput }
+  readonly delays?: { readonly tail?: Duration.Input; readonly list?: Duration.Input }
   readonly seed?: ReadonlyArray<Webhook>
 }): FakeBackend => {
-  const tail = Duration.decode(config?.delays?.tail ?? Duration.millis(30))
-  const list = Duration.decode(config?.delays?.list ?? Duration.millis(50))
+  const tail = Duration.fromInputUnsafe(config?.delays?.tail ?? Duration.millis(30))
+  const list = Duration.fromInputUnsafe(config?.delays?.list ?? Duration.millis(50))
 
   const rows = new Map<string, Webhook>((config?.seed ?? []).map((w) => [w.id, w]))
   const log: Array<HydratedSyncEventEnvelope> = []
@@ -43,7 +43,7 @@ export const makeFakeBackend = (config?: {
     Effect.runSync(Queue.offer(queue, env))
   }
 
-  const api: Context.Tag.Service<WebhookApi> = {
+  const api: Context.Service.Shape<typeof WebhookApi> = {
     create: (w) =>
       Effect.sleep(tail).pipe(
         Effect.tap(() =>
