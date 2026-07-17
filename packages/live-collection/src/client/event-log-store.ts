@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option, Order, Ref, Schema, type Scope } from "effect"
 import { compareSyncId, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import type { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
 import { prunePlan } from "./prune-plan.js"
 
@@ -41,9 +42,22 @@ export interface EventLogStoreShape {
   /** The model's prune boundary: `None` ⇒ nothing pruned (complete from the start); `Some(f)` ⇒ deleted below `f`. */
   readonly floor: (modelName: ModelName) => Effect.Effect<Option.Option<SyncId>>
 
-  /** The collection's base watermark: the syncId through which its local base is known complete. */
-  readonly getBaseWatermark: (key: CollectionKey<unknown>) => Effect.Effect<Option.Option<SyncId>>
-  readonly setBaseWatermark: (a: { readonly key: CollectionKey<unknown>; readonly at: SyncId }) => Effect.Effect<void>
+  /**
+   * The collection's base watermark: the syncId through which its local base is known
+   * complete. Keyed by `(key, schemaVersion)` — the identity of the persisted base it
+   * describes. A schema change dumps the persisted table, so it must also orphan the
+   * watermark: a lookup under the new version finds `None` and the mount decides
+   * `Snapshot` instead of trusting a watermark for a base that no longer exists.
+   */
+  readonly getBaseWatermark: (args: {
+    readonly key: CollectionKey<unknown>
+    readonly schemaVersion: SchemaVersion
+  }) => Effect.Effect<Option.Option<SyncId>>
+  readonly setBaseWatermark: (args: {
+    readonly key: CollectionKey<unknown>
+    readonly schemaVersion: SchemaVersion
+    readonly at: SyncId
+  }) => Effect.Effect<void>
   /** The newest resync the client has ingested (monotonic) — invalidates replay across it. */
   readonly getLastResync: Effect.Effect<Option.Option<SyncId>>
   readonly setLastResync: (at: SyncId) => Effect.Effect<void>
@@ -56,7 +70,7 @@ const advance = (current: Option.Option<SyncId>, next: SyncId): SyncId =>
 /** In-memory adapter over `Ref`s — broker behavior tests. */
 const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
   const rows = yield* Ref.make(new Map<string, LoggedEvent>()) // keyed by syncId ⇒ upsert dedupe
-  const watermarks = yield* Ref.make(new Map<string, SyncId>()) // keyed by serializeKey(key)
+  const watermarks = yield* Ref.make(new Map<string, SyncId>()) // keyed by serializeKey(key) + schemaVersion
   const floors = yield* Ref.make(new Map<string, SyncId>()) // modelName ⇒ prune boundary (highest deleted)
   const lastResync = yield* Ref.make(Option.none<SyncId>())
 
@@ -94,11 +108,14 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
         }),
       ),
     floor: (modelName) => Ref.get(floors).pipe(Effect.map((f) => Option.fromNullishOr(f.get(modelName)))),
-    getBaseWatermark: (key) => Ref.get(watermarks).pipe(Effect.map((m) => Option.fromNullishOr(m.get(serializeKey(key))))),
-    setBaseWatermark: ({ key, at }) =>
+    getBaseWatermark: ({ key, schemaVersion }) =>
+      Ref.get(watermarks).pipe(
+        Effect.map((m) => Option.fromNullishOr(m.get(`${serializeKey(key)}:${schemaVersion}`))),
+      ),
+    setBaseWatermark: ({ key, schemaVersion, at }) =>
       Ref.update(watermarks, (m) => {
         const next = new Map(m)
-        const id = serializeKey(key)
+        const id = `${serializeKey(key)}:${schemaVersion}`
         next.set(id, advance(Option.fromNullishOr(m.get(id)), at))
         return next
       }),
@@ -128,7 +145,10 @@ const EVENTS = "events" // object store: log rows, keyed by `syncId` (PK), index
 const BY_MODEL = "byModel" // index on `events.modelName` — the replay read narrows to one model first
 const META = "meta" // keyval object store (out-of-line keys): watermarks, prune floors, lastResync
 
-const wmKey = (key: CollectionKey<unknown>): string => `wm:${serializeKey(key)}`
+// The schema version is part of the watermark's identity: a version change dumps the
+// persisted base, so its watermark must be orphaned with it (old entries are inert).
+const wmKey = (key: CollectionKey<unknown>, schemaVersion: SchemaVersion): string =>
+  `wm:${serializeKey(key)}:${schemaVersion}`
 const floorKey = (modelName: string): string => `floor:${modelName}`
 const RESYNC_KEY = "lastResync"
 
@@ -246,8 +266,8 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
         ),
 
       floor: (modelName) => getMetaSyncId(floorKey(modelName)),
-      getBaseWatermark: (key) => getMetaSyncId(wmKey(key)),
-      setBaseWatermark: ({ key, at }) => advanceMetaSyncId(wmKey(key), at),
+      getBaseWatermark: ({ key, schemaVersion }) => getMetaSyncId(wmKey(key, schemaVersion)),
+      setBaseWatermark: ({ key, schemaVersion, at }) => advanceMetaSyncId(wmKey(key, schemaVersion), at),
       getLastResync: getMetaSyncId(RESYNC_KEY),
       setLastResync: (at) => advanceMetaSyncId(RESYNC_KEY, at),
     }

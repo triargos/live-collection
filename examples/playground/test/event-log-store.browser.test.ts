@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
-import { EventLogStore, type LoggedEvent, scopedKey } from "@triargos/live-collection"
+import { EventLogStore, type LoggedEvent, SchemaVersion, scopedKey } from "@triargos/live-collection"
 
 // The durable EventLogStore.layer over **real IndexedDB** — the one thing node cannot prove (jsdom has no
 // IDB, and even a polyfill can't model a fresh process over the same database). This mirrors the memory
@@ -10,6 +10,7 @@ import { EventLogStore, type LoggedEvent, scopedKey } from "@triargos/live-colle
 // wrote — replay-on-mount survives a reload / workspace-switch.
 
 const sid = (s: string) => SyncId.make(s)
+const version = SchemaVersion.make(1)
 const Webhook = ModelName.make("Webhook")
 const insert = (syncId: string, scope: string, id: string): LoggedEvent => ({
   syncId: sid(syncId),
@@ -113,8 +114,8 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
         databaseName,
         Effect.gen(function* () {
           const log = yield* EventLogStore
-          yield* log.setBaseWatermark({ key, at: sid("5") })
-          yield* log.setBaseWatermark({ key, at: sid("3") }) // older ⇒ ignored
+          yield* log.setBaseWatermark({ key, schemaVersion: version, at: sid("5") })
+          yield* log.setBaseWatermark({ key, schemaVersion: version, at: sid("3") }) // older ⇒ ignored
           yield* log.setLastResync(sid("7"))
           yield* log.setLastResync(sid("2")) // older ⇒ ignored
         }),
@@ -123,10 +124,37 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
         databaseName,
         Effect.gen(function* () {
           const log = yield* EventLogStore
-          return [yield* log.getBaseWatermark(key), yield* log.getLastResync] as const
+          return [yield* log.getBaseWatermark({ key, schemaVersion: version }), yield* log.getLastResync] as const
         }),
       )
       assert.deepStrictEqual(wm, Option.some(sid("5")))
       assert.deepStrictEqual(resync, Option.some(sid("7")))
+    }))
+
+  it.live("a watermark written under one schema version is invisible under another — across a reload", () =>
+    Effect.gen(function* () {
+      const databaseName = freshDb()
+      const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
+      const oldVersion = SchemaVersion.make(1)
+      const newVersion = SchemaVersion.make(2)
+      yield* session(
+        databaseName,
+        EventLogStore.pipe(
+          Effect.flatMap((log) => log.setBaseWatermark({ key, schemaVersion: oldVersion, at: sid("10") })),
+        ),
+      )
+      // The "reload after a schema change": the dumped base's watermark must not be found.
+      const [stale, fresh] = yield* session(
+        databaseName,
+        Effect.gen(function* () {
+          const log = yield* EventLogStore
+          return [
+            yield* log.getBaseWatermark({ key, schemaVersion: newVersion }),
+            yield* log.getBaseWatermark({ key, schemaVersion: oldVersion }),
+          ] as const
+        }),
+      )
+      assert.deepStrictEqual(stale, Option.none()) // new version ⇒ no watermark ⇒ mount snapshots
+      assert.deepStrictEqual(fresh, Option.some(sid("10"))) // old entry is inert, not corrupted
     }))
 })

@@ -19,6 +19,7 @@ import {
   type ModelName,
   SyncId,
 } from "@triargos/live-collection-protocol"
+import type { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, globalKey, scopedKey, serializeKey } from "../registry/collection-key.js"
 import { CatchupClient } from "./catchup-client.js"
 import { EventLogStore, type LoggedEvent } from "./event-log-store.js"
@@ -35,16 +36,23 @@ export type SyncSignal = Data.TaggedEnum<{
 export const SyncSignal = Data.taggedEnum<SyncSignal>()
 
 export interface SyncBrokerShape {
-  /** Replay this collection's missing history, then continue with its live tail. */
+  /**
+   * Replay this collection's missing history, then continue with its live tail.
+   * `schemaVersion` identifies the persisted base the subscriber hydrates from — the
+   * base watermark is read under `(key, schemaVersion)`, so a schema change (which
+   * dumps the persisted table) finds no watermark and decides `Snapshot`.
+   */
   readonly subscribe: (args: {
     readonly modelName: ModelName
     readonly scope: Option.Option<string>
+    readonly schemaVersion: SchemaVersion
   }) => Stream.Stream<SyncSignal>
 
   /** Record that a subscriber has applied every relevant signal through this sync id. */
   readonly markApplied: (args: {
     readonly modelName: ModelName
     readonly scope: Option.Option<string>
+    readonly schemaVersion: SchemaVersion
     readonly through: SyncId
   }) => Effect.Effect<void>
 
@@ -67,6 +75,7 @@ type PublishedItem =
 
 type PendingWatermark = {
   readonly key: CollectionKey<unknown>
+  readonly schemaVersion: SchemaVersion
   readonly at: SyncId
 }
 
@@ -129,7 +138,11 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
     const flushWatermarks = Effect.uninterruptible(
       Ref.modify(pending, (current) => [[...current.values()], new Map<string, PendingWatermark>()] as const).pipe(
         Effect.flatMap((watermarks) =>
-          Effect.forEach(watermarks, ({ key, at }) => log.setBaseWatermark({ key, at }), { discard: true }),
+          Effect.forEach(
+            watermarks,
+            ({ key, schemaVersion, at }) => log.setBaseWatermark({ key, schemaVersion, at }),
+            { discard: true },
+          ),
         ),
       ),
     )
@@ -141,24 +154,28 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
       Effect.forkScoped,
     )
 
-    const markApplied: SyncBrokerShape["markApplied"] = ({ modelName, scope, through }) => {
+    const markApplied: SyncBrokerShape["markApplied"] = ({ modelName, scope, schemaVersion, through }) => {
       const key = keyFor(modelName, scope)
-      const id = serializeKey(key)
+      const id = `${serializeKey(key)}:${schemaVersion}`
       return Ref.update(pending, (current) => {
         const next = new Map(current)
         const existing = next.get(id)
-        next.set(id, { key, at: existing === undefined ? through : maxSyncId(existing.at, through) })
+        next.set(id, {
+          key,
+          schemaVersion,
+          at: existing === undefined ? through : maxSyncId(existing.at, through),
+        })
         return next
       })
     }
 
-    const subscribe: SyncBrokerShape["subscribe"] = ({ modelName, scope }) =>
+    const subscribe: SyncBrokerShape["subscribe"] = ({ modelName, scope, schemaVersion }) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const queue = yield* PubSub.subscribe(published)
           const key = keyFor(modelName, scope)
-          const id = serializeKey(key)
-          const durableBase = yield* log.getBaseWatermark(key)
+          const id = `${serializeKey(key)}:${schemaVersion}`
+          const durableBase = yield* log.getBaseWatermark({ key, schemaVersion })
           const pendingBase = yield* Ref.get(pending).pipe(
             Effect.map((watermarks) => Option.fromNullishOr(watermarks.get(id)?.at)),
           )
