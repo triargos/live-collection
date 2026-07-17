@@ -1,4 +1,4 @@
-import { Effect, type ManagedRuntime, Option, Schema, type Scope } from "effect"
+import { Effect, Fiber, type ManagedRuntime, Option, Schema, type Scope, Stream } from "effect"
 import {
   createCollection,
   type DeleteMutationFnParams,
@@ -6,7 +6,8 @@ import {
   type UpdateMutationFnParams,
 } from "@tanstack/db"
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core"
-import type { ModelId } from "@triargos/live-collection-protocol"
+import { type ModelId, ModelName, type SyncId } from "@triargos/live-collection-protocol"
+import { SyncBroker, SyncSignal } from "../client/sync-broker.js"
 import type { SyncWrite } from "../dispatch/sync-write.js"
 import type { LiveCollection } from "../persistence/live-collection.js"
 import { liveCollectionOptions } from "../persistence/live-collection-options.js"
@@ -15,14 +16,14 @@ import type { LiveRuntime } from "../runtime/live-runtime.js"
 import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collection-key.js"
 
 /**
- * The per-model metadata the sync loop reads off a collection handle (`handle._meta`):
+ * The per-model metadata each collection drain reads from its handle (`handle._meta`):
  * how to decode (`schema`), key (`getKey`), route (`entity` — the wire model name — plus
  * `scopeOf`), and snapshot (`listFn`) the model. Populated by {@link defineCollection};
  * apps never construct one.
  *
  * `scopeOf` is `None` for a global collection and `Some((entity) => scope)` for a scoped
  * one. `listFn` is self-contained — the app's `services` runtime was provided into it at
- * define time — so the loop runs it with no further dependencies.
+ * define time — so the drain runs it with no further dependencies.
  */
 export interface ModelMeta<T extends object> {
   readonly entity: string
@@ -48,23 +49,6 @@ export type ScopedHandle<T extends object> = ((scope: string) => LiveCollection<
 }
 /** Either collection handle — global or scoped. */
 export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
-
-/**
- * The models the sync loop drives: an array of collection handles, e.g.
- * `useLiveSync(runtime, [webhookCollection, settingsCollection])`. Declare it once at
- * module level and keep it stable — the loop snapshots it when it starts.
- *
- * Only each handle's `_meta` is read; the loop reaches mounted instances through the
- * registry, never by calling a handle (so listing a model here does not mount it).
- *
- * @example
- * ```ts
- * export const models: SyncModels = [webhookCollection, settingsCollection]
- * // React: useLiveSync(runtime, models)
- * // Otherwise: runtime.forkLoop(models)
- * ```
- */
-export type SyncModels = ReadonlyArray<{ readonly _meta: ModelMeta<any> }>
 
 /**
  * The optional **optimistic write path**. The handlers are TanStack DB's native mutation
@@ -172,7 +156,7 @@ interface ScopedBase<T extends object, R> {
   /**
    * Reads the scope off an entity (e.g. `(w) => w.orgId`). Its presence makes the
    * collection **scoped** — one instance per scope, mounted with `handle(scope)` — and
-   * tells the sync loop which instance an incoming event belongs to. This is the only
+   * lets each collection drain filter incoming upserts to its scope. This is the only
    * place your "workspace" notion meets the library.
    */
   readonly scopeOf: (entity: T) => string
@@ -228,7 +212,7 @@ export function defineCollection<T extends object, R = never>(
   const schemaVersion = deriveSchemaVersion(schema)
 
   // The `services` ManagedRuntime IS the executor for everything carrying the app's `R` — handlers run
-  // ON it (`runPromise`), the loop-facing listFn runs WITH it (`Effect.provide`). It is never forced to
+  // ON it (`runPromise`), the drain-facing listFn runs WITH it (`Effect.provide`). It is never forced to
   // build synchronously: the runtime builds lazily on first use and memoizes, so async-constructing
   // layers work and a disposed runtime fails loudly instead of serving finalized services. When
   // `services` is absent, `R` is `never` (see ServicesOf), so running on the default runtime is sound —
@@ -275,13 +259,57 @@ export function defineCollection<T extends object, R = never>(
           }),
         ) satisfies LiveCollection<T>,
     ).pipe(
-      Effect.tap((collection) => Effect.addFinalizer(() => Effect.promise(() => collection.cleanup()))),
+      Effect.tap((collection) => {
+        const modelName = ModelName.make(entity)
+        const drain = Effect.gen(function* () {
+          const broker = yield* SyncBroker
+          const applied = (through: SyncId) => broker.markApplied({ modelName, scope: key.scope, through })
+          yield* Stream.runForEach(broker.subscribe({ modelName, scope: key.scope }), (signal) =>
+            SyncSignal.$match(signal, {
+              Snapshot: ({ at }) =>
+                meta.listFn(key.scope).pipe(
+                  Effect.flatMap((rows) => collection.utils.replaceSynced(rows)),
+                  Effect.zipRight(applied(at)),
+                ),
+              Upsert: ({ syncId, data }) =>
+                Schema.decodeUnknown(schema)(data).pipe(
+                  Effect.flatMap((row) => {
+                    const outOfScope = Option.match(meta.scopeOf, {
+                      onNone: () => false,
+                      onSome: (getScope) =>
+                        Option.match(key.scope, {
+                          onNone: () => true,
+                          onSome: (scope) => getScope(row) !== scope,
+                        }),
+                    })
+                    return outOfScope ? Effect.void : collection.utils.writeSynced(row)
+                  }),
+                  Effect.catchTag("ParseError", (error) =>
+                    Effect.logWarning(
+                      `[defineCollection] skipping undecodable ${entity} event #${syncId}: ${error.message}`,
+                    ),
+                  ),
+                  Effect.zipRight(applied(syncId)),
+                ),
+              Delete: ({ syncId, modelId }) =>
+                collection.utils.deleteSynced(modelId).pipe(Effect.zipRight(applied(syncId))),
+            }),
+          )
+        })
+        return Effect.sync(() => runtime.forkDrain(drain)).pipe(
+          Effect.flatMap((fiber) =>
+            Effect.addFinalizer(() =>
+              Fiber.interrupt(fiber).pipe(Effect.zipRight(Effect.promise(() => collection.cleanup()))),
+            ),
+          ),
+        )
+      }),
     )
 
   const mount = (key: CollectionKey<LiveCollection<T>>): LiveCollection<T> =>
     Effect.runSync(runtime.registry.getOrCreate({ key, make: makeFor(key) }))
 
-  // Bridge listFn to `R = never` for the loop. The loop is itself an Effect fiber, so this stays in
+  // Bridge listFn to `R = never` for the drain. The drain is itself an Effect fiber, so this stays in
   // Effect-land: `Effect.provide(services)` runs the listFn with the services runtime (the same
   // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
   // snapshot and cause structure are preserved.

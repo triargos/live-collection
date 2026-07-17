@@ -7,9 +7,8 @@ import { Option } from "effect"
  * disposal matches on. There is deliberately **no string grammar**: the library never
  * parses an id, so there is no separator, no glob, no escaping.
  *
- * `A` is a phantom type parameter carrying the collection's instance type, so the
- * registry's `getById` recovers it without an unchecked decode. Keys are minted by
- * `defineCollection`, so key ↔ instance-type stays 1:1 by construction.
+ * `A` is a phantom type parameter carrying the collection's instance type. Keys are
+ * minted by `defineCollection`, so key ↔ instance-type stays 1:1 by construction.
  */
 export interface CollectionKey<A> {
   readonly entity: string

@@ -124,7 +124,7 @@ describe("pi-demo client ↔ server", () => {
         Effect.map(HttpClient.HttpClient, addSessionHeader),
       ).pipe(Layer.provide(NodeHttpClient.layer))
       const services = ManagedRuntime.make(SessionHttpClient)
-      const loop = Layer.mergeAll(
+      const sync = Layer.mergeAll(
         SyncTransport.layer({ url: `${baseUrl}/api/sync`, keepAlive: "45 seconds" }),
         CatchupClient.layer({ url: `${baseUrl}/api/catchup` }),
         Layer.succeed(LastSyncIdStore, cursor),
@@ -132,8 +132,7 @@ describe("pi-demo client ↔ server", () => {
       ).pipe(Layer.provide(SessionHttpClient))
       const runtime = makeLiveRuntime({
         persistence: makeNodeSqlitePersistence(),
-        loop,
-        onResync: Effect.void,
+        sync,
       })
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => runtime.dispose()).pipe(
@@ -172,7 +171,7 @@ describe("pi-demo client ↔ server", () => {
       const todos = todosHandle(session)
       yield* Effect.promise(() => Promise.all([projects.preload(), todos.preload()]).then(() => undefined))
 
-      let loopFiber = runtime.forkLoop([projectsHandle, todosHandle])
+      let loopFiber = runtime.forkSync()
 
       yield* waitUntil(() => projects.size === 2 && todos.size === 5)
       assert.strictEqual(projects.size, 2)
@@ -248,7 +247,7 @@ describe("pi-demo client ↔ server", () => {
       assert.isFalse(todos.has(todoKey(offline)))
       assert.isFalse(todos.has(todoKey(squashed)))
 
-      loopFiber = runtime.forkLoop([projectsHandle, todosHandle])
+      loopFiber = runtime.forkSync()
       yield* waitUntil(() => todos.has(todoKey(offline)))
       assert.strictEqual(todos.get(todoKey(offline))?.title, "Caught up")
       assert.isFalse(todos.has(todoKey(squashed)))

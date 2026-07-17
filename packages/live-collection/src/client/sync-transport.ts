@@ -4,7 +4,7 @@ import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
 
 /**
  * The live connection dropped — it ended, errored, or fell silent past the keep-alive
- * window. It is **expected**, not exceptional: the sync loop's retry catches it, re-runs
+ * window. It is **expected**, not exceptional: the broker's retry catches it, re-runs
  * catchup to heal the disconnect gap, and reconnects. The `reason` carries why, for logs.
  */
 export class SyncConnectionLost extends Schema.TaggedError<SyncConnectionLost>()("SyncConnectionLost", {
@@ -16,7 +16,7 @@ export class SyncConnectionLost extends Schema.TaggedError<SyncConnectionLost>()
  * decoded. {@link SyncTransportShape.connect} hides SSE line-framing, the keep-alive
  * timeout, text/JSON decoding, and {@link HydratedSyncEventEnvelope} decoding (a
  * malformed line is skipped and logged, never fatal — a newer server may emit shapes
- * this client can't parse). It carries every arm including `Resync`; the sync loop
+ * this client can't parse). It carries every arm including `Resync`; the broker
  * splits them. The stream **fails** with {@link SyncConnectionLost} on drop rather than
  * retrying internally, so each reconnect re-runs catchup first.
  */
@@ -73,7 +73,7 @@ const makeHttp = (config: {
       Stream.mapError((error) =>
         error instanceof SyncConnectionLost ? error : new SyncConnectionLost({ reason: error.message }),
       ),
-      // A server-closed stream is still a drop — surface it so the sync loop reconnects.
+      // A server-closed stream is still a drop — surface it so the broker reconnects.
       Stream.concat(Stream.fail(new SyncConnectionLost({ reason: "stream ended" }))),
     )
     return { connect }

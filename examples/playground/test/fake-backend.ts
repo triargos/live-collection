@@ -20,7 +20,7 @@ import type { Webhook } from "../src/live/schema.js"
  */
 export interface FakeBackend {
   readonly services: ManagedRuntime.ManagedRuntime<WebhookApi, never>
-  readonly loop: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore>
+  readonly sync: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore>
 }
 
 const GROUP = SyncGroup.make("playground")
@@ -94,12 +94,12 @@ export const makeFakeBackend = (config?: {
       ),
   })
 
-  const loop = Layer.mergeAll(
+  const sync = Layer.mergeAll(
     LastSyncIdStore.layerMemory,
     catchup,
     SyncTransport.layerMemory(queue),
     EventLogStore.layerMemory,
   )
 
-  return { services, loop }
+  return { services, sync }
 }

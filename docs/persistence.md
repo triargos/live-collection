@@ -24,7 +24,7 @@ You build one persistence value at startup and thread it through `makeLiveRuntim
 // prod, browser, once at startup — async (OPFS open is async)
 const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "app.sqlite" })
 const persistence = createBrowserWASQLitePersistence({ database }) // PersistedCollectionPersistence value
-const runtime = makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
+const runtime = makeLiveRuntime({ persistence, sync })
 ```
 
 `defineCollection` then composes the persisted collection internally — you never write
@@ -53,7 +53,8 @@ app constructs and passes to `makeLiveRuntime`, which stores it on the runtime
 export interface LiveRuntime {
   readonly registry: CollectionRegistryShape
   readonly persistence: PersistedCollectionPersistence   // app-owned value, threaded into each make
-  readonly forkLoop: (models: SyncModels) => Fiber.RuntimeFiber<void>
+  readonly forkSync: () => Fiber.RuntimeFiber<void>
+  readonly forkDrain: (drain: Effect<void, never, SyncBroker>) => Fiber.RuntimeFiber<void>
   readonly dispose: () => void
 }
 ```
@@ -161,7 +162,7 @@ The fields it sets ([`live-collection-options.ts:13-20`](../packages/live-collec
 
 The `sync` it returns does **no network I/O**. It only installs the [`SyncSession`](#the-sync-session-holder)
 behind `utils.writeSynced` / `deleteSynced` and signals ready. Server truth reaches the store
-through the **sync loop** writing to `utils`, never through this `sync`. That is the whole point of the A.3
+through the collection's **broker drain** writing to `utils`, never through this `sync`. That is the whole point of the A.3
 gate: a cold mount is fed by **OPFS only**, because the collection's own `sync` never lists.
 
 It is synchronous by design — `createCollection` (its caller) is sync, so the one-shot session `Deferred`
@@ -222,7 +223,7 @@ three-step flow is verified against the alpha. The flow:
 1. **Hydrate-from-storage.** A mount reads its rows from the local SQLite base (`syncMode: "eager"`).
 2. **No full re-list.** The collection's own `sync` is network-free and **never lists** — only OPFS feeds a
    cold mount.
-3. **Catchup deltas persist via the sync source.** Server truth arrives through the loop calling
+3. **Catchup deltas persist via the sync source.** Server truth arrives through the broker drain calling
    `utils.writeSynced` / `deleteSynced`, and those synced writes are persisted to OPFS.
 
 Node cannot run OPFS, so the **only** proof over real OPFS is a browser test. The smoke
@@ -262,7 +263,7 @@ These are deferred, not present — do not wire them as if they exist:
 
 ## See also
 
-- [`./architecture.md`](./architecture.md) — the two-surface runtime, registry, and sync loop this plugs into.
-- [`./protocol.md`](./protocol.md) — the wire contract (catchup / SSE / squasher) the loop decodes.
+- [`./architecture.md`](./architecture.md) — the runtime, lifetime registry, and broker this plugs into.
+- [`./protocol.md`](./protocol.md) — the wire contract decoded by transport and collection drains.
 - [`./backend.md`](./backend.md) — your responsibility; the server side of the read path.
 - [`./optimistic-writes.md`](./optimistic-writes.md) — the optimistic write path (A.10) that reconciles through `writeSynced`.

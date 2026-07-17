@@ -58,7 +58,7 @@ export interface BackendControls {
 
 export interface SharedBackend {
   readonly services: ManagedRuntime.ManagedRuntime<WebhookApi, never>
-  readonly loop: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore>
+  readonly sync: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore>
   readonly controls: BackendControls
   /** Close the BroadcastChannel (app teardown). */
   readonly dispose: () => void
@@ -249,7 +249,7 @@ export const makeSharedBackend = (config: {
     Effect.runSync(Queue.offer(queue, env))
   }
 
-  const loop = Layer.mergeAll(LastSyncIdStore.layerMemory, catchup, SyncTransport.layerMemory(queue))
+  const sync = Layer.mergeAll(LastSyncIdStore.layerMemory, catchup, SyncTransport.layerMemory(queue))
 
   const controls: BackendControls = {
     tabId,
@@ -294,7 +294,7 @@ export const makeSharedBackend = (config: {
 
   return {
     services,
-    loop,
+    sync,
     controls,
     dispose: () => channel.close(),
   }

@@ -1235,23 +1235,24 @@ Order matters; do not skip the spike.
    before this passes.**
 2. **The factory seam.** Define `create<Entity>Collection(...)` as the single
    typed entry point and the *only* place persistence lives.
-3. **CollectionRegistry + scoping** (§14). Generic, untyped, long‑lived cache
-   keyed by structured id; `getOrCreate` / `getById` / `dispose` /
-   `disposePattern`; lifecycle helpers `disposeWorkspace` /
-   `disposeEverything`. **Build early — this is how large collections stay
-   small, needed under any backend.**
-4. **Sync dispatch registry** (§14). `Map<ModelName, DispatchHandler>`; each
-   `<entity>-collection.ts` registers its handler; resolver routes hydrated
-   events to the right scoped collection via `getById`.
-5. **`lastSyncId` + catchup wiring.** Global durable `lastSyncId`; feed
-   `/catchup?from=…` results through the collection sync source; advance
-   `lastSyncId` after applying.
-6. **Bootstrap flow** (§14). Cold/warm start; capture `lastSyncId`; open
-   `/sync` SSE; catchup the gap.
+3. **CollectionRegistry + scoping** (§14). A long-lived lifetime table keyed
+   by structured `(entity, scope)`: `getOrCreate` plus selective disposal. It
+   owns instance deduplication and child scopes, but exposes no routing or
+   lookup surface. **Build early — scoping is how large collections stay small.**
+4. **SyncBroker.** One model-blind broker owns the multiplexed SSE connection,
+   global catchup, durable `lastSyncId`, event log, pruning, and resync. Each
+   mounted collection subscribes itself and drains `Snapshot | Upsert | Delete`
+   into its own synced store.
+5. **Replay + live as one stream.** Subscribe to in-memory fan-out before
+   reading durable history, then emit optional snapshot, replay rows, and the
+   filtered live tail. Subscriber-owned, batched watermarks record completion.
+6. **Decode and scope at the collection.** The broker logs opaque rows for all
+   models. Collection drains decode with their model schema, filter upserts by
+   `scopeOf`, and fan scope-less deletes to every scope of that model.
 7. **Offline mutations.** Add `@tanstack/offline-transactions` once the read
    path is solid.
-8. **Roll out per entity.** Each new entity = one factory + one table mapping
-   + one dispatch handler. Registry/dispatch/resolver untouched.
+8. **Roll out per entity.** Each new entity is one `defineCollection` call;
+   broker ingest and the lifetime table remain untouched.
 
 ## B. Relevant context from this repo
 

@@ -7,7 +7,6 @@ import { prunePlan } from "../src/client/prune-plan.js"
 const row = (model: string, syncId: string): LoggedEvent => ({
   syncId: SyncId.make(syncId),
   modelName: ModelName.make(model),
-  scope: Option.none(),
   tag: "Insert",
   modelId: ModelId.make(`${model}-${syncId}`),
   data: Option.some({}),

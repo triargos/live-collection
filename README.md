@@ -2,7 +2,7 @@
 
 A **frontend-only**, Effect-native live-sync engine built on [TanStack DB](https://tanstack.com/db). The hero type is `LiveCollection<T>` — a *native* TanStack collection that persists locally (SQLite/OPFS), hydrates from disk on reload, and stays live against your backend over SSE + catchup.
 
-**How you use it:** you define one collection per model, point it at your backend's read path (a `listFn`) and optionally its write path (optimistic `onInsert`/`onDelete`/`onUpdate` handlers), then mount one sync loop near your app root. Reads are plain `useLiveQuery`; the engine owns persistence, catchup, the durable cursor (the **watermark**), and replay-on-mount.
+**How you use it:** you define one collection per model, point it at your backend's read path (a `listFn`) and optionally its write path (optimistic `onInsert`/`onDelete`/`onUpdate` handlers), then start one shared broker near your app root. Each mounted collection subscribes itself. Reads are plain `useLiveQuery`; the engine owns persistence, catchup, the durable cursor, and replay-on-mount.
 
 > **The backend is yours.** This library ships no server. It speaks a wire contract — the SSE stream, the `/catchup` request/response, and the squasher fold — defined in `@triargos/live-collection-protocol`. You implement the routes, auth, and permission resolution. See [`docs/backend.md`](docs/backend.md) and [`docs/protocol.md`](docs/protocol.md).
 
@@ -16,7 +16,7 @@ The dependency DAG is acyclic: `protocol → live-collection → react`.
 |---|---|---|
 | **`@triargos/live-collection-protocol`** | The shared **contract kit** — pure, no I/O. `SyncEvent`/`HydratedSyncEvent` schemas, the sync-group grammar, the squasher fold, the `/catchup` request/response schemas, and the branded `ModelId`. The backend implements against it. | …you build the backend, or need the branded `ModelId` / wire schemas in app code. |
 | **`@triargos/live-collection`** | The frontend engine. `defineCollection`, `makeLiveRuntime`, the SSE transport, catchup, persistence, the durable `EventLogStore`, and the `LiveCollection<T>` hero type. | …always, in the client app. |
-| **`@triargos/live-collection-react`** | One React-specific piece: `useLiveSync`, which forks the sync loop on mount and interrupts it on unmount. Reads use `@tanstack/react-db`'s `useLiveQuery` directly — this package does **not** wrap it. | …your app is React. |
+| **`@triargos/live-collection-react`** | One React-specific piece: `useLiveSync`, which starts broker ingest on mount and interrupts it on unmount. Reads use `@tanstack/react-db` directly. | …your app is React. |
 
 Core is framework-neutral; `defineCollection` returns a native TanStack collection, so non-React apps drive it through `@tanstack/db` directly.
 
@@ -47,10 +47,10 @@ pnpm add @tanstack/react-db                           # React reads (useLiveQuer
 
 A worked slice (drawn from [`examples/playground`](examples/playground/)). Two collections: one *scoped* (per `orgId`), one *global*.
 
-**1. Build the runtime once at startup.** `persistence` is your app-owned value; `loop` is the transport/catchup/cursor layer (plus the durable event log); `onResync` is the live-resync action.
+**1. Build the runtime once at startup.** `persistence` is your app-owned value; `sync` provides transport, catchup, cursor, and durable event log services.
 
 ```ts
-import { makeLiveRuntime, reloadWindow, EventLogStore } from "@triargos/live-collection"
+import { makeLiveRuntime, EventLogStore } from "@triargos/live-collection"
 import { Layer } from "effect"
 import {
   createBrowserWASQLitePersistence,
@@ -62,15 +62,14 @@ const persistence = createBrowserWASQLitePersistence({ database })
 
 const runtime = makeLiveRuntime({
   persistence,
-  loop: Layer.merge(myTransportLayer, EventLogStore.layer({ databaseName: "app-eventlog" })),
-  onResync: reloadWindow, // prod default: reload the whole app on a resync sentinel
+  sync: Layer.merge(myTransportLayer, EventLogStore.layer({ databaseName: "app-eventlog" })),
 })
 ```
 
 **2. Define one collection per model.** The model name is written once; the handle is runtime-bound and registry-backed. `scopeOf` present ⇒ scoped (`webhooks(orgId)`); absent ⇒ global (`projects()`).
 
 ```ts
-import { defineCollection, type SyncModels } from "@triargos/live-collection"
+import { defineCollection } from "@triargos/live-collection"
 import { Effect } from "effect"
 
 const webhooks = defineCollection({
@@ -84,18 +83,16 @@ const webhooks = defineCollection({
   onInsert: ({ transaction }) => // call the server, RETURN the confirmed row — the library reconciles it
     Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
 })
-
-const models: SyncModels = [webhooks] // the models the loop drives; wire name = each handle's `entity`
 ```
 
-**3. Mount the loop once, then read with `useLiveQuery`.** `useLiveSync` forks the SSE/catchup/cursor loop for the app's lifetime; reads are plain `@tanstack/react-db`.
+**3. Start sync once, then read with `useLiveQuery`.** `useLiveSync` starts broker ingest for the app's lifetime; collections subscribe when mounted.
 
 ```tsx
 import { useLiveSync } from "@triargos/live-collection-react"
 import { useLiveQuery } from "@tanstack/react-db"
 
 function App() {
-  useLiveSync(runtime, models) // mount ONCE near the root; models is captured at mount — keep it stable
+  useLiveSync(runtime) // mount once near the root
   return <Webhooks orgId="org-1" />
 }
 
@@ -116,15 +113,15 @@ That's the whole loop: `coll.insert` with a client-minted id shows instantly (op
 
 ## How it fits together
 
-- **`makeLiveRuntime`** has two surfaces: a **sync** mount surface (`registry` + `persistence`) the collection handles run against during render, and an **async** `forkLoop` surface that runs catchup/cursor/tail off the render path. `useLiveSync` drives the loop.
+- **`makeLiveRuntime`** has a synchronous mount surface (`registry` + `persistence`) and asynchronous `forkSync`/collection-drain fibers. `useLiveSync` starts broker ingest.
 - **The watermark** (`LastSyncId`) is a durable, global cursor that gates catchup — *not* the framework's `staleTime` (which resets on reload). Catchup deltas write through the **synced-store** path (`writeSynced`/`deleteSynced`), never the optimistic path.
-- **Replay-on-mount** (`EventLogStore`): a durable IndexedDB log of confirmed events lets a freshly mounted collection replay locally before the network catches up. Decision logic lives in `mount-decision` (replay / skip / bootstrap).
+- **Replay-on-mount** (`EventLogStore` + `SyncBroker`): a durable IndexedDB log lets a freshly mounted collection receive replay and live tail as one stream. An in-band `Snapshot` rebuilds an untrusted base.
 - **The squasher** (in `protocol`) is a pure fold both ends rely on: a client catching up from any `syncId` converges to the same state.
 - **Scope, not backend, is the lever for large data.** Per-workspace collections (`<entity>:<scope>`) keep the working set small; both persistence backends hold a collection's working set in memory.
 
 ### Not built yet (and why)
 
-Mentioned so you don't reach for them: unmounted-workspace eviction policy, offline-durable writes (writes today require online for the `writeSynced` confirm), throttled watermark flush, a registry eviction backstop, and per-target resync. Today a resync sentinel triggers a full `onResync` (default: window reload).
+Mentioned so you don't reach for them: automatic unmounted-workspace eviction, offline-durable writes, a registry eviction backstop, and target-aware resync. Watermarks are already batched; resync currently snapshots every active subscriber in place.
 
 ---
 

@@ -5,7 +5,6 @@ import {
   LastSyncIdStore,
   type LiveRuntime,
   makeLiveRuntime,
-  reloadWindow,
   SyncTransport,
 } from "@triargos/live-collection"
 import {
@@ -19,12 +18,12 @@ export const createRuntime = async (
 ): Promise<LiveRuntime> => {
   const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "pi-demo" })
   const persistence = createBrowserWASQLitePersistence({ database })
-  const loop = Layer.mergeAll(
+  const sync = Layer.mergeAll(
     SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
     CatchupClient.layer({ url: "/api/catchup" }),
     LastSyncIdStore.layer,
     EventLogStore.layer({ databaseName: "pi-demo-eventlog" }),
   ).pipe(Layer.provide(httpClient))
 
-  return makeLiveRuntime({ persistence, loop, onResync: reloadWindow })
+  return makeLiveRuntime({ persistence, sync })
 }

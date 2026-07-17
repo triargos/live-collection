@@ -20,7 +20,7 @@ export interface LiveCollectionOptions<T extends object> {
   readonly syncMode: "eager"
   /** `true` — start sync on mount, so the write session is captured and hydration runs. */
   readonly startSync: true
-  /** The synced-store write path ({@link SyncWrite}) the sync loop applies server events through. */
+  /** The synced-store write path ({@link SyncWrite}) the collection drain applies server events through. */
   readonly utils: SyncWrite<T>
   /** The network-free TanStack sync config wiring `utils` to the store. */
   readonly sync: SyncConfig<T, ModelId>
@@ -34,7 +34,7 @@ export interface LiveCollectionOptions<T extends object> {
  *
  * The returned `sync` is **network-free**: it only installs the write session behind
  * `utils.writeSynced`/`deleteSynced`/`replaceSynced` and signals ready. Server truth
- * reaches the store through the sync loop writing to `utils`, never through this `sync`.
+ * reaches the store through the collection drain writing to `utils`, never through this `sync`.
  *
  * Synchronous by design: `createCollection` (its caller) is sync, so the one-shot session
  * `Deferred` is built with `Effect.runSync` — pure, no async boundary.

@@ -51,6 +51,17 @@ const setup = (rows: ReadonlyArray<Webhook> = []) =>
   })
 
 /** The collection under test: handlers call the server and return the confirmed row (insert) / void (delete). */
+const inertRuntime = (
+  registry: LiveRuntime["registry"],
+  persistence: PersistedCollectionPersistence,
+): LiveRuntime => ({
+  registry,
+  persistence,
+  forkDrain: () => Effect.runFork(Effect.never),
+  forkSync: () => Effect.runFork(Effect.never),
+  dispose: () => {},
+})
+
 const makeWebhooks = (runtime: LiveRuntime, services: Services): ScopedHandle<Webhook> =>
   defineCollection({
     runtime,
@@ -76,7 +87,7 @@ const onReload = <A>(persistence: PersistedCollectionPersistence, services: Serv
   Effect.gen(function* () {
     const scope = yield* Scope.make()
     const registry = yield* Scope.extend(makeRegistry, scope)
-    const runtime = { registry, persistence } as unknown as LiveRuntime
+    const runtime = inertRuntime(registry, persistence)
     const result = yield* use(makeWebhooks(runtime, services))
     yield* Scope.close(scope, Exit.void)
     return result
@@ -131,7 +142,7 @@ describe("write path — optimistic mutations", () => {
       const { persistence, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
       const registry = yield* Scope.extend(makeRegistry, scope)
-      const runtime = { registry, persistence } as unknown as LiveRuntime
+      const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,
         services,
@@ -189,7 +200,7 @@ describe("write path — optimistic mutations", () => {
       const { persistence, log, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
       const registry = yield* Scope.extend(makeRegistry, scope)
-      const runtime = { registry, persistence } as unknown as LiveRuntime
+      const runtime = inertRuntime(registry, persistence)
       const webhooks = makeWebhooks(runtime, services)
 
       const coll = webhooks("org-1")
@@ -232,7 +243,7 @@ describe("write path — optimistic mutations", () => {
       )
       const scope = yield* Scope.make()
       const registry = yield* Scope.extend(makeRegistry, scope)
-      const runtime = { registry, persistence } as unknown as LiveRuntime
+      const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,
         services,

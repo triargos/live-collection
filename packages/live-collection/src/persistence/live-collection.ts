@@ -9,7 +9,7 @@ import type { SyncWrite } from "../dispatch/sync-write.js"
  * `.insert/.update/.delete`. The library keeps it in sync underneath: rows are persisted
  * locally (SQLite) and updated live from the server's event stream.
  *
- * Its `utils` carry the {@link SyncWrite} server-truth write path the sync loop applies
+ * Its `utils` carry the {@link SyncWrite} server-truth write path the collection drain applies
  * events through — apps normally never touch it.
  *
  * @example

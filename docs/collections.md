@@ -1,260 +1,137 @@
 # Collections
 
-**What this is.** A *collection* is one model's live, persisted, queryable working set on the
-client — a native TanStack DB `Collection` (`LiveCollection<T>`) that the UI reads with
-`useLiveQuery`. You declare one with `defineCollection`, which hands back a **registry-backed
-handle**: a function you call to mount-or-fetch the canonical instance for a given scope.
+`defineCollection` is the typed entry point. It returns a native TanStack `LiveCollection<T>` handle bound to one `LiveRuntime`.
 
-**How you use it.** You write `defineCollection` once per model at app wiring time, then call
-the handle wherever the UI needs the collection (typically inside a component, passed to
-`useLiveQuery`). Reach for the registry's `dispose*` methods only at lifecycle boundaries —
-switching workspaces, logging out. The sync loop ([./read-path.md](./read-path.md)) drives every
-mounted instance through the registry; you never wire instances into it by hand.
+## Scoped and global handles
 
-This is the **client** library. The backend that serves catchup/SSE and accepts writes is your
-responsibility — see [./backend.md](./backend.md) and [./protocol.md](./protocol.md) for the wire
-contract, and [./architecture.md](./architecture.md) for how the pieces compose.
-
----
-
-## `defineCollection` — the typed skin
-
-`defineCollection` binds a model to a `LiveRuntime` and returns a handle. It has **two overloads**,
-split on whether `scopeOf` is present
-([`define-collection.ts:103-104`](../packages/live-collection/src/registry/define-collection.ts#L103)):
-
-```ts
-// global: no scopeOf  → handle is () => LiveCollection<T>
-export function defineCollection<T extends object, R = never>(config: GlobalConfig<T, R>): GlobalHandle<T>
-// scoped: scopeOf present → handle is (scope: string) => LiveCollection<T>
-export function defineCollection<T extends object, R = never>(config: ScopedConfig<T, R>): ScopedHandle<T>
-```
-
-The split is load-bearing. A single optional `scopeOf?` would infer `Args = unknown` and force a
-phantom argument onto global call sites; the two overloads keep `webhookCollection()` and
-`webhookCollection(orgId)` each exactly as wide as they need to be.
-
-### Shared config
-
-Both overloads take ([`define-collection.ts:73-89`](../packages/live-collection/src/registry/define-collection.ts#L73)):
-
-| field | type | role |
-|-------|------|------|
-| `runtime` | `LiveRuntime` | the two-surface runtime from `makeLiveRuntime` ([./architecture.md](./architecture.md)) |
-| `entity` | `string` | the **wire model name** — written once, so the registry key and the persisted table id (`serializeKey(key)`) can never drift |
-| `schema` | `Schema.Schema<T, any, never>` | the row schema; drives the schema-version / dump-and-rebuild path |
-| `getKey` | `(entity: T) => ModelId` | the row's primary key |
-| `listFn` | snapshot source (see below) | the cold/resync list; bridged to `R = never` at define time |
-
-Optional **optimistic write handlers** — `onInsert` / `onUpdate` / `onDelete` — are
-Effect-returning TanStack mutation handlers
-([`define-collection.ts:58`](../packages/live-collection/src/registry/define-collection.ts#L58)).
-Each handler **only calls your server**: insert/update return the confirmed row (`Effect<T>`), delete
-returns `Effect<void>`. The **library** reconciles — folding the returned row into the synced store
-(`writeSynced`), or removing the row by key (`deleteSynced`), **before resolving** (Model B), so the
-synced store holds the row at the instant TanStack drops the optimistic transaction — no flicker, and
-the later SSE echo is an idempotent `writeSynced`. Apps never touch `collection.utils`. See
-[./optimistic-writes.md](./optimistic-writes.md) for the full path.
-
-`R` is inferred from `listFn` plus the handlers. If `R ≠ never`, you must pass `services` — a
-`ManagedRuntime` that discharges it; `defineCollection` captures its context once at define time and
-provides it into `listFn` and every handler, so they reach the loop as `R = never`
-([`define-collection.ts:69-71`, `116-126`](../packages/live-collection/src/registry/define-collection.ts#L69)).
-
-### Global vs scoped, in the config
-
-- **Global** (`GlobalBase`): no `scopeOf`; `listFn: Effect.Effect<ReadonlyArray<T>, never, R>` — one
-  instance app-wide (e.g. the current user).
-- **Scoped** (`ScopedBase`): `scopeOf: (entity: T) => string` and
-  `listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>, never, R>` — one instance per scope.
-  `scopeOf` is the **only** place your app's "workspace" notion enters the library; the library
-  itself stays scope-generic. The dispatcher reads the scope straight off each
-  decoded event via `scopeOf`.
-
-> The handle also carries `_meta` (`ModelMeta<T>`) — `entity`, `schema`, `getKey`, `scopeOf`,
-> `listFn` — which is what the `SyncModels` array and sync loop read. You pass the handle into `SyncModels`;
-> the loop reaches *instances* through the registry, never by calling the handle
-> ([`define-collection.ts:25-46`](../packages/live-collection/src/registry/define-collection.ts#L25)).
-
----
-
-## The handle and `CollectionKey`
-
-Calling the handle mounts through the registry — **synchronously** — and returns the native
-`LiveCollection<T>` ([`define-collection.ts:150-151`](../packages/live-collection/src/registry/define-collection.ts#L150)).
-After the first mount, the call is a `Map.get`: cheap and referentially stable, so calling it inline
-in render is fine.
-
-Identity is a **structured** `CollectionKey<A>`, not a string id
-([`collection-key.ts:15-19`](../packages/live-collection/src/registry/collection-key.ts#L15)):
-
-```ts
-export interface CollectionKey<A> {
-  readonly entity: string
-  readonly scope: Option.Option<string> // None = global, Some = scoped
-  readonly _A?: A                        // phantom: carries the decoded entity type, never assigned
-}
-```
-
-There is **deliberately no string grammar** — no separator, no glob, no escaping (the same
-structure-over-sentinels choice the protocol makes for resync targets). The library never *parses* an
-id. Keys are minted only by the factory, through two constructors
-([`collection-key.ts:22-34`](../packages/live-collection/src/registry/collection-key.ts#L22)):
-
-```ts
-globalKey<A>(entity)                      // { entity, scope: None }
-scopedKey<A>({ entity, scope })           // { entity, scope: Some(scope) }
-```
-
-`serializeKey` produces an injective string used **only** as the registry `Map` key
-(`JSON.stringify([entity, scope-or-null])`); it is never parsed back, so it has no contract beyond
-collision-freedom over `(entity, scope)`
-([`collection-key.ts:41-42`](../packages/live-collection/src/registry/collection-key.ts#L41)).
-
-The phantom `_A` lets `getById` recover the decoded entity type without an unchecked decode: the key
-and the stored value share `A` because both come from one `make` call.
-
----
-
-## `LiveCollection<T>` — the surface you read
-
-`LiveCollection<T>` is **not a wrapper** — it *is* a TanStack `Collection`
-([`live-collection.ts:17`](../packages/live-collection/src/persistence/live-collection.ts#L17)):
-
-```ts
-export type LiveCollection<T extends object> = Collection<T, ModelId, SyncWrite<T>, never, T>
-```
-
-- `TKey = ModelId` — the branded row id.
-- `TUtils = SyncWrite<T>` — the **server-truth write path**, hosted on `collection.utils`:
-  `writeSynced(entity)` (upsert) and `deleteSynced(id)`, both `Effect.Effect<void>`
-  ([`sync-write.ts:17-19`](../packages/live-collection/src/dispatch/sync-write.ts#L17)).
-  The dispatcher and your optimistic handlers reconcile through these; the UI never calls them.
-- `TSchema = never` — the schema-less overload. Rows are already decoded and branded at the dispatch
-  seam, so TanStack does no validation of its own.
-
-Because it *is* a TanStack collection, the UI uses the native API directly: `useLiveQuery(coll)` to
-read, and `coll.insert(...)` / `coll.update(...)` / `coll.delete(...)` to write (which trigger your
-optimistic handlers). Nothing in the library re-exposes those.
-
----
-
-## Worked snippet (playground)
-
-From [`examples/playground/src/live/playground.ts`](../examples/playground/src/live/playground.ts):
+Presence of `scopeOf` selects the overload:
 
 ```ts
 const webhooks = defineCollection({
   runtime,
-  services: backend.services,                 // discharges R for listFn + handlers
   entity: "Webhook",
   schema: Webhook,
-  getKey: webhookKey,
-  scopeOf: (w) => w.orgId,                     // present ⇒ scoped handle: (orgId) => collection
-  listFn: (orgId) => Effect.flatMap(WebhookApi, (api) => api.list(orgId)),
-  // Handlers only call the server and return the confirmed row / void — the library reconciles (Model B).
+  getKey: (row) => row.id,
+  scopeOf: (row) => row.orgId,
+  listFn: (orgId) => WebhookApi.pipe(Effect.flatMap((api) => api.list(orgId))),
+})
+
+const orgWebhooks = webhooks(orgId)
+```
+
+Without `scopeOf`, the handle is global:
+
+```ts
+const currentUser = defineCollection({
+  runtime,
+  entity: "User",
+  schema: User,
+  getKey: (row) => row.id,
+  listFn: UserApi.pipe(Effect.flatMap((api) => api.current)),
+})
+
+const users = currentUser()
+```
+
+Handles mount synchronously. Calling the same handle with the same scope returns the same object until it is disposed.
+
+## Configuration
+
+- `runtime`: the shared `LiveRuntime`.
+- `entity`: wire model name and persisted table identity.
+- `schema`: decodes replay/live upserts.
+- `getKey`: extracts the branded `ModelId`.
+- `scopeOf`: optional scope extractor; its presence makes the collection scoped.
+- `listFn`: current server truth used for cold start and resync snapshots.
+- `services`: optional app-owned `ManagedRuntime` that supplies Effect dependencies required by `listFn` and mutation handlers.
+- `onInsert`, `onUpdate`, `onDelete`: optional optimistic server handlers.
+
+The app's workspace concept appears only through the opaque scope string. The package has no workspace-specific types.
+
+## Self-owned sync drain
+
+On first mount, `defineCollection` creates the persisted TanStack collection and forks a broker drain in the registry child scope.
+
+The drain applies:
+
+- `Snapshot`: `listFn → replaceSynced`
+- `Upsert`: schema decode → scope filter → `writeSynced`
+- `Delete`: `deleteSynced`
+
+Then it calls `broker.markApplied`. Model decoding and scope filtering live here, not in the broker.
+
+A malformed upsert is warned and skipped without stopping the stream. A valid upsert for another scope is also skipped. Both still advance this subscriber's watermark because the event was handled.
+
+## Optimistic writes
+
+Handlers only perform the server call. For insert/update they return the server-confirmed row:
+
+```ts
+const webhooks = defineCollection({
+  // ...read configuration
   onInsert: ({ transaction }) =>
-    Effect.flatMap(WebhookApi, (api) => api.create(transaction.mutations[0]!.modified)),
+    WebhookApi.pipe(
+      Effect.flatMap((api) => api.create(transaction.mutations[0]!.modified)),
+    ),
+  onUpdate: ({ transaction }) =>
+    WebhookApi.pipe(
+      Effect.flatMap((api) => api.update(transaction.mutations[0]!.modified)),
+    ),
   onDelete: ({ transaction }) =>
-    Effect.flatMap(WebhookApi, (api) => api.remove(transaction.mutations[0]!.key)),
+    WebhookApi.pipe(
+      Effect.flatMap((api) => api.remove(transaction.mutations[0]!.key)),
+    ),
 })
 ```
 
-And the read side, from
-[`examples/playground/src/routes/WebhooksPage.tsx`](../examples/playground/src/routes/WebhooksPage.tsx):
+The library reconciles the confirmed row into the synced baseline before the optimistic transaction resolves. The eventual SSE echo is an idempotent rewrite. Batched mutations are rejected because reconciliation supports exactly one mutation per transaction.
+
+## Collection identity
 
 ```ts
-const coll = pg.webhooks(orgId)               // mount-or-fetch the (Webhook, orgId) instance
-const { data } = useLiveQuery(() => coll, [orgId])
-// ...
-coll.insert({ id: crypto.randomUUID(), orgId, url }) // client-minted id
+interface CollectionKey<A> {
+  readonly entity: string
+  readonly scope: Option<string>
+}
 ```
 
-Note the **client-minted id**: minting it here keeps the self-echo idempotent and avoids any
-temp-id swap.
+Keys are structured and never parsed. Globals use `scope: None`; scoped collections use `Some(scope)`. The phantom `A` ties a key to its collection type inside the lifetime table.
 
----
+## Registry lifecycle
 
-## Scoping is the lever for large data
+The registry deliberately exposes only lifetime operations:
 
-Persistence backend is **not** how large data stays small — scoping is. A collection's
-working set lives in memory under either persistence backend. Per-workspace collections plus
-windowed queries keep that set bounded:
+| Method | Behavior |
+|---|---|
+| `getOrCreate` | Return the canonical instance for a key, creating it in a child scope on a miss. Used internally by handles. |
+| `dispose` | Close and evict one key. |
+| `disposeScope` | Close every collection with the matching scope; globals survive. |
+| `disposeAllScoped` | Close all scoped collections. |
+| `disposeAll` | Close everything. |
 
-- Define the model **scoped** (`scopeOf`) so each workspace gets its own `(entity, scope)` instance
-  instead of one global collection holding every org's rows.
-- Mount only the scopes the UI is showing; dispose the rest at workspace boundaries (below).
+Closing a child scope interrupts that collection's broker drain before native collection cleanup. The registry has no `getById`, `getByEntity`, or mount event stream; routing belongs to subscriptions.
 
-This is why the registry keys on `(entity, scope)` and why `disposeScope` exists: tearing down a
-workspace is a single structural operation, not a glob match.
+```ts
+yield* runtime.registry.disposeScope(orgId) // workspace exit
+yield* runtime.registry.disposeAll()        // logout
+runtime.dispose()                           // application teardown
+```
 
----
+Stopping `runtime.forkSync()` does not dispose collections. Conversely, disposing a collection does not stop global broker ingest.
 
-## The registry — mount, peek, dispose
+## Reading
 
-The handle is sugar over `CollectionRegistry`, the generic, long-lived cache of instances keyed by
-`CollectionKey`. It hands out the canonical instance for a key and owns teardown via `Scope`; it
-knows nothing about entities, workspaces, or TanStack
-([`collection-registry.ts:21-59`](../packages/live-collection/src/registry/collection-registry.ts#L21)).
-You reach it as `runtime.registry`.
+React uses native TanStack React DB:
 
-| method | signature | sync/async | what it does |
-|--------|-----------|------------|--------------|
-| `getOrCreate` | `({ key, make }) => Effect<A, never, Exclude<R, Scope>>` | **sync** mount | builds on first request (in a per-collection child scope), caches, and announces the mount on `mounts`; a cache hit just returns the stored instance. `make` declares teardown with `Effect.addFinalizer`, and the registry discharges that `Scope` so it never leaks to the caller. The handle calls this via `Effect.runSync`. |
-| `getById` | `(key) => Effect<Option<A>>` | sync | a **peek** — the instance if mounted, else `None`. Never builds. |
-| `getByEntity` | `(entity) => Effect<ReadonlyArray<{ key, collection }>>` | sync | every mounted instance for a model across all scopes (plus the global one if mounted), each paired with its `CollectionKey`. Used to fan a `Delete` whose id may live in any scope, or to read `key.scope` per snapshot. |
-| `dispose` | `(key) => Effect<void>` | **async** | tears down and evicts one collection by closing its child scope (which runs `cleanup()`); a no-op if not mounted. |
-| `disposeScope` | `(scope) => Effect<void>` | **async** | tears down every collection whose `scope` **equals** `scope` (globals untouched). Scope equality — not a glob — is the match. |
-| `disposeAllScoped` | `() => Effect<void>` | **async** | tears down every *scoped* collection, leaving globals mounted (workspace reset). |
-| `disposeAll` | `() => Effect<void>` | **async** | tears down *every* collection, globals included (logout). |
-| `mounts` | `Stream<CollectionKey<unknown>>` | — | emits a key the **first** time `getOrCreate` builds it (not on cache hits). The sync loop drains it to heal a freshly-mounted collection — skip / replay / bootstrap (see [./read-path.md](./read-path.md)). |
+```tsx
+const collection = webhooks(orgId)
+const { data } = useLiveQuery((query) => query.from({ webhook: collection }))
+```
 
-**`getOrCreate` is synchronous, `dispose*` is asynchronous.** Mount has to be `runSync`-able so the
-handle can be called inline in render; `persistence` is a closed-over value and only `Scope` is
-required of `make`, which the registry discharges, so there is no async boundary on the mount path.
-Disposal, by contrast, closes a child scope and runs the collection's `cleanup()`
-finalizer, which is async ([`define-collection.ts:131-151`](../packages/live-collection/src/registry/define-collection.ts#L131),
-[`collection-registry.ts:126-159`](../packages/live-collection/src/registry/collection-registry.ts#L126)).
+Non-React callers use the native TanStack collection directly.
 
-### Lifetimes are scopes, not bookkeeping
+See also:
 
-Each collection is built in its own **child scope** forked from the registry's layer scope
-([`collection-registry.ts:61-105`](../packages/live-collection/src/registry/collection-registry.ts#L61)):
-
-- `dispose` closes one child scope — selective teardown a single shared scope (LIFO,
-  all-or-nothing) could not express.
-- Releasing the registry layer closes the parent, which closes every surviving child — an automatic
-  backstop, no finalizer loop of our own.
-
-### Which `dispose*` when
-
-- **Switch workspace** → `disposeScope(oldOrgId)` (or `disposeAllScoped()` if you're tearing every
-  scoped instance down), leaving globals mounted.
-- **Logout** → `disposeAll()`.
-- **Drop one collection** → `dispose(key)`.
-
-> Note: the loop fiber's lifetime is the app's, separate from the registry. Interrupting the loop
-> does **not** dispose collections, and disposing collections does not stop the loop.
-
----
-
-## Not built (and why)
-
-- **Unmounted-workspace policy** — what to do with deltas for a scope no UI currently mounts
-  (drop / buffer / lazy-replay) is deferred. Today an unmounted scope simply isn't healed until it's
-  mounted again.
-- **Registry eviction backstop** — no LRU/idle eviction; instances live until an explicit `dispose*`
-  or layer release. Scoping + manual disposal at workspace boundaries is the intended lever.
-- **`variant`-within-a-scope** — a future additive `variant: Option<string>` dimension that
-  `disposeScope` would ignore. It is *not* folded into `scope` (which would break workspace
-  teardown). Until built, one instance per `(entity, scope)`.
-
----
-
-## See also
-
-- [./architecture.md](./architecture.md) — `makeLiveRuntime`, the two-surface runtime, the `SyncModels` array.
-- [./read-path.md](./read-path.md) — how `mounts` drives skip / replay / bootstrap.
-- [./optimistic-writes.md](./optimistic-writes.md) — the optimistic write path and `SyncWrite` reconciliation.
-- [./protocol.md](./protocol.md) / [./backend.md](./backend.md) — the wire contract you implement
-  server-side.
+- [Read path](./read-path.md)
+- [Replay on mount](./replay-on-mount.md)
+- [Optimistic writes](./optimistic-writes.md)

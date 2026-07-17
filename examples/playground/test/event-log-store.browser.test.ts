@@ -14,7 +14,6 @@ const Webhook = ModelName.make("Webhook")
 const insert = (syncId: string, scope: string, id: string): LoggedEvent => ({
   syncId: sid(syncId),
   modelName: Webhook,
-  scope: Option.some(scope),
   tag: "Insert",
   modelId: ModelId.make(id),
   data: Option.some({ id, scope }),
@@ -22,7 +21,6 @@ const insert = (syncId: string, scope: string, id: string): LoggedEvent => ({
 const del = (syncId: string, id: string): LoggedEvent => ({
   syncId: sid(syncId),
   modelName: Webhook,
-  scope: Option.none(), // a Delete carries no scope
   tag: "Delete",
   modelId: ModelId.make(id),
   data: Option.none(),
@@ -43,23 +41,22 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
         const log = yield* EventLogStore
         yield* log.append([insert("1", "org-1", "w1")])
         yield* log.append([insert("1", "org-1", "w1-v2")]) // same syncId, re-delivered on reconnect overlap
-        const rows = yield* log.read({ modelName: Webhook, scope: Option.none(), since: sid("0") })
+        const rows = yield* log.read({ modelName: Webhook, since: sid("0") })
         assert.strictEqual(rows.length, 1)
         assert.strictEqual(rows[0]!.modelId, ModelId.make("w1-v2")) // the later append wins
       }),
     ))
 
-  it.live("read returns the scope's events plus scope-less Deletes, syncId-ordered, after `since`", () =>
+  it.live("read returns every event for the model, syncId-ordered, after `since`", () =>
     session(
       freshDb(),
       Effect.gen(function* () {
         const log = yield* EventLogStore
         yield* log.append([insert("2", "org-1", "a"), insert("3", "org-2", "b"), del("4", "a"), insert("1", "org-1", "z")])
-        const rows = yield* log.read({ modelName: Webhook, scope: Option.some("org-1"), since: sid("1") })
-        // "1" excluded (since is exclusive); "3" excluded (other scope); "2" (org-1) + "4" (Delete) included, in order.
+        const rows = yield* log.read({ modelName: Webhook, since: sid("1") })
         assert.deepStrictEqual(
           rows.map((r) => r.syncId),
-          [sid("2"), sid("4")],
+          [sid("2"), sid("3"), sid("4")],
         )
       }),
     ))
@@ -70,7 +67,7 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
       Effect.gen(function* () {
         const log = yield* EventLogStore
         yield* log.append([insert("2", "org-1", "a"), insert("10", "org-1", "b"), insert("1", "org-1", "c")])
-        const rows = yield* log.read({ modelName: Webhook, scope: Option.some("org-1"), since: sid("0") })
+        const rows = yield* log.read({ modelName: Webhook, since: sid("0") })
         assert.deepStrictEqual(
           rows.map((r) => r.syncId),
           [sid("1"), sid("2"), sid("10")], // string-sorted this would be ["1","10","2"]
@@ -85,7 +82,7 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
       // A second, independent layer scope over the SAME database — the "reload".
       const rows = yield* session(
         databaseName,
-        EventLogStore.pipe(Effect.flatMap((log) => log.read({ modelName: Webhook, scope: Option.some("org-1"), since: sid("0") }))),
+        EventLogStore.pipe(Effect.flatMap((log) => log.read({ modelName: Webhook, since: sid("0") }))),
       )
       assert.deepStrictEqual(rows.map((r) => r.modelId), [ModelId.make("x")])
     }))
@@ -99,7 +96,7 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
           const log = yield* EventLogStore
           yield* log.append(["1", "2", "3", "4", "5"].map((s, i) => insert(s, "org-1", `w${i}`)))
           yield* log.prune({ perModel: 3, total: 100 }) // keep 3,4,5 ; delete 1,2 ; floor ⇒ 2
-          const kept = yield* log.read({ modelName: Webhook, scope: Option.some("org-1"), since: sid("0") })
+          const kept = yield* log.read({ modelName: Webhook, since: sid("0") })
           assert.deepStrictEqual(kept.map((r) => r.syncId), [sid("3"), sid("4"), sid("5")])
         }),
       )

@@ -3,7 +3,6 @@ import {
   defineCollection,
   type LiveRuntime,
   type ScopedHandle,
-  type SyncModels,
 } from "@triargos/live-collection"
 import { DemoApi, Project, type SessionCode, Todo, projectKey, todoKey } from "@pi-demo/shared"
 import { Effect, Layer, ManagedRuntime } from "effect"
@@ -20,7 +19,6 @@ export interface AppBundle {
   readonly session: SessionCode
   readonly todosCollection: ScopedHandle<Todo>
   readonly projectsCollection: ScopedHandle<Project>
-  readonly models: SyncModels
 }
 
 export const createApp = async (args: { readonly session: SessionCode }): Promise<AppBundle> => {
@@ -71,6 +69,5 @@ export const createApp = async (args: { readonly session: SessionCode }): Promis
       ),
   })
 
-  const models: SyncModels = [todosCollection, projectsCollection]
-  return { runtime, session: args.session, todosCollection, projectsCollection, models }
+  return { runtime, session: args.session, todosCollection, projectsCollection }
 }
