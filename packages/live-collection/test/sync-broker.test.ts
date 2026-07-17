@@ -19,9 +19,11 @@ import {
   type SyncSignal,
 } from "../src/client/sync-broker.js"
 import { SyncTransport } from "../src/client/sync-transport.js"
+import { SchemaVersion } from "../src/persistence/schema-version.js"
 import { scopedKey } from "../src/registry/collection-key.js"
 
 const sid = (value: string) => SyncId.make(value)
+const version = SchemaVersion.make(1)
 const modelId = (value: string) => ModelId.make(value)
 const Webhook = ModelName.make("Webhook")
 const Setting = ModelName.make("Setting")
@@ -62,8 +64,8 @@ const logged = (syncId: string): LoggedEvent => ({
   data: Option.some({ id: `w-${syncId}`, orgId: "org-1" }),
 })
 
-const collect = (broker: SyncBrokerShape, count: number) =>
-  broker.subscribe({ modelName: Webhook, scope: Option.some("org-1") }).pipe(
+const collect = (broker: SyncBrokerShape, count: number, schemaVersion: SchemaVersion = version) =>
+  broker.subscribe({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion }).pipe(
     Stream.take(count),
     Stream.runCollect,
     Effect.forkScoped,
@@ -115,7 +117,7 @@ describe("SyncBroker", () => {
           assert.deepStrictEqual(tags(coldSignals), ["Snapshot"])
           assert.strictEqual(coldSignals[0]!._tag === "Snapshot" && coldSignals[0]!.at, sid("0"))
 
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("0") })
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
           const warm = yield* collect(broker, 1)
           const start = yield* Effect.forkScoped(broker.start)
           yield* Queue.offer(events, insert("1"))
@@ -129,10 +131,10 @@ describe("SyncBroker", () => {
     run({
       body: ({ broker, events, log, cursor }) =>
         Effect.gen(function* () {
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("0") })
-          yield* broker.markApplied({ modelName: Setting, scope: Option.none(), through: sid("0") })
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
+          yield* broker.markApplied({ modelName: Setting, scope: Option.none(), schemaVersion: version, through: sid("0") })
           const mine = yield* collect(broker, 2)
-          const other = yield* broker.subscribe({ modelName: Setting, scope: Option.none() }).pipe(
+          const other = yield* broker.subscribe({ modelName: Setting, scope: Option.none(), schemaVersion: version }).pipe(
             Stream.take(1),
             Stream.runCollect,
             Effect.forkScoped,
@@ -156,7 +158,7 @@ describe("SyncBroker", () => {
         Effect.gen(function* () {
           yield* log.append([logged("2")])
           yield* cursor.set(sid("2"))
-          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), at: sid("1") })
+          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("1") })
           const signals = yield* collect(broker, 2)
           const start = yield* Effect.forkScoped(broker.start)
           yield* Queue.offer(events, insert("1"))
@@ -176,7 +178,7 @@ describe("SyncBroker", () => {
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
           yield* log.append([logged("1"), logged("2")])
-          yield* log.setBaseWatermark({ key, at: sid("0") })
+          yield* log.setBaseWatermark({ key, schemaVersion: version, at: sid("0") })
           yield* log.prune({ perModel: 1, total: 10 })
           yield* cursor.set(sid("2"))
           const signals = yield* collect(broker, 1)
@@ -188,7 +190,7 @@ describe("SyncBroker", () => {
     run({
       body: ({ broker, log, cursor }) =>
         Effect.gen(function* () {
-          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), at: sid("2") })
+          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("2") })
           yield* log.setLastResync(sid("3"))
           yield* cursor.set(sid("3"))
           const signals = yield* collect(broker, 1)
@@ -200,7 +202,7 @@ describe("SyncBroker", () => {
     run({
       body: ({ broker, events, log }) =>
         Effect.gen(function* () {
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("0") })
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
           const signals = yield* collect(broker, 2)
           const start = yield* Effect.forkScoped(broker.start)
           yield* Queue.offer(events, resync("1"))
@@ -218,7 +220,7 @@ describe("SyncBroker", () => {
       catchup: CatchupClient.layerMemory({ events: [resync("3")], lastSyncId: sid("5") }),
       body: ({ broker }) =>
         Effect.gen(function* () {
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("0") })
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
           const signals = yield* collect(broker, 1)
           const start = yield* Effect.forkScoped(broker.start)
           const received = yield* Fiber.join(signals)
@@ -239,7 +241,7 @@ describe("SyncBroker", () => {
         catchup: failed,
         body: ({ broker, events }) =>
           Effect.gen(function* () {
-            yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("0") })
+            yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
             const signals = yield* collect(broker, 1)
             yield* Effect.forkScoped(broker.start)
             yield* Queue.offer(events, insert("1"))
@@ -268,10 +270,10 @@ describe("SyncBroker", () => {
       ).pipe(Scope.provide(scope))
       const broker = Context.get(context, SyncBroker)
       const key = scopedKey({ entity: "Webhook", scope: "org-1" })
-      yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("7") })
-      assert.deepStrictEqual(yield* log.getBaseWatermark(key), Option.none())
+      yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("7") })
+      assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.none())
       yield* Scope.close(scope, Exit.void)
-      assert.deepStrictEqual(yield* log.getBaseWatermark(key), Option.some(sid("7")))
+      assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.some(sid("7")))
     }))
 
   it.effect("markApplied batches durable writes while subscribe sees the pending watermark immediately", () =>
@@ -280,14 +282,40 @@ describe("SyncBroker", () => {
       body: ({ broker, log }) =>
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("4") })
-          assert.deepStrictEqual(yield* log.getBaseWatermark(key), Option.none())
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("4") })
+          assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.none())
           const signals = yield* collect(broker, 1)
           yield* TestClock.adjust("100 millis")
-          assert.deepStrictEqual(yield* log.getBaseWatermark(key), Option.some(sid("4")))
-          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("5") })
-          assert.deepStrictEqual(yield* log.getBaseWatermark(key), Option.some(sid("4")))
+          assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.some(sid("4")))
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("5") })
+          assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.some(sid("4")))
           yield* Fiber.interrupt(signals)
+        }),
+    }))
+
+  it.effect("a schema-version change orphans the old watermark: remount snapshots and catchup events are not dropped", () =>
+    run({
+      body: ({ broker, log, cursor, events }) =>
+        Effect.gen(function* () {
+          // A previous app version applied everything through #10 under schema version 1…
+          const oldVersion = SchemaVersion.make(1)
+          const newVersion = SchemaVersion.make(2)
+          yield* log.setBaseWatermark({
+            key: scopedKey({ entity: "Webhook", scope: "org-1" }),
+            schemaVersion: oldVersion,
+            at: sid("10"),
+          })
+          yield* cursor.set(sid("10"))
+
+          // …then the schema changed: the persisted base was dumped, so the remount must
+          // NOT trust the old watermark. It snapshots at the cursor and keeps tailing.
+          const signals = yield* collect(broker, 2, newVersion)
+          const start = yield* Effect.forkScoped(broker.start)
+          yield* Queue.offer(events, insert("11"))
+          const received = yield* Fiber.join(signals)
+          assert.deepStrictEqual(tags(received), ["Snapshot", "Upsert"])
+          assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("10"))
+          yield* Fiber.interrupt(start)
         }),
     }))
 })

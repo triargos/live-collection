@@ -263,8 +263,9 @@ export function defineCollection<T extends object, R = never>(
         const modelName = ModelName.make(entity)
         const drain = Effect.gen(function* () {
           const broker = yield* SyncBroker
-          const applied = (through: SyncId) => broker.markApplied({ modelName, scope: key.scope, through })
-          yield* Stream.runForEach(broker.subscribe({ modelName, scope: key.scope }), (signal) =>
+          const applied = (through: SyncId) =>
+            broker.markApplied({ modelName, scope: key.scope, schemaVersion, through })
+          yield* Stream.runForEach(broker.subscribe({ modelName, scope: key.scope, schemaVersion }), (signal) =>
             SyncSignal.$match(signal, {
               Snapshot: ({ at }) =>
                 meta.listFn(key.scope).pipe(
