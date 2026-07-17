@@ -27,7 +27,7 @@ import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collec
  */
 export interface ModelMeta<T extends object> {
   readonly entity: string
-  readonly schema: Schema.Schema<T, any, never>
+  readonly schema: Schema.Codec<T, any>
   readonly getKey: (entity: T) => ModelId
   readonly scopeOf: Option.Option<(entity: T) => string>
   readonly listFn: (scope: Option.Option<string>) => Effect.Effect<ReadonlyArray<T>>
@@ -92,7 +92,7 @@ interface MutationHandlers<T extends object, R> {
  * transaction drops — instead the whole transaction fails loudly, before any server
  * call. Split the writes into one mutation per transaction.
  */
-export class BatchedMutationsUnsupported extends Schema.TaggedError<BatchedMutationsUnsupported>()(
+export class BatchedMutationsUnsupported extends Schema.TaggedErrorClass<BatchedMutationsUnsupported>()(
   "BatchedMutationsUnsupported",
   { entity: Schema.String, mutationCount: Schema.Number },
 ) {}
@@ -130,7 +130,7 @@ interface GlobalBase<T extends object, R> {
    * schema change also changes the derived persisted-schema version, which dumps and
    * rebuilds the local table on next start.
    */
-  readonly schema: Schema.Schema<T, any, never>
+  readonly schema: Schema.Codec<T, any>
   /** Extracts the entity's primary key. */
   readonly getKey: (entity: T) => ModelId
   /** Fetches the current server truth — run on cold starts and resyncs to (re)build the local base. */
@@ -150,7 +150,7 @@ interface ScopedBase<T extends object, R> {
    * schema change also changes the derived persisted-schema version, which dumps and
    * rebuilds the local table on next start.
    */
-  readonly schema: Schema.Schema<T, any, never>
+  readonly schema: Schema.Codec<T, any>
   /** Extracts the entity's primary key. */
   readonly getKey: (entity: T) => ModelId
   /**
@@ -269,10 +269,10 @@ export function defineCollection<T extends object, R = never>(
               Snapshot: ({ at }) =>
                 meta.listFn(key.scope).pipe(
                   Effect.flatMap((rows) => collection.utils.replaceSynced(rows)),
-                  Effect.zipRight(applied(at)),
+                  Effect.andThen(applied(at)),
                 ),
               Upsert: ({ syncId, data }) =>
-                Schema.decodeUnknown(schema)(data).pipe(
+                Schema.decodeUnknownEffect(schema)(data).pipe(
                   Effect.flatMap((row) => {
                     const outOfScope = Option.match(meta.scopeOf, {
                       onNone: () => false,
@@ -284,22 +284,22 @@ export function defineCollection<T extends object, R = never>(
                     })
                     return outOfScope ? Effect.void : collection.utils.writeSynced(row)
                   }),
-                  Effect.catchTag("ParseError", (error) =>
+                  Effect.catchTag("SchemaError", (error) =>
                     Effect.logWarning(
                       `[defineCollection] skipping undecodable ${entity} event #${syncId}: ${error.message}`,
                     ),
                   ),
-                  Effect.zipRight(applied(syncId)),
+                  Effect.andThen(applied(syncId)),
                 ),
               Delete: ({ syncId, modelId }) =>
-                collection.utils.deleteSynced(modelId).pipe(Effect.zipRight(applied(syncId))),
+                collection.utils.deleteSynced(modelId).pipe(Effect.andThen(applied(syncId))),
             }),
           )
         })
         return Effect.sync(() => runtime.forkDrain(drain)).pipe(
           Effect.flatMap((fiber) =>
             Effect.addFinalizer(() =>
-              Fiber.interrupt(fiber).pipe(Effect.zipRight(Effect.promise(() => collection.cleanup()))),
+              Fiber.interrupt(fiber).pipe(Effect.andThen(Effect.promise(() => collection.cleanup()))),
             ),
           ),
         )
@@ -314,13 +314,15 @@ export function defineCollection<T extends object, R = never>(
   // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
   // snapshot and cause structure are preserved.
   const provideServices = <A>(eff: Effect.Effect<A, never, R>): Effect.Effect<A> =>
-    services ? eff.pipe(Effect.provide(services)) : (eff as Effect.Effect<A>)
+    services
+      ? services.contextEffect.pipe(Effect.flatMap((context) => eff.pipe(Effect.provide(context))))
+      : (eff as Effect.Effect<A>)
 
   const meta: ModelMeta<T> = {
     entity,
     schema,
     getKey,
-    scopeOf: Option.fromNullable(scopeOf),
+    scopeOf: Option.fromNullishOr(scopeOf),
     listFn:
       scopeOf === undefined
         ? () => provideServices((config as GlobalBase<T, R>).listFn)

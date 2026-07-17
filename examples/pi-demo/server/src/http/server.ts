@@ -1,12 +1,9 @@
 import { createServer } from "node:http"
 import path from "node:path"
-import {
-  FileSystem,
-  HttpLayerRouter,
-  HttpServerResponse,
-} from "@effect/platform"
-import { NodeContext, NodeHttpServer } from "@effect/platform-node"
-import { Config, Effect, Layer } from "effect"
+import { Config, Effect, FileSystem, Layer } from "effect"
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { DemoApi } from "@pi-demo/shared"
 import { ProjectRepo } from "../repo/project-repo.js"
 import { TodoRepo } from "../repo/todo-repo.js"
@@ -30,12 +27,12 @@ export const BackendServices = Layer.merge(
 )
 
 const ApiHandlers = Layer.mergeAll(ProjectsApiLive, TodosApiLive, SyncApiLive)
-const ApiRoute = HttpLayerRouter.addHttpApi(DemoApi).pipe(
+const ApiRoute = HttpApiBuilder.layer(DemoApi).pipe(
   Layer.provide(ApiHandlers),
   Layer.provide(SessionAuthLive),
 )
 
-const StaticRoute = Layer.unwrapEffect(
+const StaticRoute = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const configured = yield* Config.string("STATIC_DIR").pipe(
@@ -48,7 +45,7 @@ const StaticRoute = Layer.unwrapEffect(
     }
 
     const indexPath = path.join(staticDir, "index.html")
-    return HttpLayerRouter.add("GET", "*", (request) =>
+    return HttpRouter.add("GET", "*", (request) =>
       Effect.gen(function* () {
         const pathname = new URL(request.url, "http://localhost").pathname
         if (pathname === "/api" || pathname.startsWith("/api/")) {
@@ -70,9 +67,9 @@ const StaticRoute = Layer.unwrapEffect(
 const Routes = Layer.mergeAll(ApiRoute, SseRoute, StaticRoute)
 
 const serve = (config: { readonly port: number }) =>
-  HttpLayerRouter.serve(Routes).pipe(
+  HttpRouter.serve(Routes).pipe(
     Layer.provide(NodeHttpServer.layer(createServer, { port: config.port })),
-    Layer.provide(NodeContext.layer),
+    Layer.provide(NodeServices.layer),
   )
 
 /** Unseeded server that also exposes its service graph, so tests drive real seams. */

@@ -2,18 +2,18 @@ import { Order, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { compareSyncId, SyncId } from "../src/ids.js"
 
-const decodeSyncId = Schema.decodeUnknownEither(SyncId)
+const decodeSyncId = Schema.decodeUnknownResult(SyncId)
 
 describe("SyncId", () => {
   it("accepts canonical decimal strings", () => {
     for (const raw of ["0", "1", "42", "9007199254740993000000"]) {
-      assert.isTrue(decodeSyncId(raw)._tag === "Right", `expected ${raw} to decode`)
+      assert.isTrue(decodeSyncId(raw)._tag === "Success", `expected ${raw} to decode`)
     }
   })
 
   it("rejects leading zeros, signs, and non-digits", () => {
     for (const raw of ["00", "01", "-1", "+1", "1.0", "", "12a", " 12"]) {
-      assert.strictEqual(decodeSyncId(raw)._tag, "Left", `expected ${raw} to be rejected`)
+      assert.strictEqual(decodeSyncId(raw)._tag, "Failure", `expected ${raw} to be rejected`)
     }
   })
 })

@@ -15,9 +15,9 @@ export interface LiveRuntime {
   readonly registry: CollectionRegistryShape
   readonly persistence: PersistedCollectionPersistence
   /** Fork the broker ingest loop. Last call wins. */
-  readonly forkSync: () => Fiber.RuntimeFiber<void>
+  readonly forkSync: () => Fiber.Fiber<void>
   /** Internal collection-side drain executor. */
-  readonly forkDrain: (drain: Effect.Effect<void, never, SyncBroker>) => Fiber.RuntimeFiber<void>
+  readonly forkDrain: (drain: Effect.Effect<void, never, SyncBroker>) => Fiber.Fiber<void>
   readonly dispose: () => void
 }
 
@@ -27,18 +27,18 @@ export const makeLiveRuntime = (config: {
   readonly broker?: SyncBrokerOptions
 }): LiveRuntime => {
   const scope = Effect.runSync(Scope.make())
-  const registry = Effect.runSync(Scope.extend(makeRegistry, scope))
+  const registry = Effect.runSync(Scope.provide(makeRegistry, scope))
   const runtime = ManagedRuntime.make(SyncBroker.layer(config.broker).pipe(Layer.provide(config.sync)))
-  let syncFiber: Fiber.RuntimeFiber<void> | undefined
+  let syncFiber: Fiber.Fiber<void> | undefined
 
   return {
     registry,
     persistence: config.persistence,
     forkSync: () => {
-      if (syncFiber !== undefined && syncFiber.unsafePoll() === null) {
+      if (syncFiber !== undefined && syncFiber.pollUnsafe() === undefined) {
         Effect.runFork(
           Effect.logWarning("[liveRuntime] forkSync while sync is already running — interrupting the previous fiber").pipe(
-            Effect.zipRight(Fiber.interrupt(syncFiber)),
+            Effect.andThen(Fiber.interrupt(syncFiber)),
           ),
         )
       }

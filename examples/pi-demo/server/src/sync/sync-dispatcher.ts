@@ -15,7 +15,7 @@ const make: Effect.Effect<SyncDispatcherShape, never, SyncEventStore | SyncEvent
       dispatch: Effect.fn("SyncDispatcher.dispatch")(function* (pending) {
         const persisted = yield* store.append(pending)
         yield* bus.publish(persisted).pipe(
-          Effect.catchAll((cause) =>
+          Effect.catch((cause) =>
             Effect.logWarning("Sync bus publish failed", cause),
           ),
         )
@@ -24,10 +24,7 @@ const make: Effect.Effect<SyncDispatcherShape, never, SyncEventStore | SyncEvent
     }
   })
 
-export class SyncDispatcher extends Context.Tag("pi-demo/SyncDispatcher")<
-  SyncDispatcher,
-  SyncDispatcherShape
->() {
+export class SyncDispatcher extends Context.Service<SyncDispatcher, SyncDispatcherShape>()("pi-demo/SyncDispatcher") {
   static readonly layer: Layer.Layer<SyncDispatcher, never, SyncEventStore | SyncEventBus> =
     Layer.effect(SyncDispatcher, make)
 }

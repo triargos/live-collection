@@ -1,9 +1,9 @@
-import { Context, Effect, Layer, PubSub, type Queue, type Scope } from "effect"
+import { Context, Effect, Layer, PubSub, type Scope } from "effect"
 import type { SyncEvent } from "@triargos/live-collection-protocol"
 
 export interface SyncEventBusShape {
   readonly publish: (event: SyncEvent) => Effect.Effect<void>
-  readonly subscribe: Effect.Effect<Queue.Dequeue<SyncEvent>, never, Scope.Scope>
+  readonly subscribe: Effect.Effect<PubSub.Subscription<SyncEvent>, never, Scope.Scope>
 }
 
 const make: Effect.Effect<SyncEventBusShape> = Effect.gen(function* () {
@@ -14,9 +14,6 @@ const make: Effect.Effect<SyncEventBusShape> = Effect.gen(function* () {
   }
 })
 
-export class SyncEventBus extends Context.Tag("pi-demo/SyncEventBus")<
-  SyncEventBus,
-  SyncEventBusShape
->() {
+export class SyncEventBus extends Context.Service<SyncEventBus, SyncEventBusShape>()("pi-demo/SyncEventBus") {
   static readonly layer: Layer.Layer<SyncEventBus> = Layer.effect(SyncEventBus, make)
 }

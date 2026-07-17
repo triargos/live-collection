@@ -11,14 +11,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@effect/platform": "^0.96.1",
-    "@effect/platform-node": "^0.107.0",
+    "@effect/platform-node": "^4.0.0-beta.98",
     "@pi-demo/shared": "workspace:*",
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^3.21.2"
+    "effect": "^4.0.0-beta.98"
   },
   "devDependencies": {
-    "@effect/vitest": "^0.29.0",
+    "@effect/vitest": "^4.0.0-beta.98",
     "@triargos/live-collection": "workspace:*",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.0",

@@ -4,7 +4,7 @@
 library and *your* backend. It owns the *shapes* that cross the wire — sync-event schemas, the
 sync-group routing grammar, the squasher, resync targets, branded ids, the model-registry types,
 and the `/catchup` request/response schemas — and **nothing about transport**. It depends only on
-`effect` (no `@effect/platform`, no I/O). The backend owns the HTTP surface (routes, methods,
+`effect` (no HTTP/platform dependency, no I/O). The backend owns the HTTP surface (routes, methods,
 status codes, errors, auth) and wires these schemas into it; the frontend decodes the same schemas
 at its read-path boundary. Both ends run the **same squasher** code.
 
@@ -195,7 +195,7 @@ export const ResyncAll   = Schema.TaggedStruct("All",   {})                   //
 export const ResyncGroup = Schema.TaggedStruct("Group", { group: SyncGroup }) // reset one sync group
 export const ResyncModel = Schema.TaggedStruct("Model", { model: ModelName }) // reset one model
 
-export const ResyncTarget = Schema.Union(ResyncAll, ResyncGroup, ResyncModel)
+export const ResyncTarget = Schema.Union([ResyncAll, ResyncGroup, ResyncModel])
 ```
 
 `resync.ts:16-20`. Build one with the out-of-the-box smart constructor, e.g.
@@ -324,13 +324,13 @@ or a mismatched `modelName` is a compile error. The result's keys form the app's
 export const narrowModelName: <N extends string>(
   known: ReadonlyArray<N>,
   raw: ModelName,
-) => Either.Either<N, UnknownModelError>
+) => Result.Result<N, UnknownModelError>
 ```
 
-`model-registry.ts:76`. Returns `Right(name)` with the narrowed literal when the wire name is
-registered, or `Left(UnknownModelError)` when it isn't. The caller **logs a warning and drops the
+`model-registry.ts:76`. Returns `Success(name)` with the narrowed literal when the wire name is
+registered, or `Failure(UnknownModelError)` when it isn't. The caller **logs a warning and drops the
 event** — it never fails the stream — so a client stays forward-compatible with a backend that knows
-more models than it does (healed by catchup/resync). `UnknownModelError` is a `Schema.TaggedError`
+more models than it does (healed by catchup/resync). `UnknownModelError` is a `Schema.TaggedErrorClass`
 carrying `modelName` (the unrecognized name) and `known` (the names this registry knows) —
 `model-registry.ts:62`.
 
@@ -340,8 +340,8 @@ carrying `modelName` (the unrecognized name) and `known` (the names this registr
 
 The protocol ships the catchup **request + response schemas, and nothing else**. It does **not**
 define the route, method, status codes, errors, headers, or auth — the implementing backend owns all
-of that and wires these schemas into its own router. The protocol is `effect`-only;
-`@effect/platform` is **not** a dependency here. `/sync` (SSE) is likewise a backend detail and absent
+of that and wires these schemas into its own router. The protocol depends only on `effect` and has
+no HTTP/platform dependency. `/sync` (SSE) is likewise a backend detail and absent
 from the contract.
 
 ```typescript
@@ -361,7 +361,7 @@ visible since `from`. This keeps ACL authority on the server and the request tri
 
 On the client side, `CatchupClient` (in `live-collection`) decodes the body against `CatchupResponse`
 at the boundary — `packages/live-collection/src/client/catchup-client.ts:34` — and surfaces a modeled
-`CatchupFailed` (a `Schema.TaggedError`, `catchup-client.ts:11`) on a non-2xx / decode failure, which
+`CatchupFailed` (a `Schema.TaggedErrorClass`, `catchup-client.ts:11`) on a non-2xx / decode failure, which
 the sync loop logs and recovers from by tailing anyway. See [`read-path.md`](./read-path.md).
 
 ---
@@ -385,8 +385,8 @@ const GROUP = SyncGroup.make("playground")   // :67
 const MODEL = ModelName.make("Webhook")      // :68
 
 // Boundary codecs — the log and BroadcastChannel are the wire, so decode against the schema (:78-82):
-const decodeEnvelope = Schema.decode(Schema.parseJson(HydratedSyncEventEnvelope))
-const encodeEnvelope = Schema.encode(Schema.parseJson(HydratedSyncEventEnvelope))
+const decodeEnvelope = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
+const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
 
 // An Insert envelope carries typed data; a Delete carries none (structural, :84-101):
 const insertEnvelope = (syncId: SyncId, w: Webhook): HydratedSyncEventEnvelope => ({
@@ -400,9 +400,9 @@ const deleteEnvelope = (syncId: SyncId, id: ModelId): HydratedSyncEventEnvelope 
 
 // A cross-tab message is decoded at the boundary; a bad message is logged and dropped, never fatal (:238-248):
 channel.onmessage = (event) => {
-  const decoded = Effect.runSync(Effect.either(decodeEnvelope(String(event.data))))
-  if (decoded._tag === "Left") { /* drop undecodable message */ return }
-  const env = decoded.right
+  const decoded = Effect.runSync(Effect.result(decodeEnvelope(String(event.data))))
+  if (decoded._tag === "Failure") { /* drop undecodable message */ return }
+  const env = decoded.success
   // env is now a typed HydratedSyncEventEnvelope — discriminate on env._tag
 }
 ```

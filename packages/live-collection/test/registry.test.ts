@@ -14,7 +14,7 @@ const tracked = (name: string, log: Array<string>) => {
 }
 
 describe("CollectionRegistry", () => {
-  it.scoped("getOrCreate builds once and returns the canonical instance", () =>
+  it.effect("getOrCreate builds once and returns the canonical instance", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry
       const t = tracked("user", [])
@@ -25,7 +25,7 @@ describe("CollectionRegistry", () => {
       assert.strictEqual(t.creations(), 1)
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
-  it.scoped("dispose tears down one collection exactly once and leaves siblings alive", () =>
+  it.effect("dispose tears down one collection exactly once and leaves siblings alive", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry
       const log: Array<string> = []
@@ -40,7 +40,7 @@ describe("CollectionRegistry", () => {
       assert.deepStrictEqual(log, ["a", "b"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
-  it.scoped("disposeScope tears down that scope and leaves globals and other scopes", () =>
+  it.effect("disposeScope tears down that scope and leaves globals and other scopes", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry
       const log: Array<string> = []
@@ -54,7 +54,7 @@ describe("CollectionRegistry", () => {
       assert.deepStrictEqual([...log].sort(), ["m1", "user", "wh1", "wh2"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
-  it.scoped("disposeAllScoped tears down every scoped collection and leaves globals", () =>
+  it.effect("disposeAllScoped tears down every scoped collection and leaves globals", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry
       const log: Array<string> = []
@@ -67,7 +67,7 @@ describe("CollectionRegistry", () => {
       assert.deepStrictEqual([...log].sort(), ["m2", "user", "wh1"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
-  it.scoped("disposeAll tears down every collection, globals included", () =>
+  it.effect("disposeAll tears down every collection, globals included", () =>
     Effect.gen(function* () {
       const registry = yield* CollectionRegistry
       const log: Array<string> = []
@@ -81,7 +81,7 @@ describe("CollectionRegistry", () => {
     Effect.gen(function* () {
       const log: Array<string> = []
       const scope = yield* Scope.make()
-      const context = yield* Layer.build(CollectionRegistry.layer).pipe(Scope.extend(scope))
+      const context = yield* Layer.build(CollectionRegistry.layer).pipe(Scope.provide(scope))
       const registry = Context.get(context, CollectionRegistry)
       yield* registry.getOrCreate({ key: globalKey("user"), make: tracked("user", log).make })
       yield* registry.getOrCreate({ key: scopedKey({ entity: "webhook", scope: "org-1" }), make: tracked("wh1", log).make })

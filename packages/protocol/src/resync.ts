@@ -25,5 +25,5 @@ export const ResyncModel = Schema.TaggedStruct("Model", { model: ModelName })
  * const target: ResyncTarget = ResyncGroup.make({ group: deriveGroup(["organization", orgId]) })
  * ```
  */
-export const ResyncTarget = Schema.Union(ResyncAll, ResyncGroup, ResyncModel)
+export const ResyncTarget = Schema.Union([ResyncAll, ResyncGroup, ResyncModel])
 export type ResyncTarget = typeof ResyncTarget.Type

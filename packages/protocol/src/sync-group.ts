@@ -9,11 +9,13 @@ import type { NonEmptyReadonlyArray } from "effect/Array"
  * wildcards.
  */
 export const SyncGroup = Schema.NonEmptyString.pipe(
-  Schema.filter(
-    (s) =>
-      s.split(":").every((segment) => segment.length > 0) ||
-      "every ':'-delimited segment must be non-empty",
-    { identifier: "SyncGroup" }
+  Schema.check(
+    Schema.makeFilter(
+      (s) =>
+        s.split(":").every((segment) => segment.length > 0) ||
+        "every ':'-delimited segment must be non-empty",
+      { identifier: "SyncGroup" }
+    )
   ),
   Schema.brand("SyncGroup")
 )

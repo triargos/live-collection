@@ -1,4 +1,4 @@
-import type { HttpClient } from "@effect/platform"
+import type { HttpClient } from "effect/unstable/http"
 import {
   CatchupClient,
   EventLogStore,

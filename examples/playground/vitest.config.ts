@@ -8,6 +8,7 @@ export default defineConfig({
   },
   test: {
     include: ["test/**/*.browser.test.ts"],
+    setupFiles: ["./test/setup.ts"],
     browser: {
       enabled: true,
       provider: "playwright",

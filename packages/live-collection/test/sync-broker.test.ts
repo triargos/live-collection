@@ -1,4 +1,5 @@
-import { Chunk, Context, Effect, Exit, Fiber, Layer, Option, Queue, Ref, Scope, Stream, TestClock } from "effect"
+import { Context, Effect, Exit, Fiber, Layer, Option, Queue, Ref, Scope, Stream } from "effect"
+import { TestClock } from "effect/testing"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -65,7 +66,6 @@ const collect = (broker: SyncBrokerShape, count: number) =>
   broker.subscribe({ modelName: Webhook, scope: Option.some("org-1") }).pipe(
     Stream.take(count),
     Stream.runCollect,
-    Effect.map(Chunk.toReadonlyArray),
     Effect.forkScoped,
   )
 
@@ -102,7 +102,7 @@ const tags = (signals: ReadonlyArray<SyncSignal>) => signals.map((signal) => sig
 
 const waitUntil = (effect: Effect.Effect<boolean>): Effect.Effect<void> =>
   effect.pipe(
-    Effect.flatMap((done) => (done ? Effect.void : Effect.yieldNow().pipe(Effect.zipRight(waitUntil(effect))))),
+    Effect.flatMap((done) => (done ? Effect.void : Effect.yieldNow.pipe(Effect.andThen(waitUntil(effect))))),
   )
 
 describe("SyncBroker", () => {
@@ -142,7 +142,7 @@ describe("SyncBroker", () => {
           yield* Queue.offer(events, del("2", "w-1"))
           yield* Queue.offer(events, insert("3", Setting, "s-1"))
           assert.deepStrictEqual(tags(yield* Fiber.join(mine)), ["Upsert", "Delete"])
-          assert.deepStrictEqual(tags(Chunk.toReadonlyArray(yield* Fiber.join(other))), ["Upsert"])
+          assert.deepStrictEqual(tags(yield* Fiber.join(other)), ["Upsert"])
           assert.deepStrictEqual((yield* log.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("1"), sid("2")])
           assert.deepStrictEqual((yield* log.read({ modelName: Setting, since: sid("0") })).map((row) => row.syncId), [sid("3")])
           yield* waitUntil(cursor.get.pipe(Effect.map(Option.contains(sid("3")))))
@@ -265,7 +265,7 @@ describe("SyncBroker", () => {
       const scope = yield* Scope.make()
       const context = yield* Layer.build(
         SyncBroker.layer({ watermarkFlushEvery: "1 hour" }).pipe(Layer.provide(sync)),
-      ).pipe(Scope.extend(scope))
+      ).pipe(Scope.provide(scope))
       const broker = Context.get(context, SyncBroker)
       const key = scopedKey({ entity: "Webhook", scope: "org-1" })
       yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), through: sid("7") })

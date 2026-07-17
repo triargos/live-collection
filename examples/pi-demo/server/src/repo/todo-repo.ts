@@ -27,7 +27,7 @@ const makeMemory: Effect.Effect<TodoRepoShape> = Effect.gen(function* () {
       Ref.get(rows).pipe(
         Effect.map((map) => Array.from(map.values()).filter((row) => row.sessionId === session)),
       ),
-    find: (id) => Ref.get(rows).pipe(Effect.map((map) => Option.fromNullable(map.get(id)))),
+    find: (id) => Ref.get(rows).pipe(Effect.map((map) => Option.fromNullishOr(map.get(id)))),
     upsert: (row) =>
       Ref.modify(rows, (map) => {
         const kind = map.has(row.id) ? "Update" as const : "Insert" as const
@@ -63,6 +63,6 @@ const makeMemory: Effect.Effect<TodoRepoShape> = Effect.gen(function* () {
   }
 })
 
-export class TodoRepo extends Context.Tag("pi-demo/TodoRepo")<TodoRepo, TodoRepoShape>() {
+export class TodoRepo extends Context.Service<TodoRepo, TodoRepoShape>()("pi-demo/TodoRepo") {
   static readonly layerMemory: Layer.Layer<TodoRepo> = Layer.effect(TodoRepo, makeMemory)
 }
