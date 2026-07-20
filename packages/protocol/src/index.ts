@@ -3,7 +3,7 @@
  * live-collection client and its backend.
  *
  * Pure and I/O-free (depends only on `effect`): the sync event schemas, the
- * sync-group routing grammar, the squasher, resync targets, branded ids, the model
+ * sync-group routing keys, the squasher, resync targets, branded ids, the model
  * registry and its interface types, and the catchup request/response schemas.
  *
  * It defines the *shapes* that cross the wire, not the transport: the backend owns

@@ -29,8 +29,8 @@ const fakeRuntime = () => {
       }),
     dispose: () => Effect.void,
     disposeScope: () => Effect.void,
-    disposeAllScoped: () => Effect.void,
-    disposeAll: () => Effect.void,
+    disposeAllScoped: Effect.void,
+    disposeAll: Effect.void,
   }
   return { runtime: { registry } as unknown as LiveRuntime, keys }
 }

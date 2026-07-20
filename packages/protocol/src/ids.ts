@@ -60,7 +60,3 @@ export type ModelName = typeof ModelName.Type
 /** The id of a single entity within a model — any non-empty string, typically a UUID. */
 export const ModelId = Schema.NonEmptyString.pipe(Schema.brand("ModelId"))
 export type ModelId = typeof ModelId.Type
-
-/** The authenticated user a sync session belongs to. */
-export const UserId = Schema.NonEmptyString.pipe(Schema.brand("UserId"))
-export type UserId = typeof UserId.Type

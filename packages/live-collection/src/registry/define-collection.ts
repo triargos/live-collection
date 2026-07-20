@@ -1,4 +1,4 @@
-import { Effect, Fiber, type ManagedRuntime, Option, Schema, type Scope, Stream } from "effect"
+import { Effect, Fiber, type ManagedRuntime, Option, Schema, type Scope } from "effect"
 import {
   createCollection,
   type DeleteMutationFnParams,
@@ -6,13 +6,13 @@ import {
   type UpdateMutationFnParams,
 } from "@tanstack/db"
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core"
-import { type ModelId, ModelName, type SyncId } from "@triargos/live-collection-protocol"
-import { SyncBroker, SyncSignal } from "../client/sync-broker.js"
+import type { ModelId } from "@triargos/live-collection-protocol"
 import type { SyncWrite } from "../dispatch/sync-write.js"
 import type { LiveCollection } from "../persistence/live-collection.js"
 import { liveCollectionOptions } from "../persistence/live-collection-options.js"
 import { deriveSchemaVersion } from "../persistence/schema-version.js"
 import type { LiveRuntime } from "../runtime/live-runtime.js"
+import { drainCollection } from "./collection-drain.js"
 import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collection-key.js"
 
 /**
@@ -94,7 +94,7 @@ interface MutationHandlers<T extends object, R> {
  */
 export class BatchedMutationsUnsupported extends Schema.TaggedErrorClass<BatchedMutationsUnsupported>()(
   "BatchedMutationsUnsupported",
-  { entity: Schema.String, mutationCount: Schema.Number },
+  { entity: Schema.String, mutationCount: Schema.Finite },
 ) {}
 
 /**
@@ -116,7 +116,7 @@ type ServicesOf<R> = [R] extends [never]
       readonly services: ManagedRuntime.ManagedRuntime<R, never>
     }
 
-interface GlobalBase<T extends object, R> {
+interface ConfigBase<T extends object> {
   /** The runtime from `makeLiveRuntime` — the registry and persistence this collection mounts against. */
   readonly runtime: LiveRuntime
   /**
@@ -133,26 +133,12 @@ interface GlobalBase<T extends object, R> {
   readonly schema: Schema.Codec<T, any>
   /** Extracts the entity's primary key. */
   readonly getKey: (entity: T) => ModelId
+}
+interface GlobalBase<T extends object, R> extends ConfigBase<T> {
   /** Fetches the current server truth — run on cold starts and resyncs to (re)build the local base. */
   readonly listFn: Effect.Effect<ReadonlyArray<T>, never, R>
 }
-interface ScopedBase<T extends object, R> {
-  /** The runtime from `makeLiveRuntime` — the registry and persistence this collection mounts against. */
-  readonly runtime: LiveRuntime
-  /**
-   * The model's wire name, e.g. `"Webhook"` — must match what the backend emits. Written
-   * once, it serves as the registry key, the persisted table id, and the event-routing
-   * name, so they can never drift.
-   */
-  readonly entity: string
-  /**
-   * Decodes the model's entities at the boundary (live events, catchup, replay). A
-   * schema change also changes the derived persisted-schema version, which dumps and
-   * rebuilds the local table on next start.
-   */
-  readonly schema: Schema.Codec<T, any>
-  /** Extracts the entity's primary key. */
-  readonly getKey: (entity: T) => ModelId
+interface ScopedBase<T extends object, R> extends ConfigBase<T> {
   /**
    * Reads the scope off an entity (e.g. `(w) => w.orgId`). Its presence makes the
    * collection **scoped** — one instance per scope, mounted with `handle(scope)` — and
@@ -219,6 +205,33 @@ export function defineCollection<T extends object, R = never>(
   // the casts below are that contract, stated once per seam.
   const services = config.services as ManagedRuntime.ManagedRuntime<R, never> | undefined
 
+  // Bridge listFn to `R = never` for the drain. The drain is itself an Effect fiber, so this stays in
+  // Effect-land: `Effect.provide(services)` runs the listFn with the services runtime (the same
+  // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
+  // snapshot and cause structure are preserved.
+  const provideServices = <A>(eff: Effect.Effect<A, never, R>): Effect.Effect<A> =>
+    services
+      ? services.contextEffect.pipe(Effect.flatMap((context) => eff.pipe(Effect.provide(context))))
+      : (eff as Effect.Effect<A>)
+
+  // A scoped collection is always mounted with Some(scope); the drain-facing listFn takes
+  // Option<string> only because ModelMeta is the uniform shape — the None branch asserts
+  // that erased invariant.
+  const meta: ModelMeta<T> = {
+    entity,
+    schema,
+    getKey,
+    scopeOf: Option.fromNullishOr(scopeOf),
+    listFn:
+      scopeOf === undefined
+        ? () => provideServices((config as GlobalBase<T, R>).listFn)
+        : (scope) =>
+            Option.match(scope, {
+              onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
+              onSome: (s) => provideServices((config as ScopedBase<T, R>).listFn(s)),
+            }),
+  }
+
   // Bridge an Effect handler (with R) to the native TanStack handler (a Promise): run the handler, then
   // reconcile its result into the synced baseline — both before the Promise resolves, so the synced row
   // is in place when TanStack drops the completed optimistic tx. `flatMap` short-circuits on failure ⇒
@@ -239,9 +252,11 @@ export function defineCollection<T extends object, R = never>(
         : Effect.runPromise(composed as Effect.Effect<void, unknown>)
     }
 
-  // Build the native collection. Sync (`createCollection`), with `persistence` a closed-over VALUE
-  // (not a context dep) and only `Scope` required (for `cleanup`), which the registry discharges —
-  // so the mount path is `Effect.runSync`-able with no async boundary.
+  // Build one collection instance. Sync (`createCollection`), with `persistence` a closed-over VALUE
+  // (not a context dep) and only `Scope` required (for the finalizer), which the registry discharges —
+  // so the mount path is `Effect.runSync`-able with no async boundary. The drain forks alongside the
+  // instance; its finalizer interrupts the drain BEFORE `cleanup()` so no signal lands on a
+  // cleaned-up collection.
   const makeFor = (key: CollectionKey<LiveCollection<T>>): Effect.Effect<LiveCollection<T>, never, Scope.Scope> =>
     Effect.sync(
       () =>
@@ -260,43 +275,7 @@ export function defineCollection<T extends object, R = never>(
         ) satisfies LiveCollection<T>,
     ).pipe(
       Effect.tap((collection) => {
-        const modelName = ModelName.make(entity)
-        const drain = Effect.gen(function* () {
-          const broker = yield* SyncBroker
-          const applied = (through: SyncId) =>
-            broker.markApplied({ modelName, scope: key.scope, schemaVersion, through })
-          yield* Stream.runForEach(broker.subscribe({ modelName, scope: key.scope, schemaVersion }), (signal) =>
-            SyncSignal.$match(signal, {
-              Snapshot: ({ at }) =>
-                meta.listFn(key.scope).pipe(
-                  Effect.flatMap((rows) => collection.utils.replaceSynced(rows)),
-                  Effect.andThen(applied(at)),
-                ),
-              Upsert: ({ syncId, data }) =>
-                Schema.decodeUnknownEffect(schema)(data).pipe(
-                  Effect.flatMap((row) => {
-                    const outOfScope = Option.match(meta.scopeOf, {
-                      onNone: () => false,
-                      onSome: (getScope) =>
-                        Option.match(key.scope, {
-                          onNone: () => true,
-                          onSome: (scope) => getScope(row) !== scope,
-                        }),
-                    })
-                    return outOfScope ? Effect.void : collection.utils.writeSynced(row)
-                  }),
-                  Effect.catchTag("SchemaError", (error) =>
-                    Effect.logWarning(
-                      `[defineCollection] skipping undecodable ${entity} event #${syncId}: ${error.message}`,
-                    ),
-                  ),
-                  Effect.andThen(applied(syncId)),
-                ),
-              Delete: ({ syncId, modelId }) =>
-                collection.utils.deleteSynced(modelId).pipe(Effect.andThen(applied(syncId))),
-            }),
-          )
-        })
+        const drain = drainCollection({ meta, collection, scope: key.scope, schemaVersion })
         return Effect.sync(() => runtime.forkDrain(drain)).pipe(
           Effect.flatMap((fiber) =>
             Effect.addFinalizer(() =>
@@ -309,30 +288,6 @@ export function defineCollection<T extends object, R = never>(
 
   const mount = (key: CollectionKey<LiveCollection<T>>): LiveCollection<T> =>
     Effect.runSync(runtime.registry.getOrCreate({ key, make: makeFor(key) }))
-
-  // Bridge listFn to `R = never` for the drain. The drain is itself an Effect fiber, so this stays in
-  // Effect-land: `Effect.provide(services)` runs the listFn with the services runtime (the same
-  // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
-  // snapshot and cause structure are preserved.
-  const provideServices = <A>(eff: Effect.Effect<A, never, R>): Effect.Effect<A> =>
-    services
-      ? services.contextEffect.pipe(Effect.flatMap((context) => eff.pipe(Effect.provide(context))))
-      : (eff as Effect.Effect<A>)
-
-  const meta: ModelMeta<T> = {
-    entity,
-    schema,
-    getKey,
-    scopeOf: Option.fromNullishOr(scopeOf),
-    listFn:
-      scopeOf === undefined
-        ? () => provideServices((config as GlobalBase<T, R>).listFn)
-        : (scope) =>
-            Option.match(scope, {
-              onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
-              onSome: (s) => provideServices((config as ScopedBase<T, R>).listFn(s)),
-            }),
-  }
 
   const handle =
     scopeOf === undefined

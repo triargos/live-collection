@@ -3,11 +3,11 @@ import { assert, describe, it } from "@effect/vitest"
 import {
   CatchupClient,
   defineCollection,
-  EventLogStore,
   LastSyncIdStore,
   makeLiveRuntime,
   type ScopedHandle,
   scopedKey,
+  SyncJournal,
   SyncTransport,
 } from "@triargos/live-collection"
 import {
@@ -49,7 +49,7 @@ interface Ctx {
 const run = (body: (context: Ctx) => Effect.Effect<void>): Effect.Effect<void> =>
   Effect.gen(function* () {
     let listCalls = 0
-    const databaseName = `eventlog-${crypto.randomUUID()}`
+    const databaseName = `sync-journal-${crypto.randomUUID()}`
     const database = yield* Effect.promise(() =>
       openBrowserWASQLiteOPFSDatabase({ databaseName: `replay-${crypto.randomUUID()}.sqlite` }),
     )
@@ -58,7 +58,7 @@ const run = (body: (context: Ctx) => Effect.Effect<void>): Effect.Effect<void> =
       LastSyncIdStore.layerMemory,
       CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0"), epoch: Option.none() }),
       SyncTransport.layerMemory(queue),
-      EventLogStore.layer({ databaseName }),
+      SyncJournal.layer({ databaseName }),
     )
     const runtime = makeLiveRuntime({
       persistence: createBrowserWASQLitePersistence({ database }),

@@ -6,7 +6,7 @@ import { Context, Duration, Effect, Fiber, Layer, ManagedRuntime } from "effect"
 import {
   CatchupClient,
   defineCollection,
-  EventLogStore,
+  SyncJournal,
   LastSyncIdStore,
   makeLiveRuntime,
   SyncTransport,
@@ -111,8 +111,8 @@ describe("pi-demo client ↔ server", () => {
       const cursorContext = yield* Layer.build(LastSyncIdStore.layerMemory)
       const cursor = Context.get(cursorContext, LastSyncIdStore)
       yield* cursor.set(SyncId.make("1"))
-      const eventLogContext = yield* Layer.build(EventLogStore.layerMemory)
-      const eventLog = Context.get(eventLogContext, EventLogStore)
+      const journalContext = yield* Layer.build(SyncJournal.layerMemory)
+      const journal = Context.get(journalContext, SyncJournal)
 
       const SessionHttpClient = Layer.effect(
         HttpClient.HttpClient,
@@ -123,7 +123,7 @@ describe("pi-demo client ↔ server", () => {
         SyncTransport.layer({ url: `${baseUrl}/api/sync`, keepAlive: "45 seconds" }),
         CatchupClient.layer({ url: `${baseUrl}/api/catchup` }),
         Layer.succeed(LastSyncIdStore, cursor),
-        Layer.succeed(EventLogStore, eventLog),
+        Layer.succeed(SyncJournal, journal),
       ).pipe(Layer.provide(SessionHttpClient))
       const runtime = makeLiveRuntime({
         persistence: makeNodeSqlitePersistence(),

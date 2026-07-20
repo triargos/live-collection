@@ -26,12 +26,12 @@ export * from "./registry/define-collection.js"
 // dispatch/ — the synced-store write path contract
 export * from "./dispatch/sync-write.js"
 
-// client/ — SSE transport, catchup, durable cursor/log, and the subscription broker.
+// client/ — SSE transport, catchup, durable cursor/journal, and the subscription broker.
 // (prune-plan and sync-session are internal policy/plumbing.)
 export * from "./client/last-sync-id-store.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
-export * from "./client/event-log-store.js"
+export * from "./client/sync-journal.js"
 export * from "./client/sync-broker.js"
 
 // runtime/ — the live runtime that owns infra and forks broker ingest

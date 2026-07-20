@@ -13,8 +13,8 @@ function Segment({ label, value, className }: { readonly label: string; readonly
 
 /**
  * The always-on system status strip — a dev-tools-style readout so the live state of the sync engine is
- * visible without opening the inspector: the loop is running, this tab's id, the server's high-water
- * cursor, the shared event-log size, and whether chaos (failure injection) is armed.
+ * visible without opening the inspector: the loop is running, this tab's id, the server's latest
+ * syncId, the shared event-log size, and whether chaos (failure injection) is armed.
  */
 export function StatusBar({ pg }: { readonly pg: Playground }) {
   const [stats, setStats] = useState(() => ({

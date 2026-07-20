@@ -41,7 +41,7 @@ export interface BackendControls {
   readonly setFailureRate: (rate: number) => void
   /** Number of events in the shared (cross-tab) event log. */
   readonly serverLogSize: () => number
-  /** The server's high-water `syncId`. */
+  /** The server's latest `syncId`. */
   readonly lastSyncId: () => string
   /** Broadcast a live `Resync(All)` to **other** tabs (they reload + re-catchup — DEC-T6). */
   readonly broadcastResync: () => void

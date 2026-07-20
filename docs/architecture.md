@@ -11,7 +11,7 @@ One app-wide broker owns:
 - the SSE connection (`SyncTransport`)
 - catchup (`CatchupClient`)
 - the global durable cursor (`LastSyncIdStore`)
-- the durable event log (`EventLogStore`)
+- the durable sync journal (`SyncJournal`)
 - pruning and resync handling
 - an in-memory `PubSub` for active subscribers
 
@@ -80,13 +80,13 @@ runtime.registry.disposeScope(orgId)
 runtime.dispose()
 ```
 
-`sync` is a layer containing `SyncTransport`, `CatchupClient`, `LastSyncIdStore`, and `EventLogStore`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
+`sync` is a layer containing `SyncTransport`, `CatchupClient`, `LastSyncIdStore`, and `SyncJournal`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
 
 React apps call `useLiveSync(runtime)` once near the root. No model array is needed: mounted collections subscribe themselves.
 
 ## Replay and subscription switchover
 
-A subscription first attaches to PubSub so new events begin buffering. It then reads the collection watermark, global cursor, prune floor, last resync, and replay slice. The resulting stream is:
+A subscription first attaches to PubSub so new events begin buffering. It then reads the collection's last-applied syncId, global cursor, prune floor, last resync, and replay slice. The resulting stream is:
 
 ```text
 Snapshot? → durable replay rows → filtered live tail
@@ -94,11 +94,11 @@ Snapshot? → durable replay rows → filtered live tail
 
 The tail drops signals at or below the last emitted `syncId`. This prevents a buffered older duplicate from landing after a newer replay row. Upserts remain idempotent, so catchup/SSE overlap is safe.
 
-Watermarks are updated in memory per applied signal and flushed durably in batches (100 ms by default and on broker scope close). A remount reads the maximum of pending and durable state.
+Last-applied marks are updated in memory per applied signal and flushed durably in batches (100 ms by default and on broker scope close). A remount reads the maximum of pending and durable state.
 
 ## Resync
 
-Live and catchup resync use the same path: record `lastResync`, publish `Snapshot`, and continue ingesting. Active collections refetch in place; unmounted collections snapshot when they next subscribe because their watermark predates `lastResync`.
+Live and catchup resync use the same path: record `lastResync`, publish `Snapshot`, and continue ingesting. Active collections refetch in place; unmounted collections snapshot when they next subscribe because their last-applied syncId predates `lastResync`.
 
 All resync targets are currently treated globally. Target-aware subscriber selection is intentionally deferred.
 

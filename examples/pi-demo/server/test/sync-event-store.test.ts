@@ -7,12 +7,12 @@ import {
   SessionCode,
   sessionGroup,
 } from "@pi-demo/shared"
-import { PendingInsert, SyncId } from "@triargos/live-collection-protocol"
+import { PendingSyncEvent, SyncId } from "@triargos/live-collection-protocol"
 import { SyncEventStore } from "../src/sync/sync-event-store.js"
 
 const session = SessionCode.make("ABC234")
 
-const pending = (id: string) => PendingInsert.make({
+const pending = (id: string) => PendingSyncEvent.cases.Insert.make({
   modelName: PROJECT_MODEL,
   modelId: projectKey({
     id: ProjectId.make(id),

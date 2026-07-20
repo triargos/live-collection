@@ -1,5 +1,5 @@
 import { Context, Duration, Effect, Layer, ManagedRuntime, Option, Queue } from "effect"
-import { CatchupClient, EventLogStore, LastSyncIdStore, SyncTransport } from "@triargos/live-collection"
+import { CatchupClient, LastSyncIdStore, SyncJournal, SyncTransport } from "@triargos/live-collection"
 import {
   type CatchupResponse,
   type HydratedSyncEventEnvelope,
@@ -20,7 +20,7 @@ import type { Webhook } from "../src/live/schema.js"
  */
 export interface FakeBackend {
   readonly services: ManagedRuntime.ManagedRuntime<WebhookApi, never>
-  readonly sync: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore | EventLogStore>
+  readonly sync: Layer.Layer<SyncTransport | CatchupClient | LastSyncIdStore | SyncJournal>
 }
 
 const GROUP = SyncGroup.make("playground")
@@ -99,7 +99,7 @@ export const makeFakeBackend = (config?: {
     LastSyncIdStore.layerMemory,
     catchup,
     SyncTransport.layerMemory(queue),
-    EventLogStore.layerMemory,
+    SyncJournal.layerMemory,
   )
 
   return { services, sync }

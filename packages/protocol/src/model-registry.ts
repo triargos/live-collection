@@ -1,5 +1,5 @@
 import { Effect, Option, Result, Schema } from "effect"
-import { ModelId, ModelName, UserId } from "./ids.js"
+import { ModelId, ModelName } from "./ids.js"
 import { SyncGroup } from "./sync-group.js"
 
 /**
@@ -11,19 +11,21 @@ import { SyncGroup } from "./sync-group.js"
  * registry, and {@link narrowModelName} is the single checkpoint that turns one into
  * the other.
  *
- * `SyncContext`, `ModelDescriptor`, and `GroupsFor` are plain types with no runtime
- * footprint; the backend supplies the implementations.
+ * `ModelDescriptor` is a plain type with no runtime footprint; the backend supplies
+ * the implementations.
  */
-
-/** Who is syncing and which groups they can currently see. */
-export interface SyncContext {
-  readonly userId: UserId
-  readonly syncGroups: ReadonlyArray<SyncGroup>
-}
 
 /**
  * Describes one synced model: how to decode its entities and how to fetch a current
  * snapshot when hydrating an event.
+ *
+ * `syncGroups` is the caller's current visibility capability set. Hydration is the
+ * second, authoritative visibility check: the event-level group filter uses the groups
+ * stamped on the event when it was logged, but access may have changed since — so
+ * `hydrate` must return `Option.none()` for an entity the caller can no longer see,
+ * which the dispatcher emits as a Delete. Auth context beyond the group set (the
+ * caller's principal, sessions, …) travels through `R` as backend-owned services, not
+ * through this signature.
  *
  * @typeParam Name - the model's name as a string literal
  * @typeParam T - the decoded entity type
@@ -34,18 +36,16 @@ export interface ModelDescriptor<Name extends string, T, R> {
   // `any` is the schema's Encoded slot — it accepts a schema with any wire shape that
   // decodes to `T`.
   readonly schema: Schema.Codec<T, any, R, R>
-  readonly hydrate: (id: ModelId, ctx: SyncContext) => Effect.Effect<Option.Option<T>, never, R>
+  readonly hydrate: (
+    id: ModelId,
+    syncGroups: ReadonlyArray<SyncGroup>
+  ) => Effect.Effect<Option.Option<T>, never, R>
   // Optional batch variant, to avoid N+1 fetches when hydrating many ids at once.
   readonly hydrateMany?: (
     ids: ReadonlyArray<ModelId>,
-    ctx: SyncContext
+    syncGroups: ReadonlyArray<SyncGroup>
   ) => Effect.Effect<ReadonlyMap<ModelId, T>, never, R>
 }
-
-/** Resolves the full set of sync groups a user may see. Implemented by the backend. */
-export type GroupsFor = (args: {
-  readonly userId: UserId
-}) => Effect.Effect<ReadonlyArray<SyncGroup>>
 
 /**
  * Defines a model registry, checking that every descriptor's `modelName` equals its

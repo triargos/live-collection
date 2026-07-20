@@ -3,8 +3,8 @@
 Guidance for agents working in this repository.
 
 > `@triargos/live-collection-*` is a reusable, frontend-only Effect + TanStack DB
-> live-sync library. Its hero type is `LiveCollection<T>`. The authoritative system
-> specification is [`live-sync-system.md`](live-sync-system.md); read it before changing
+> live-sync library. Its hero type is `LiveCollection<T>`. Read [`docs/`](docs/)
+> (start with `docs/architecture.md` and `docs/protocol.md`) before changing
 > architecture or protocol behavior. The unpublished pi-demo contains the reference backend.
 
 ## Working rules
@@ -38,7 +38,7 @@ The npm DAG is acyclic: `protocol → live-collection → react`.
 ```text
 packages/
   protocol/         @triargos/live-collection-protocol
-                    Shared contract kit: wire schemas, sync-group grammar, resync targets,
+                    Shared contract kit: wire schemas, sync-group routing keys, resync targets,
                     pure squasher, model-registry types, and catchup schemas. No I/O.
   live-collection/  @triargos/live-collection
                     Registry/scoping, persistence factory, catchup/SSE adapters, broker,
@@ -107,7 +107,7 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 - `narrowModelName` is pure and returns `Result.Result<N, UnknownModelError>`; Effect v4 has no `Either`.
 - Wire event data presence is structural: Insert/Update carry `data`; Delete does not.
 - ISO dates on the wire use `Schema.DateFromString`, not v4's Date-instance-only `Schema.Date`.
-- The `EventLogStore` is the explicit `Option ⇄ null` seam for at-rest rows. Keep `Option` inside service
+- The `SyncJournal` is the explicit `Option ⇄ null` seam for at-rest rows. Keep `Option` inside service
   and domain APIs.
 - Provider/network work stays outside authoritative persistence transactions.
 

@@ -11,7 +11,7 @@ const sync = Layer.mergeAll(
   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
   CatchupClient.layer({ url: "/api/catchup" }),
   LastSyncIdStore.layer,
-  EventLogStore.layer({ databaseName: "app-eventlog" }),
+  SyncJournal.layer({ databaseName: "app-eventlog" }),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
 const runtime = makeLiveRuntime({ persistence, sync })
@@ -39,10 +39,10 @@ No collection list is passed. Collections subscribe themselves when their handle
 For each entity event:
 
 ```text
-append opaque event to EventLogStore
+append opaque event to SyncJournal
 → publish it to active subscriptions
 → advance LastSyncIdStore
-→ occasionally prune the log
+→ occasionally prune the log (squash per entity, drop rows every collection applied, then count caps)
 ```
 
 The broker deliberately does not know model schemas or mounted collections. It logs all models, including models with no active subscriber. That durable history is what makes a later mount replay locally.
@@ -60,7 +60,7 @@ Stream.runForEach(
 
 `subscribe` hides the replay/live switchover. It subscribes to PubSub first, then examines:
 
-- the collection's applied watermark;
+- the collection's last-applied syncId;
 - the global cursor;
 - the model's prune floor;
 - the latest resync marker.
@@ -68,7 +68,7 @@ Stream.runForEach(
 It chooses one of three outcomes:
 
 - **Skip:** the local base is already complete; emit no replay.
-- **Replay:** the log covers the missing range; emit model rows after the watermark.
+- **Replay:** the log covers the missing range; emit model rows after the last-applied syncId.
 - **Snapshot:** no base exists, pruning removed part of the gap, or a resync invalidated the base.
 
 These outcomes all feed one stream:
@@ -89,11 +89,11 @@ The collection owns its write path:
 
 After each signal is fully handled, the drain calls `markApplied({ through: syncId })`. Scope-mismatched and undecodable upserts are still acknowledged because they have been deliberately handled. Decode failure is logged and does not kill the drain.
 
-## Watermarks
+## Last-applied syncIds
 
-A watermark means: “this collection has handled every relevant signal through this sync id.”
+A collection's last-applied syncId means: “this collection has handled every relevant signal through this sync id.”
 
-`markApplied` updates an in-memory monotonic map. The broker flushes pending values to `EventLogStore` about every 100 ms and once more when its scope closes. This avoids a durable write per event. A crash can only cause a small idempotent replay on the next mount.
+`markApplied` updates an in-memory monotonic map. The broker flushes pending values to `SyncJournal` about every 100 ms and once more when its scope closes. This avoids a durable write per event. A crash can only cause a small idempotent replay on the next mount.
 
 ## Deletes and scoping
 
@@ -112,6 +112,6 @@ record lastResync
 → keep tailing
 ```
 
-A catchup response containing resync publishes `Snapshot(at = response.lastSyncId)` and advances the cursor to the response head. Active subscribers refetch in place. Unmounted collections detect that `lastResync` is newer than their watermark and snapshot when remounted.
+A catchup response containing resync publishes `Snapshot(at = response.lastSyncId)` and advances the cursor to the response head. Active subscribers refetch in place. Unmounted collections detect that `lastResync` is newer than their last-applied syncId and snapshot when remounted.
 
 There is no reload hook. Resync target-specific routing is deferred; all current resync arms invalidate all subscribers.

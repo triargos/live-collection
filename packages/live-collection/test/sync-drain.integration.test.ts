@@ -8,7 +8,7 @@ import {
   SyncId,
 } from "@triargos/live-collection-protocol"
 import { CatchupClient } from "../src/client/catchup-client.js"
-import { EventLogStore } from "../src/client/event-log-store.js"
+import { SyncJournal } from "../src/client/sync-journal.js"
 import { LastSyncIdStore } from "../src/client/last-sync-id-store.js"
 import { SyncTransport } from "../src/client/sync-transport.js"
 import { defineCollection } from "../src/registry/define-collection.js"
@@ -52,7 +52,7 @@ const withRuntime = <A>(
       LastSyncIdStore.layerMemory,
       CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
       SyncTransport.layerMemory(events),
-      EventLogStore.layerMemory,
+      SyncJournal.layerMemory,
     )
     const runtime = makeLiveRuntime({ persistence: makeNodeSqlitePersistence(), sync })
     const fiber = runtime.forkSync()

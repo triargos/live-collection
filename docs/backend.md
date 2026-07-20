@@ -1,293 +1,142 @@
-# Implementing a backend for `@triargos/live-collection`
+# The backend contract for `@triargos/live-collection`
 
-This library is **frontend-only**. It ships no server. The authoritative backend lives in *your* app, and this document is the spec of **obligations** that backend must satisfy for the frontend read path (`GET /sync`, `GET /catchup`) and write path to work. It is a contract, not code you can import — except for the one piece you *do* import: [`@triargos/live-collection-protocol`](./protocol.md), the contract kit of schemas, branded ids, the sync-group grammar, the resync targets, and the **squasher**, which both ends rely on bit-for-bit.
+This library is **frontend-only**. It ships no server, and it does not care how yours is built —
+what database, what runtime, what service architecture. This document specifies the only thing the
+library can observe: **the two HTTP surfaces the client calls and the semantic invariants its
+correctness depends on**. Satisfy these and any backend works.
 
-> **What your backend must provide.** An append-only `sync_events` store (the global ordered log), a `SyncEventBus` fan-out seam, a thin dispatcher that appends a row then best-effort publishes it, a permission resolver that maps a user to the sync groups they may currently see, and two HTTP surfaces: `GET /catchup?from=` (one-shot, squashed + hydrated backfill since a cursor) and `GET /sync` (long-lived SSE, live hydrated events). Resolve a caller's groups **server-side from their permissions** on every request — never trust groups the client sends. Hydration is yours (the model registry); the wire shapes and the squash are the protocol kit's.
+The one piece you import is [`@triargos/live-collection-protocol`](./protocol.md) — the schemas to
+decode/encode at your edges, the branded ids, the sync-group grammar, and the squasher. Everything
+else in this document is behavior, not code.
 
-> **Two deliberate contract choices worth calling out:**
-> - **No `clientId` / no echo suppression.** Echo suppression conflicts with TanStack DB's optimistic-mutation reconciliation, which expects the synced store to confirm the client's own writes. There is no `clientId` filter and no `X-Client-Id` header; no `clientId` on events, `SyncContext`, or the wire. Do not implement a `client_id != :clientId` `WHERE` clause.
-> - **Resync targets are structural, not sentinel strings.** A resync is a first-class `Resync` event arm with a `target` — the kit's `ResyncTarget` union: `ResyncAll` / `ResyncGroup({group})` / `ResyncModel({model})` (`packages/protocol/src/resync.ts:16-20`) — not an entity event with a magic `modelName` like `'__all'` or `'__model:Webhook'`.
-
----
-
-## The data model — `sync_events`
-
-One append-only table is the only schema this system adds. It is the global ordered log; there is **no `data` column** — events at rest are reference-only and `data` is attached at read time by hydration.
-
-```sql
-CREATE TABLE sync_events (
-  sync_id      BIGSERIAL PRIMARY KEY,          -- the global cursor / watermark
-  model_name   TEXT      NOT NULL,
-  model_id     TEXT      NOT NULL,
-  action       CHAR(1)   NOT NULL CHECK (action IN ('I','U','D','R')),
-  sync_groups  TEXT[]    NOT NULL,
-  target       JSONB,                          -- only for R: the ResyncTarget
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_sync_events_groups ON sync_events USING GIN (sync_groups);
-CREATE INDEX idx_sync_events_lookup ON sync_events (model_name, model_id, sync_id);
-```
-
-The two indexes cover the two access patterns the read path needs:
-
-- **Query-by-groups** — `sync_groups && :groups`, for catchup backfill (the GIN index).
-- **Query-by-syncId** — `sync_id > :from ORDER BY sync_id`, the cursor scan; plus `(model_name, model_id, sync_id)` for per-entity history.
-
-`sync_id` is your **watermark**: monotonically increasing, but **not contiguous** — `BIGSERIAL` leaves gaps on rollback. Clients order by it and tolerate gaps; never assume `n+1`. Encode it on the wire as the protocol's `SyncId` — a canonical decimal string compared with `compareSyncId`, never lexically or via `Number(...)` (`packages/protocol/src/ids.ts:10-21`).
-
-The `action` column maps to the protocol's tag vocabulary `Insert` / `Update` / `Delete` / `Resync` (`packages/protocol/src/sync-event.ts:36-51`). Mint the branded ids (`SyncId`, `ModelName`, `ModelId`) **only at this boundary** — decoding a DB row is exactly where `unknown` becomes a domain value. Inside the app the rows already carry branded types; never re-mint or cast them downstream.
+For working implementations of this contract, see the
+[reference implementations](#reference-implementations) below — they are typechecked and tested in
+this repository, so prefer reading them over any prose sketch.
 
 ---
 
-## `SyncEventBus` — the fan-out seam
+## `GET {catchup.url}?from=<SyncId>` — one-shot backfill
 
-The bus is the pub/sub primitive: a producer publishes one persisted event, every live `/sync` connection receives it, and each connection filters by its own groups before forwarding. Start with an in-memory Effect `PubSub`; the seam lets you swap in Redis pub/sub or Postgres `LISTEN`/`NOTIFY` for multi-node later without changing call sites.
+What the client does (`CatchupClient.layer({ url })`,
+`packages/live-collection/src/client/catchup-client.ts`): sends `GET {url}?from=<cursor>` and
+decodes the JSON body against the protocol's `CatchupResponse`. A non-2xx response or an
+undecodable body becomes a modeled `CatchupFailed`, which the client logs and **tails the live
+stream anyway** — a transient catchup miss heals on the next reconnect.
 
-Model it as a `Context.Service<Self, Shape>()("Name")` + `interface …Shape` + separate `make` + `.layer`.
+What your handler must return — `CatchupResponse`, i.e. `{ events, lastSyncId, epoch? }`:
 
-```typescript
-import { Context, Effect, Layer, PubSub, Scope } from "effect"
-import type { SyncEvent } from "@triargos/live-collection-protocol"
+- **`events`**: every event since `from` that the caller may see, in `syncId` order, **hydrated**
+  (`Insert`/`Update` carry the entity's *current* data; an entity that is gone or no longer visible
+  arrives as a `Delete`). Squash with the protocol's `squash` before hydrating — it is
+  semantics-preserving and both ends rely on the same fold; skipping it costs payload and
+  hydration work, not correctness.
+- **`lastSyncId`**: the log's current head — the cursor the client stores durably.
+- **`epoch`**: required only if your log's history can reset (see invariants below).
+- **Retention**: if `from` predates what you retain, you cannot honor it with deltas — return a
+  single `Resync` event with target `All` (synthesized inline, not written to your log) plus the
+  current `lastSyncId`. The client drops everything and rebootstraps.
 
-interface SyncEventBusShape {
-  readonly publish: (event: SyncEvent) => Effect.Effect<void>
-  readonly subscribe: () => Effect.Effect<PubSub.Subscription<SyncEvent>, never, Scope.Scope>
-}
+`CatchupRequest` is `{ from }` **only** — there is deliberately no `group` parameter. The caller's
+visibility is resolved server-side from their permissions on every call; never trust a
+client-supplied group set.
 
-class SyncEventBus extends Context.Service<SyncEventBus, SyncEventBusShape>()("SyncEventBus") {
-  static readonly layer = Layer.effect(
-    SyncEventBus,
-    Effect.gen(function* () {
-      const hub = yield* PubSub.unbounded<SyncEvent>()
-      return {
-        publish: (event) => PubSub.publish(hub, event).pipe(Effect.asVoid),
-        subscribe: () => PubSub.subscribe(hub) // scoped: closes with the connection
-      } satisfies SyncEventBusShape
-    })
-  )
-}
-```
+## `GET {sync.url}` — SSE live tail
 
-A single broadcast channel; every subscriber sees every event. Group filtering is **per-connection**, downstream of the bus — the bus does not know about ACLs. `subscribe` returns a scoped `PubSub.Subscription`, so disposing a connection's `Scope` tears the subscription down.
+What the client does (`SyncTransport.layer({ url, keepAlive })`,
+`packages/live-collection/src/client/sync-transport.ts`): opens a long-lived request and reads SSE
+frames. Each event's `data:` payload must be **one JSON-encoded `HydratedSyncEventEnvelope`**. A
+frame that fails to decode is logged and dropped, never fatal — so a newer server may emit shapes
+an older client doesn't know. When the connection drops or falls silent, the client reconnects and
+**re-runs catchup first**, then tails again.
 
----
+What your endpoint must do:
 
-## The dispatcher — append, then best-effort publish
+- **Authenticate**, resolve the caller's current groups server-side, and push only events whose
+  `syncGroups` intersect them (`intersects` from the protocol; matching is exact per group — a
+  child group never matches its parent).
+- **Hydrate** each event before pushing, same rules as catchup: current data on `Insert`/`Update`;
+  entity gone or access lost ⇒ push a `Delete` instead. A single failed hydration is logged and
+  skipped, not a reason to kill the connection.
+- **Ping**: emit some line (an SSE comment like `:ka` is enough) more often than the client's
+  configured `keepAlive` window — silence beyond it counts as a dropped connection.
+- **Nothing else.** The client never sends `Last-Event-ID` and ignores SSE event ids; reconnect
+  healing is entirely client-driven via catchup. You do not need replay-from-id on this endpoint.
 
-The dispatcher is the one shared write path every producer (your domain-event projections) calls. It is **intentionally thin**: append the row (the DB assigns `syncId` + `createdAt`), then publish on the bus. The DB row is authoritative; **bus publish is best-effort** — a missed live delivery heals on the next catchup, so a publish failure is logged, not propagated.
-
-```typescript
-import { Context, Effect, Layer } from "effect"
-import type { PendingSyncEvent, SyncEvent } from "@triargos/live-collection-protocol"
-
-interface SyncEventDispatcherShape {
-  readonly dispatch: (event: PendingSyncEvent) => Effect.Effect<SyncEvent>
-}
-
-class SyncEventDispatcher extends Context.Service<
-  SyncEventDispatcher,
-  SyncEventDispatcherShape
->()("SyncEventDispatcher") {
-  static readonly layer = Layer.effect(
-    SyncEventDispatcher,
-    Effect.gen(function* () {
-      const repo = yield* SyncEventRepository
-      const bus = yield* SyncEventBus
-      return {
-        dispatch: (event) =>
-          Effect.gen(function* () {
-            const persisted = yield* repo.append(event) // DB fills syncId + createdAt
-            yield* bus.publish(persisted).pipe(
-              Effect.catch((cause) =>
-                // Best-effort: the row is durable, catchup heals missed live deliveries.
-                Effect.logWarning("sync bus publish failed").pipe(Effect.annotateLogs({ cause }))
-              )
-            )
-            return persisted
-          })
-      } satisfies SyncEventDispatcherShape
-    })
-  )
-}
-```
-
-The producer hands the dispatcher a `PendingSyncEvent` — the protocol's pre-persistence form, which carries `modelName` / `modelId` / `syncGroups` (or `target` for a resync) but **no** `syncId` / `createdAt` (`packages/protocol/src/sync-event.ts:31-42`). `repo.append` returns the at-rest `SyncEvent` with those filled. Group derivation lives in the projection that builds the `PendingSyncEvent`, from domain-event fields only — never fetched inside the dispatcher.
-
-### `SyncEventRepository` obligations
-
-The repo is the store seam. Three operations:
-
-- **`append(event: PendingSyncEvent): Effect<SyncEvent>`** — insert one row, return it with `syncId` + `createdAt`.
-- **query-by-groups** — events whose `sync_groups` intersect a caller's resolved groups, since a cursor (catchup).
-- **query-by-syncId** — events with `sync_id > :from ORDER BY sync_id` (the cursor scan; also per-entity history for debugging).
-
-DB-driver failures are **defects**, not domain errors — `Effect.orDie` them so the error channel stays limited to modeled domain failures. The only place this seam yields an `unknown` is row decoding, which is a boundary: decode each row through the protocol schemas and mint the branded ids there.
+If a caller's permissions change while connected, deliver a per-group `Resync` targeted at that
+user (see invariants) — the connection-level group refresh alone does not clear data the client
+already holds.
 
 ---
 
-## The permission resolver — `groupsFor({userId})`
+## Invariants the client's correctness depends on
 
-A single service that, given a user, returns the set of sync groups they may **currently** see — resolved dynamically against the source of truth (org memberships, channel rosters, team memberships, whatever drives access). It is the only place that knows how to derive groups from permissions, and it is called from both `/sync` (at connect and on refresh) and `/catchup` (every call).
-
-The protocol kit gives you the exact signature to fill — `GroupsFor` (`packages/protocol/src/model-registry.ts:46-48`):
-
-```typescript
-import type { GroupsFor } from "@triargos/live-collection-protocol"
-import { deriveGroup } from "@triargos/live-collection-protocol"
-
-// GroupsFor = (args: { userId: UserId }) => Effect.Effect<ReadonlyArray<SyncGroup>>
-const groupsFor: GroupsFor = ({ userId }) =>
-  Effect.gen(function* () {
-    const orgIds = yield* OrganizationRepository.orgIdsFor(userId)
-    const channels = yield* ChannelRepository.channelsFor(userId)
-    return [
-      deriveGroup(["user", userId]),
-      ...orgIds.map((id) => deriveGroup(["organization", id])),
-      ...channels.map((c) => deriveGroup(["organization", c.orgId, "channel", c.channelId]))
-    ]
-  })
-```
-
-Build groups with `deriveGroup(segments)`, not string concatenation — it produces a validated branded `SyncGroup` whose every `:`-delimited segment is non-empty (`packages/protocol/src/sync-group.ts:11-25`). The `args` object is a single object parameter (the kit's signature), so the caller can't transpose anything.
-
-This resolver is **load-bearing for security**: it is the *server's* notion of what the caller may see. The client never narrows or supplies groups — see the next section.
-
----
-
-## `GET /catchup?from=` — squashed, hydrated backfill
-
-One-shot, authenticated. Returns every event the caller missed since `from`, squashed and hydrated. The protocol gives you the typed blanks — `CatchupRequest` and `CatchupResponse` (`packages/protocol/src/catchup.ts:19-32`) — but **these are schemas, not an `HttpApi`**: you own the route, method, status codes, errors, and auth, and you decode the request / encode the response in your own handler.
-
-```typescript
-import { Schema } from "effect"
-import { CatchupRequest, CatchupResponse, squash } from "@triargos/live-collection-protocol"
-
-// Decode the query at the boundary — never read `from` as a raw string downstream.
-const { from } = yield* Schema.decodeUnknownEffect(CatchupRequest)(query)
-```
-
-The handler's obligations, in order:
-
-1. **Authenticate** → `userId`. (No `clientId`.)
-2. **Resolve groups server-side**: `groups = yield* groupsFor({ userId })`. **Note there is no `group` query parameter the client controls.** The kit's `CatchupRequest` is `{ from }` only, by design — "the server decides which groups the caller may see from their permissions and returns everything visible since `from`" (`packages/protocol/src/catchup.ts:14-16`). Never trust a client-narrowed group set.
-3. **Retention check**: if `from` is older than the retention window (the rows that far back have been pruned), you cannot honor it with deltas. Return a single inline `Resync(All)` instead of an event list, plus the current `lastSyncId`. This row is **not** written to the log — it's a synthesized response telling the client to drop everything and rebootstrap.
-4. **Query** the store by groups since the cursor: `sync_id > :from AND sync_groups && :groups ORDER BY sync_id`.
-5. **Squash** the raw rows with the protocol's `squash` (`packages/protocol/src/squash.ts:73`). This is the same pure fold the client relies on — a run of changes per entity folds to one terminal event, an insert-then-delete cancels out, and a `Resync` drops everything it supersedes (`All` → all prior, `Group` → prior events under that group via `isUnder`, `Model` → prior events of that model). The fold is idempotent. Both ends import the *same* function so the squash is identical — do not reimplement it.
-6. **Hydrate** with the model registry's batched `hydrateMany` — **one call per `modelName`, not one per event**. Without batching this is the N+1 problem in disguise. Hydration carries the caller's `SyncContext` so it applies ACL: an entity the caller can no longer see hydrates to `Option.none()`.
-7. **Return** `{ events, lastSyncId }` encoded through `CatchupResponse`, where each event is a `HydratedSyncEventEnvelope` (`data` as opaque JSON, decoded against the model schema on the client).
-
-The retention-too-old case must be a typed outcome, not a throw. Model it as a `Schema.TaggedErrorClass` your route maps to its status code:
-
-```typescript
-class CatchupTooOld extends Schema.TaggedErrorClass<CatchupTooOld>()("CatchupTooOld", {
-  from: SyncId,
-  oldestRetained: SyncId
-}) {}
-```
-
-### The two retention axes — don't conflate them
-
-There are **two independent retention limits**, and they live on opposite ends:
-
-| Axis | Lives where | Unit | Surfaces as |
-|------|-------------|------|-------------|
-| **Server wall-clock retention** | `sync_events` table (this doc) | time (e.g. 7 days) | a `Resync(All)` from `/catchup` when `from` predates it |
-| **Client event-count cap** | the frontend EventLog (see [replay-on-mount](./replay-on-mount.md)) | a fixed number of events | nothing on the wire — purely client-local trimming |
-
-The server prunes by **age**; the client trims its local replay log by **count**. They never coordinate. A client that falls behind the server's wall-clock window can no longer be served deltas, so the server's only honest answer is "resync from scratch."
+- **`SyncId` semantics.** Monotonically increasing within one log timeline, **gap-tolerant**
+  (clients order by it and never assume `n+1`), encoded as the protocol's canonical decimal
+  string, compared numerically (`compareSyncId`) — never lexically.
+- **The epoch invariant.** SyncIds are only comparable within one epoch. If your log's history can
+  be destroyed or replaced (in-memory store that resets on restart, truncation, backup restore),
+  mint an opaque `Epoch` and return it on catchup; the client detects a mismatch and self-heals by
+  wiping its local sync state and rebootstrapping. A log that is durable for the server's lifetime
+  can omit it. It is not a software version — a redeploy must not change it.
+- **Catchup is authoritative.** Live delivery may miss events (connection down, publish lost);
+  every event a caller may see must remain reachable through catchup until retention expires.
+  The client treats the SSE tail as best-effort and the catchup path as truth.
+- **No echo suppression.** Originating clients must receive their own writes back through normal
+  sync. Client-minted ids make the self-echo idempotent, and TanStack DB's optimistic-mutation
+  reconciliation expects the synced store to confirm the client's own writes — an originator
+  filter (a `clientId` column, an `X-Client-Id` header, a `client_id != :clientId` clause) breaks
+  it. Do not add one.
+- **Resync targets are structural.** A resync is a first-class `Resync` event arm carrying a
+  `ResyncTarget` (`All` / `Group({group})` / `Model({model})`) — never an entity event with a
+  sentinel `modelName` like `'__all'`. On membership removal, emit a `Group` resync delivered to
+  `user:<removedUserId>` so exactly that user's client clears the group's local data; without it,
+  stale rows persist forever.
+- **Access loss surfaces as `Delete`.** Hydration receives the caller's current `syncGroups` and
+  is the authoritative visibility check (the event-level group filter uses groups stamped at log
+  time; access may have changed since). `Option.none()` from your hydration ⇒ the client receives
+  a `Delete` and removes the row.
+- **Retention is two independent axes.** Your server prunes its log by age and answers too-old
+  cursors with `Resync(All)`; the client separately trims its local replay log by event count
+  (see [replay-on-mount.md](./replay-on-mount.md)). They never coordinate.
 
 ---
 
-## `GET /sync` (SSE) — the live tail
+## What the kit offers (all optional except the schemas)
 
-Long-lived, authenticated. Pushes hydrated events as they happen, each filtered to the connection's current groups. Each connection holds an Effect `Scope`; disposing it cleans up the bus subscription (and the membership-refresh subscription below).
+Decode and encode the wire shapes with the protocol schemas — `CatchupRequest`,
+`CatchupResponse`, `HydratedSyncEventEnvelope`, `SyncEvent`, `PendingSyncEvent` — and never cast.
+Beyond that, the kit ships helpers you may use or ignore:
 
-On connect:
+- **`squash`** — the pure catchup fold. If you compact at all, import this rather than
+  reimplementing it; the client relies on its exact semantics.
+- **`ModelDescriptor` / `defineModelRegistry` / `narrowModelName`** — typed scaffolding for a
+  hydration registry: per-model schema + `hydrate`/`hydrateMany` (batch it — one call per model,
+  not one per event, or catchup becomes an N+1), with registry keys forming your closed model-name
+  union. How you organize hydration is your choice; only its observable behavior (above) is
+  contract.
+- **`deriveGroup` / `isUnder` / `intersects`** — the sync-group grammar. Build groups with
+  `deriveGroup(segments)`, not string concatenation.
 
-1. **Authenticate** → `userId`, build the `SyncContext` (`{ userId, syncGroups }` — `packages/protocol/src/model-registry.ts:18-22`).
-2. **Resolve the initial group set**: `groups = yield* groupsFor({ userId })`.
-3. If a `Last-Event-ID` header is present, run an **implicit catchup** from that `syncId` first and stream those events before going live (the same squash + hydrate path as `/catchup`).
-4. **Subscribe to the bus** (`yield* bus.subscribe()`), scoped to the connection.
-5. **Subscribe to the membership-refresh signal** for this user (see *Live-connection refresh* below).
-
-Per event off the bus:
-
-- **Skip** if the event's `syncGroups` don't intersect the connection's current `groups` — `intersects(event.syncGroups, connection.groups)` (`packages/protocol/src/sync-group.ts:40-46`). Matching is exact per group; a child group never matches its parent, so a private sub-group can't leak to members of a broader scope.
-- **Hydrate** the event with the caller's `SyncContext`.
-- **Synthetic-delete on ACL loss**: if hydration returns `Option.none()` (the entity vanished *or* the caller lost access to it), emit a synthetic `Delete` for that `modelId` rather than the original event — the client must remove the row it can no longer see. This is the one place the read path *changes* an event's tag.
-- **Push** the hydrated (or synthetic-delete) event as an SSE frame, with `syncId` as the SSE event id so a reconnect can resume via `Last-Event-ID`.
-
-> **`data: T | null` is a wire contract — decode it to `Option` at the boundary.** The hydrated wire shape carries `data: T | null` (null for `Delete`), but internally absence is modeled with `Option` (CLAUDE.md). When you hydrate, your `hydrate`/`hydrateMany` already return `Option<T>` (`packages/protocol/src/model-registry.ts:37-43`); `Option.none()` is precisely the "emit a synthetic delete" trigger. Convert to the nullable wire field only at the final encode step.
-
-**Hydration failure for a single event is not fatal**: log it, skip that event, continue the stream. The next event for that entity, or a future catchup, heals it. Do not kill the connection over one bad hydrate.
-
-### Live-connection refresh
-
-Membership changes do not write a subscription table. They emit a domain event that the per-connection handler listens for, filtered to `userId === connection.userId`; on receipt it **re-runs `groupsFor` and replaces the connection's cached group set**. No DB writes, no denormalization, no propagation delay beyond the publish.
-
-> **The membership-change event shape is deliberately not fixed by this library.** The name `MembershipChangedEvent` and its fields are a **placeholder**, not a fixed API: it is a domain event from your membership aggregate carrying at minimum the affected `userId` and enough to know which group changed. Pin its shape in your own app before wiring the refresh; this library does not define it.
+There is deliberately **no auth surface in the kit** — no principal type, no resolver signature.
+Who is syncing and how you map them to groups is your backend's own design.
 
 ---
 
-## Resync emission — all three variants
+## Reference implementations
 
-A resync tells subscribers to discard part of their local state and re-fetch, for changes deltas can't express (a permission change, a bulk correction). The protocol's `ResyncTarget` encodes how much to reset, narrowest to widest (`packages/protocol/src/resync.ts:16-20`):
-
-| Variant | Constructor | Effect on the client |
-|---------|-------------|----------------------|
-| **Per-model** | `ResyncModel.make({ model })` | client clears that model's collections within the affected groups and rebootstraps |
-| **Per-group** | `ResyncGroup.make({ group })` | client clears all collections for entities under that group (matched by `isUnder`) |
-| **Global** | `ResyncAll` | client drops everything and rebootstraps |
-
-All three are emitted **through the dispatcher** like any other event — built as a `PendingResync` (`packages/protocol/src/sync-event.ts:35`) with a `target` and the `syncGroups` it's delivered to — **except** the catchup-too-old `Resync(All)`, which is synthesized inline in the `/catchup` response and **not written to the log** (the retention case above).
-
-**Membership removal → per-group resync**: when a user loses access to a group, the live-connection refresh stops *new* events for that group from reaching them — but it does nothing about the **stale data already in their collections**. So the membership-change projection must also emit a per-group resync **tagged with `user:<removedUserId>`** so it lands on exactly that user's session and tells their client to clear the group's local data. Without it, the client silently keeps stale rows forever.
-
-```typescript
-import { deriveGroup, ResyncGroup } from "@triargos/live-collection-protocol"
-
-// On membership removal: deliver a per-group resync to just the removed user's session.
-const pending = {
-  _tag: "Resync" as const,
-  target: ResyncGroup.make({ group: removedGroup }),
-  syncGroups: [deriveGroup(["user", removedUserId])] // delivery target = that user only
-}
-yield* dispatcher.dispatch(pending)
-```
-
-Per-model and global resyncs are emitted the same way (from admin/data-correction tooling, typically). The squasher already understands all three targets, so a resync correctly supersedes the right preceding events on catchup.
-
----
-
-## Failure modes worth internalizing
-
-The correctness boundaries:
-
-- **Projection handler fails after the domain event committed.** The sync event is missing; live clients miss it; the next catchup heals it *only if the projection retries successfully*. A deterministically-crashing handler loses the event permanently (manual resync recovers). Keep projection handlers trivially simple — no I/O beyond the dispatcher — and test them hard. This is the most important boundary.
-- **Row written, bus publish failed.** Already handled: best-effort publish, catchup heals. Log a warning.
-- **Catchup hydration explosion.** A client offline for a week catching up thousands of squashed events: `hydrateMany` is the first defense. Beyond a threshold (e.g. >10K squashed events) return partial results with a continuation cursor, or refuse and force `Resync(All)`. Pick the threshold and document it.
-- **`syncId` gaps.** `BIGSERIAL` gaps on rollback. Clients order, never assume contiguity. Assert gap-tolerance in tests.
-
-All of these are infrastructure defects, not domain failures: `Effect.orDie` them and keep the error channel reserved for modeled outcomes like `CatchupTooOld` and `UnknownModelError` (`packages/protocol/src/model-registry.ts:62-68`).
-
----
-
-## Conventions for any code you write here
-
-This backend is per-app and lives outside this repo, but the same conventions the library holds itself to make the seams interoperate cleanly:
-
-- **No `throw`, no `new Error(...)` across boundaries.** Model domain failures as `Schema.TaggedErrorClass` (e.g. `CatchupTooOld`); infrastructure failures are defects — `Effect.orDie`. Never `Effect.catchCause` (it swallows defects).
-- **`Option` over null.** The wire's `data: T | null` decodes to `Option<T>` at the boundary; pass `Option` through hydration; convert back to the nullable field only at the final encode.
-- **Object args when a function has more than one of its own parameters** — `groupsFor({ userId })`, `ResyncGroup.make({ group })`.
-- **Seams are `Context.Service<Self, Shape>()("Name")` + `interface <Name>Shape` + a separate `make` + `<Name>.layer`** — keep service construction and adapters separate.
-- **Brand ids only at boundaries.** `SyncId.make` / `ModelName.make` / `deriveGroup` belong in row decoders and request handlers; inside the app the values already carry their brands.
+- [`examples/pi-demo/server`](../examples/pi-demo/server) — a real Effect HTTP backend: event
+  store, dispatcher, `/catchup` and SSE routes, hydration through the model registry.
+- [`examples/playground/src/live/shared-backend.ts`](../examples/playground/src/live/shared-backend.ts)
+  — the same contract as a browser-local fake authority (localStorage log + `BroadcastChannel`),
+  useful for seeing the contract with zero HTTP.
 
 ---
 
 ## See also
 
-- [`./protocol.md`](./protocol.md) — the wire contract and the typed blanks you fill: the event schemas, the sync-group grammar, the squasher, the resync targets, the model registry types, and the `/catchup` request/response schemas.
-- [`./read-path.md`](./read-path.md) — the *client* side of `/sync` and `/catchup`: how the frontend consumes the SSE tail, runs catchup against your endpoint, and stores the durable `lastSyncId` cursor.
-- [`./replay-on-mount.md`](./replay-on-mount.md) — the client EventLog and its **event-count** retention cap (the other retention axis).
-- A miniature reference of every seam this doc describes — store, dispatcher (`commit`), `/catchup`, the SSE tail — wired as a single fake authority: [`examples/playground/src/live/shared-backend.ts`](../examples/playground/src/live/shared-backend.ts).
+- [`./protocol.md`](./protocol.md) — the wire contract in full: event schemas, the sync-group
+  grammar, the squasher, resync targets, and the `/catchup` schemas.
+- [`./read-path.md`](./read-path.md) — the *client* side of these two endpoints: the SSE tail,
+  catchup, and the durable `lastSyncId` cursor.
+- [`./replay-on-mount.md`](./replay-on-mount.md) — the client event log and its event-count
+  retention cap.

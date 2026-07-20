@@ -2,7 +2,7 @@ import { Effect, Exit, Fiber, Layer, Option, Queue } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { type HydratedSyncEventEnvelope, SyncId } from "@triargos/live-collection-protocol"
 import { CatchupClient } from "../src/client/catchup-client.js"
-import { EventLogStore } from "../src/client/event-log-store.js"
+import { SyncJournal } from "../src/client/sync-journal.js"
 import { LastSyncIdStore } from "../src/client/last-sync-id-store.js"
 import { SyncTransport } from "../src/client/sync-transport.js"
 import { makeLiveRuntime } from "../src/runtime/live-runtime.js"
@@ -16,7 +16,7 @@ describe("makeLiveRuntime", () => {
         LastSyncIdStore.layerMemory,
         CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0"), epoch: Option.none() }),
         SyncTransport.layerMemory(queue),
-        EventLogStore.layerMemory,
+        SyncJournal.layerMemory,
       )
       const runtime = makeLiveRuntime({ persistence: makeNodeSqlitePersistence(), sync })
       const first = runtime.forkSync()

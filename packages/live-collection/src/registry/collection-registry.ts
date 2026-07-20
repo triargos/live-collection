@@ -13,8 +13,8 @@ export interface CollectionRegistryShape {
   }) => Effect.Effect<A, never, Exclude<R, Scope.Scope>>
   readonly dispose: (key: CollectionKey<unknown>) => Effect.Effect<void>
   readonly disposeScope: (scope: string) => Effect.Effect<void>
-  readonly disposeAllScoped: () => Effect.Effect<void>
-  readonly disposeAll: () => Effect.Effect<void>
+  readonly disposeAllScoped: Effect.Effect<void>
+  readonly disposeAll: Effect.Effect<void>
 }
 
 /** Build the scope-backed lifetime table used by the default layer. */
@@ -69,15 +69,17 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
       { discard: true },
     )
 
-  const disposeAllScoped = (): Effect.Effect<void> =>
+  const disposeAllScoped: Effect.Effect<void> = Effect.suspend(() =>
     Effect.forEach(
       [...entries].filter(([, entry]) => Option.isSome(entry.key.scope)),
       ([id, entry]) => evict({ id, entry }),
       { discard: true },
-    )
+    ),
+  )
 
-  const disposeAll = (): Effect.Effect<void> =>
-    Effect.forEach([...entries], ([id, entry]) => evict({ id, entry }), { discard: true })
+  const disposeAll: Effect.Effect<void> = Effect.suspend(() =>
+    Effect.forEach([...entries], ([id, entry]) => evict({ id, entry }), { discard: true }),
+  )
 
   return CollectionRegistry.of({ getOrCreate, dispose, disposeScope, disposeAllScoped, disposeAll })
 })

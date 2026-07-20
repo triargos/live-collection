@@ -7,7 +7,7 @@ import {
   SessionCode,
   sessionGroup,
 } from "@pi-demo/shared"
-import { PendingInsert, SyncId } from "@triargos/live-collection-protocol"
+import { PendingSyncEvent, SyncId } from "@triargos/live-collection-protocol"
 import { SyncEventBus } from "../src/sync/sync-event-bus.js"
 import { SyncDispatcher } from "../src/sync/sync-dispatcher.js"
 import { SyncEventStore } from "../src/sync/sync-event-store.js"
@@ -27,7 +27,7 @@ describe("SyncDispatcher", () => {
       const queue = yield* bus.subscribe
       const receive = yield* Stream.runHead(Stream.fromSubscription(queue)).pipe(Effect.forkChild)
 
-      const persisted = yield* dispatcher.dispatch(PendingInsert.make({
+      const persisted = yield* dispatcher.dispatch(PendingSyncEvent.cases.Insert.make({
         modelName: PROJECT_MODEL,
         modelId: projectKey({
           id: ProjectId.make("project"),

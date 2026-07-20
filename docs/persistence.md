@@ -107,7 +107,7 @@ const persistence = createBrowserWASQLitePersistence({ database })              
 ### Per-tab databases
 
 If you want two tabs to behave as independent clients (the playground does — each tab is its own sync
-client with its own watermark), give each tab a **distinct `databaseName`**. A single origin-shared
+client with its own cursor and journal), give each tab a **distinct `databaseName`**. A single origin-shared
 default DB lets tabs clobber each other's persisted state. See
 [`playground.ts:41-43`](../examples/playground/src/live/playground.ts), which derives `dbName` from a
 per-tab session.
@@ -155,7 +155,7 @@ The fields it sets ([`live-collection-options.ts:13-20`](../packages/live-collec
 |---|---|---|
 | `getKey` | your `(entity) => ModelId` | branded key extractor |
 | `gcTime` | `Infinity` | the **registry** is the sole GC — never let TanStack evict |
-| `syncMode` | `"eager"` | load the persisted base on start, not query-driven |
+| `syncMode` | `"eager"` | load the saved rows on start, not query-driven |
 | `startSync` | `true` | start sync on mount → session captured + hydration runs |
 | `utils` | `SyncWrite<T>` | `writeSynced` / `deleteSynced`, hosted in `utils` |
 | `sync` | a **network-free** `SyncConfig` | installs the session holder, then `markReady` |
@@ -256,7 +256,7 @@ These are deferred, not present — do not wire them as if they exist:
   *is* built (A.10).
 - **Registry eviction backstop / unmounted-workspace policy (A.11).** `gcTime: Infinity` means the registry
   is the sole GC; an automatic eviction backstop for long-lived unmounted scopes is not built.
-- **Throttled watermark flush** and **per-target resync** — deferred in the transport tier; see
+- **Throttled last-applied flush** and **per-target resync** — deferred in the transport tier; see
   [`./protocol.md`](./protocol.md) and [`./architecture.md`](./architecture.md).
 
 ---

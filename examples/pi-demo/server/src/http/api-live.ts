@@ -14,11 +14,8 @@ import {
 } from "@pi-demo/shared"
 import {
   intersects,
-  PendingDelete,
-  PendingInsert,
-  PendingUpdate,
+  PendingSyncEvent,
   squash,
-  UserId,
 } from "@triargos/live-collection-protocol"
 import { ProjectRepo } from "../repo/project-repo.js"
 import { TodoRepo } from "../repo/todo-repo.js"
@@ -34,17 +31,11 @@ const dispatchRow = (args: {
 }) =>
   Effect.flatMap(SyncDispatcher, (dispatcher) =>
     dispatcher.dispatch(
-      args.kind === "Insert"
-        ? PendingInsert.make({
-            modelName: args.modelName,
-            modelId: args.modelId,
-            syncGroups: [args.group],
-          })
-        : PendingUpdate.make({
-            modelName: args.modelName,
-            modelId: args.modelId,
-            syncGroups: [args.group],
-          }),
+      PendingSyncEvent.cases[args.kind].make({
+        modelName: args.modelName,
+        modelId: args.modelId,
+        syncGroups: [args.group],
+      }),
     ),
   )
 
@@ -96,13 +87,13 @@ export const ProjectsApiLive = HttpApiBuilder.group(DemoApi, "projects", (handle
         const removedProject = yield* projects.remove(params.id)
         const group = sessionGroup(session)
         for (const todo of removedTodos) {
-          yield* dispatcher.dispatch(PendingDelete.make({
+          yield* dispatcher.dispatch(PendingSyncEvent.cases.Delete.make({
             modelName: TODO_MODEL,
             modelId: todoKey(todo),
             syncGroups: [group],
           }))
         }
-        yield* dispatcher.dispatch(PendingDelete.make({
+        yield* dispatcher.dispatch(PendingSyncEvent.cases.Delete.make({
           modelName: PROJECT_MODEL,
           modelId: projectKey(removedProject),
           syncGroups: [group],
@@ -155,7 +146,7 @@ export const TodosApiLive = HttpApiBuilder.group(DemoApi, "todos", (handlers) =>
         const owned = Option.filter(existing, (row) => row.sessionId === session)
         if (Option.isNone(owned)) return yield* new TodoNotFound({ id: params.id })
         const removed = yield* repo.remove(params.id)
-        yield* dispatcher.dispatch(PendingDelete.make({
+        yield* dispatcher.dispatch(PendingSyncEvent.cases.Delete.make({
           modelName: TODO_MODEL,
           modelId: todoKey(removed),
           syncGroups: [sessionGroup(session)],
@@ -172,8 +163,7 @@ export const SyncApiLive = HttpApiBuilder.group(DemoApi, "sync", (handlers) =>
       const allowed = [sessionGroup(session)]
       const all = yield* store.since(query.from)
       const visible = all.filter((event) => intersects(event.syncGroups, allowed))
-      const context = { userId: UserId.make(session), syncGroups: allowed }
-      const events = yield* hydrateEvents({ events: squash(visible), ctx: context })
+      const events = yield* hydrateEvents({ events: squash(visible), syncGroups: allowed })
       const lastSyncId = yield* store.currentSyncId
       return { events, lastSyncId, epoch: Option.some(store.epoch) }
     }),

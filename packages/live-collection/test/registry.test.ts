@@ -36,7 +36,7 @@ describe("CollectionRegistry", () => {
       yield* registry.dispose(a)
       yield* registry.dispose(a)
       assert.deepStrictEqual(log, ["a"])
-      yield* registry.disposeAll()
+      yield* registry.disposeAll
       assert.deepStrictEqual(log, ["a", "b"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
@@ -50,7 +50,7 @@ describe("CollectionRegistry", () => {
       yield* registry.getOrCreate({ key: globalKey("user"), make: tracked("user", log).make })
       yield* registry.disposeScope("org-1")
       assert.deepStrictEqual([...log].sort(), ["m1", "wh1"])
-      yield* registry.disposeAll()
+      yield* registry.disposeAll
       assert.deepStrictEqual([...log].sort(), ["m1", "user", "wh1", "wh2"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
@@ -61,9 +61,9 @@ describe("CollectionRegistry", () => {
       yield* registry.getOrCreate({ key: scopedKey({ entity: "webhook", scope: "org-1" }), make: tracked("wh1", log).make })
       yield* registry.getOrCreate({ key: scopedKey({ entity: "member", scope: "org-2" }), make: tracked("m2", log).make })
       yield* registry.getOrCreate({ key: globalKey("user"), make: tracked("user", log).make })
-      yield* registry.disposeAllScoped()
+      yield* registry.disposeAllScoped
       assert.deepStrictEqual([...log].sort(), ["m2", "wh1"])
-      yield* registry.disposeAll()
+      yield* registry.disposeAll
       assert.deepStrictEqual([...log].sort(), ["m2", "user", "wh1"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
@@ -73,7 +73,7 @@ describe("CollectionRegistry", () => {
       const log: Array<string> = []
       yield* registry.getOrCreate({ key: scopedKey({ entity: "webhook", scope: "org-1" }), make: tracked("wh1", log).make })
       yield* registry.getOrCreate({ key: globalKey("user"), make: tracked("user", log).make })
-      yield* registry.disposeAll()
+      yield* registry.disposeAll
       assert.deepStrictEqual([...log].sort(), ["user", "wh1"])
     }).pipe(Effect.provide(CollectionRegistry.layer)))
 
