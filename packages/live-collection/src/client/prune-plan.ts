@@ -1,5 +1,4 @@
-import { Order } from "effect"
-import { compareSyncId, type SyncId } from "@triargos/live-collection-protocol"
+import { compareSyncId, entityKey, maxSyncId, type SyncId } from "@triargos/live-collection-protocol"
 import type { JournalEvent } from "./sync-journal.js"
 
 /**
@@ -43,11 +42,9 @@ export const prunePlan = (args: {
   readonly maxEventsTotal: number
 }): PrunePlan => {
   // ── Stage 1: squash — newest event per (modelName, modelId); floor-neutral ──
-  // NUL-joined so distinct (modelName, modelId) pairs can't collide — both are arbitrary
-  // strings, so any printable delimiter could appear inside them.
   const newestPerEntity = new Map<string, JournalEvent>()
   for (const r of args.rows) {
-    const key = `${r.modelName}\u0000${r.modelId}`
+    const key = entityKey(r.modelName, r.modelId)
     const current = newestPerEntity.get(key)
     if (current === undefined || compareSyncId(r.syncId, current.syncId) > 0) newestPerEntity.set(key, r)
   }
@@ -86,7 +83,7 @@ export const prunePlan = (args: {
   const maxDeletedSyncId = new Map<string, SyncId>()
   for (const d of deleted) {
     const current = maxDeletedSyncId.get(d.modelName)
-    maxDeletedSyncId.set(d.modelName, current ? Order.max(compareSyncId)(current, d.syncId) : d.syncId)
+    maxDeletedSyncId.set(d.modelName, current ? maxSyncId(current, d.syncId) : d.syncId)
   }
   return { keep, maxDeletedSyncId }
 }

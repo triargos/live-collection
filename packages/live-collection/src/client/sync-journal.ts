@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Order, Ref, Schema, type Scope } from "effect"
 import { type DBSchema, openDB } from "idb"
-import { compareSyncId, Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { advanceSyncId, compareSyncId, Epoch, maxSyncId, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
 import { prunePlan } from "./prune-plan.js"
@@ -101,10 +101,6 @@ export interface SyncJournalShape {
   readonly reset: Effect.Effect<void>
 }
 
-/** Keep whichever syncId is numerically larger — the monotonic step shared by last-applied/resync setters. */
-const advance = (current: Option.Option<SyncId>, next: SyncId): SyncId =>
-  Option.match(current, { onNone: () => next, onSome: (c) => Order.max(compareSyncId)(c, next) })
-
 /**
  * The stored last-applied mark — a structured value so `prune` can group by `entity`
  * without ever parsing a key (`serializeKey` stays write-only). `schemaVersion` is the
@@ -124,7 +120,7 @@ const foldLastApplied = (
 ): LastAppliedRecord => ({
   entity: next.entity,
   schemaVersion: next.schemaVersion,
-  at: advance(
+  at: advanceSyncId(
     current.pipe(
       Option.filter((record) => record.schemaVersion === next.schemaVersion),
       Option.map((record) => record.at),
@@ -181,7 +177,7 @@ const makeMemory: Effect.Effect<SyncJournalShape> = Effect.gen(function* () {
                 const next = new Map(f)
                 for (const [model, at] of plan.maxDeletedSyncId) {
                   const current = next.get(model)
-                  next.set(model, current ? Order.max(compareSyncId)(current, at) : at)
+                  next.set(model, current ? maxSyncId(current, at) : at)
                 }
                 return next
               }),
@@ -207,7 +203,7 @@ const makeMemory: Effect.Effect<SyncJournalShape> = Effect.gen(function* () {
         return next
       }),
     getLastResync: Ref.get(lastResync),
-    setLastResync: (at) => Ref.update(lastResync, (c) => Option.some(advance(c, at))),
+    setLastResync: (at) => Ref.update(lastResync, (c) => Option.some(advanceSyncId(c, at))),
     getEpoch: Ref.get(epoch),
     setEpoch: (value) => Ref.set(epoch, Option.some(value)),
     reset: Effect.all(
@@ -287,7 +283,7 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, ne
     // Monotonic write: read the current cursor, keep the larger, persist. (Sequential under broker ingest.)
     const advanceMetaSyncId = (key: string, at: SyncId): Effect.Effect<void> =>
       getMetaSyncId(key).pipe(
-        Effect.flatMap((current) => Effect.promise(() => db.put(META, advance(current, at), key))),
+        Effect.flatMap((current) => Effect.promise(() => db.put(META, advanceSyncId(current, at), key))),
         Effect.asVoid,
       )
 
@@ -345,7 +341,7 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, ne
             if (deleted.length === 0) return Effect.void
             // Merge each model's max deleted syncId into the current floor (monotonic) before the delete tx.
             return Effect.forEach([...plan.maxDeletedSyncId], ([model, at]) =>
-              getMetaSyncId(floorKey(model)).pipe(Effect.map((cur) => [floorKey(model), advance(cur, at)] as const)),
+              getMetaSyncId(floorKey(model)).pipe(Effect.map((cur) => [floorKey(model), advanceSyncId(cur, at)] as const)),
             ).pipe(
               Effect.flatMap((floors) =>
                 Effect.promise(async () => {

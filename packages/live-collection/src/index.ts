@@ -13,11 +13,6 @@
  * The hero type is `LiveCollection<T>` — what a collection handle returns. The wire
  * contract shared with your backend lives in `@triargos/live-collection-protocol`.
  */
-import type { SyncEvent } from "@triargos/live-collection-protocol"
-
-/** Re-exported from `@triargos/live-collection-protocol` so consumers share one contract type. */
-export type { SyncEvent }
-
 // registry/ — collection lifetime table, structured keys, and runtime-bound handles.
 export * from "./registry/collection-key.js"
 export * from "./registry/collection-registry.js"
@@ -42,6 +37,3 @@ export * from "./runtime/live-runtime.js"
 export type { LiveCollection } from "./persistence/live-collection.js"
 export * from "./persistence/live-collection-options.js"
 export * from "./persistence/schema-version.js"
-
-/** The library's version, for diagnostics. */
-export const LIB_VERSION = "0.0.0"

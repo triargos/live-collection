@@ -1,5 +1,5 @@
-import { Data, Option, Order } from "effect"
-import { compareSyncId, type ModelId, type ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { Data, Option } from "effect"
+import { compareSyncId, maxSyncId, type ModelId, type ModelName, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { JournalEvent } from "./sync-journal.js"
 import { PublishedItem } from "./ingest.js"
 
@@ -39,9 +39,6 @@ export interface MountPlan {
   readonly tailGuardSeed: SyncId
 }
 
-const zero = SyncId.make("0")
-export const maxSyncId: (a: SyncId, b: SyncId) => SyncId = Order.max(compareSyncId)
-
 /**
  * Decide what a mounting collection must do, from journal metadata alone.
  *
@@ -61,7 +58,7 @@ export const planMount = (input: {
   /** The newest resync the client has ingested — replay across it is invalid. */
   readonly lastResyncAt: Option.Option<SyncId>
 }): MountPlan => {
-  const cursorAt = Option.getOrElse(input.cursor, () => zero)
+  const cursorAt = Option.getOrElse(input.cursor, () => zeroSyncId)
   const snapshotPoint = Option.match(input.lastResyncAt, {
     onNone: () => cursorAt,
     onSome: (resyncAt) => maxSyncId(cursorAt, resyncAt),

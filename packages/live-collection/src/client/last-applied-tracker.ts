@@ -1,9 +1,8 @@
 import { type Duration, Effect, Option, Ref, type Scope } from "effect"
-import type { SyncId } from "@triargos/live-collection-protocol"
+import { maxSyncId, type SyncId } from "@triargos/live-collection-protocol"
 import type { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
 import type { SyncJournalShape } from "./sync-journal.js"
-import { maxSyncId } from "./mount-plan.js"
 
 /**
  * The ACK machine — the single authority on each collection's last-applied syncId.

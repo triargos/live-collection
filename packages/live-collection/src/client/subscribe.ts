@@ -1,12 +1,12 @@
 import { Effect, Option, PubSub, Stream } from "effect"
-import type { ModelName } from "@triargos/live-collection-protocol"
+import { maxSyncId, type ModelName } from "@triargos/live-collection-protocol"
 import type { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, globalKey, scopedKey } from "../registry/collection-key.js"
 import type { SyncJournalShape } from "./sync-journal.js"
 import type { LastSyncIdStoreShape } from "./last-sync-id-store.js"
 import type { PublishedItem } from "./ingest.js"
 import type { LastAppliedTracker } from "./last-applied-tracker.js"
-import { MountDecision, SyncSignal, concernsModel, dropStale, maxSyncId, planMount, signalFromRow } from "./mount-plan.js"
+import { MountDecision, SyncSignal, concernsModel, dropStale, planMount, signalFromRow } from "./mount-plan.js"
 
 /** Scoped collections key their persisted rows (and last-applied marks) per scope value. */
 export const keyFor = (modelName: ModelName, scope: Option.Option<string>): CollectionKey<unknown> =>

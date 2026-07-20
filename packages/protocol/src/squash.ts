@@ -1,4 +1,4 @@
-import { compareSyncId } from "./ids.js"
+import { compareSyncId, entityKey } from "./ids.js"
 import { ResyncTarget } from "./resync.js"
 import { SyncEvent } from "./sync-event.js"
 
@@ -70,9 +70,7 @@ export const squash = (
 
   // Squashing proper: fold this event's tag with the entity's previous terminal tag.
   const foldEntity = (event: EntityEvent) => {
-    // NUL-joined so distinct (modelName, modelId) pairs can't collide — both are
-    // arbitrary strings, so any printable delimiter could appear inside them.
-    const key = `${event.modelName}\u0000${event.modelId}`
+    const key = entityKey(event.modelName, event.modelId)
     const prev = entities.get(key)
     const folded = prev === undefined ? event._tag : foldTag[prev._tag][event._tag]
     if (folded === "Drop") entities.delete(key)

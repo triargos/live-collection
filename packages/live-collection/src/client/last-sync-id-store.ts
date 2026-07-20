@@ -1,5 +1,5 @@
-import { Context, Effect, Layer, Option, Order, Ref, Schema } from "effect"
-import { compareSyncId, SyncId } from "@triargos/live-collection-protocol"
+import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { advanceSyncId, SyncId } from "@triargos/live-collection-protocol"
 
 /**
  * The single, durable, **global** sync cursor — the newest syncId this client has
@@ -19,13 +19,6 @@ export interface LastSyncIdStoreShape {
   readonly clear: Effect.Effect<void>
 }
 
-/** The monotonic step shared by both adapters: keep whichever id is numerically larger. */
-const advance = (current: Option.Option<SyncId>, next: SyncId): SyncId =>
-  Option.match(current, {
-    onNone: () => next,
-    onSome: (c) => Order.max(compareSyncId)(c, next),
-  })
-
 const STORAGE_KEY = "live-collection:lastSyncId"
 
 /** `localStorage`-backed cursor. The stored string is external input, so it is decoded against
@@ -37,7 +30,7 @@ const makeLocalStorage: Effect.Effect<LastSyncIdStoreShape> = Effect.sync(() => 
   )
   return {
     get,
-    set: (id) => get.pipe(Effect.map((c) => localStorage.setItem(STORAGE_KEY, advance(c, id)))),
+    set: (id) => get.pipe(Effect.map((c) => localStorage.setItem(STORAGE_KEY, advanceSyncId(c, id)))),
     clear: Effect.sync(() => localStorage.removeItem(STORAGE_KEY)),
   }
 })
@@ -47,7 +40,7 @@ const makeMemory: Effect.Effect<LastSyncIdStoreShape> = Effect.gen(function* () 
   const ref = yield* Ref.make(Option.none<SyncId>())
   return {
     get: Ref.get(ref),
-    set: (id) => Ref.update(ref, (c) => Option.some(advance(c, id))),
+    set: (id) => Ref.update(ref, (c) => Option.some(advanceSyncId(c, id))),
     clear: Ref.set(ref, Option.none()),
   }
 })

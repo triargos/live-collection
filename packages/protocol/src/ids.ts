@@ -1,4 +1,4 @@
-import { Order, Schema } from "effect"
+import { Option, Order, Schema } from "effect"
 
 /**
  * A sync cursor: an opaque, monotonically increasing position in the global event
@@ -31,6 +31,21 @@ export type SyncId = typeof SyncId.Type
  */
 export const compareSyncId: Order.Order<SyncId> = Order.mapInput(Order.BigInt, BigInt)
 
+/** The cold-start cursor — "before every event": catchup from it returns the whole visible log. */
+export const zeroSyncId: SyncId = SyncId.make("0")
+
+/** The numerically larger of two `SyncId`s — the monotonic-advance step for cursors and marks. */
+export const maxSyncId: (a: SyncId, b: SyncId) => SyncId = Order.max(compareSyncId)
+
+/**
+ * Advance a possibly-absent cursor monotonically: absent adopts `next`, present keeps
+ * the numerically larger. Every durable syncId the client stores (global cursor,
+ * last-applied marks, prune floors, lastResync) advances through this, so a late,
+ * out-of-order event can never pull a cursor backwards.
+ */
+export const advanceSyncId = (current: Option.Option<SyncId>, next: SyncId): SyncId =>
+  Option.match(current, { onNone: () => next, onSome: (c) => maxSyncId(c, next) })
+
 /**
  * The identity of the server event log's **timeline** — the epoch `SyncId`s belong to.
  * A `syncId` alone is not a complete coordinate: it is only comparable to cursors from
@@ -60,3 +75,11 @@ export type ModelName = typeof ModelName.Type
 /** The id of a single entity within a model — any non-empty string, typically a UUID. */
 export const ModelId = Schema.NonEmptyString.pipe(Schema.brand("ModelId"))
 export type ModelId = typeof ModelId.Type
+
+/**
+ * The injective map key for one entity, `(modelName, modelId)` as a single string.
+ * NUL-joined so distinct pairs can't collide — both parts are arbitrary strings, so any
+ * printable delimiter could appear inside them. Never parsed back.
+ */
+export const entityKey = (modelName: ModelName, modelId: ModelId): string =>
+  `${modelName}\u0000${modelId}`

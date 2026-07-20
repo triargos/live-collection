@@ -1,5 +1,5 @@
 import { Data, Effect, Option, Schedule, Stream } from "effect"
-import { SyncId, type CatchupResponse, type Epoch, type HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
+import { type CatchupResponse, type Epoch, type HydratedSyncEventEnvelope, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { CatchupClientShape } from "./catchup-client.js"
 import type { LastSyncIdStoreShape } from "./last-sync-id-store.js"
 import type { SyncJournalShape, JournalEvent } from "./sync-journal.js"
@@ -36,8 +36,6 @@ const rowFromEvent = (event: EntityEvent): JournalEvent =>
         modelId: event.modelId,
         data: Option.some(event.data),
       }
-
-const zero = SyncId.make("0")
 
 /**
  * The INGEST machine — the single fiber that owns the network→journal path.
@@ -156,7 +154,7 @@ export const makeIngest = (deps: {
     })
 
   const cycle = Effect.gen(function* () {
-    const from = Option.getOrElse(yield* cursorStore.get, () => zero)
+    const from = Option.getOrElse(yield* cursorStore.get, () => zeroSyncId)
     const response = yield* catchup.fetch({ from }).pipe(
       Effect.map(Option.some),
       Effect.catchTag("CatchupFailed", (error) =>
