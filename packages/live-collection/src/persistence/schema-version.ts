@@ -1,12 +1,12 @@
-import { Schema, SchemaRepresentation } from "effect"
+import { Schema, SchemaRepresentation } from "effect";
 
 /**
  * The derived persisted-schema version — a branded FNV-1a hash of the schema's
  * structural shape. It crosses two seams under one identity: TanStack's persistence
- * config (where it widens to a plain `number`) and the event log's base-watermark key
- * (where it namespaces the watermark to the base it describes).
+ * config (where it widens to a plain `number`) and the journal's collection
+ * last-applied-syncId key (where it namespaces the mark to the saved rows it describes).
  */
-export const SchemaVersion = Schema.Number.pipe(Schema.brand("SchemaVersion"))
+export const SchemaVersion = Schema.Finite.pipe(Schema.brand("SchemaVersion"))
 export type SchemaVersion = typeof SchemaVersion.Type
 
 /**
@@ -22,11 +22,11 @@ export type SchemaVersion = typeof SchemaVersion.Type
  * local base: a missed type change would silently keep stale-typed rows.
  *
  * A version change has **two** effects that must stay in lockstep: TanStack dumps and
- * rebuilds the persisted local table, and — because the version is part of the base
- * watermark's identity in the event log — the old watermark is orphaned, so the next
- * mount decides `Snapshot` and re-lists from the server. Were the watermark not
+ * rebuilds the persisted local table, and — because the version is part of the
+ * collection's last-applied-syncId identity in the journal — the old mark is orphaned,
+ * so the next mount decides `Snapshot` and re-lists from the server. Were the mark not
  * versioned, it would survive the table dump and the mount would `Skip` against an
- * empty base, silently freezing the collection.
+ * empty table, silently freezing the collection.
  *
  * Trade-off: if Effect's AST-representation format shifts between versions, the hash
  * changes and you get a spurious reset on upgrade — a harmless refetch, the right side

@@ -4,7 +4,6 @@ import { sessionGroup } from "@pi-demo/shared"
 import {
   HydratedSyncEventEnvelope,
   intersects,
-  UserId,
 } from "@triargos/live-collection-protocol"
 import { ProjectRepo } from "../repo/project-repo.js"
 import { TodoRepo } from "../repo/todo-repo.js"
@@ -33,7 +32,7 @@ export const SseRoute = HttpRouter.add("GET", "/api/sync", (request) =>
       Stream.mapEffect((event) =>
         hydrateEvents({
           events: [event],
-          ctx: { userId: UserId.make(session), syncGroups: allowed },
+          syncGroups: allowed,
         }).pipe(
           Effect.provideService(ProjectRepo, projects),
           Effect.provideService(TodoRepo, todos),

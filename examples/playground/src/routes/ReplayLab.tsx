@@ -11,7 +11,7 @@ import { useDebugLog } from "../debug/use-debug-bus.js"
 
 // A dedicated, throwaway scope — separate from the org-1/org-2 tabs (which stay mounted once visited) so
 // the lab can be unmounted at will. Reset bumps the generation to a *fresh* scope, the cleanest wipe: a
-// new scope has no base watermark and no logged events, so it starts the cycle over from zero.
+// new scope has no last-applied mark and no logged events, so it starts the cycle over from zero.
 const SCOPE_BASE = "replay-lab"
 const keyFor = (scope: string): CollectionKey<unknown> => scopedKey({ entity: "Webhook", scope })
 

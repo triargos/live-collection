@@ -79,7 +79,7 @@ describe("liveCollectionOptions — A.3 persistence gate", () => {
       assert.strictEqual(present, true)
     }))
 
-  it.live("writes accumulate on the persisted base and the latest value wins", () =>
+  it.live("writes accumulate on the saved rows and the latest value wins", () =>
     Effect.gen(function* () {
       const persistence = makeNodeSqlitePersistence()
       yield* withMount(persistence, rowOpts, (c) => c.utils.writeSynced({ id: "r1", name: "a" }))
@@ -151,7 +151,7 @@ describe("liveCollectionOptions — A.3 persistence gate", () => {
       assert.strictEqual(hasR3, true) // new row present
     }))
 
-  it.live("a schema change resets the persisted base (dump-and-rebuild)", () =>
+  it.live("a schema change resets the saved rows (dump-and-rebuild)", () =>
     Effect.gen(function* () {
       const persistence = makeNodeSqlitePersistence()
       const v1: Opts<Row> = { id: "evolving", schema: Row, getKey: (r) => k(r.id) }

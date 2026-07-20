@@ -78,7 +78,7 @@ export function RegistryTab({ pg }: { readonly pg: Playground }) {
         >
           <div className="grid grid-cols-2 gap-2">
             <Stat label="Event log" value={`${server.log} events`} />
-            <Stat label="High-water syncId" value={`#${server.lastSyncId}`} />
+            <Stat label="Latest syncId" value={`#${server.lastSyncId}`} />
           </div>
         </Section>
 

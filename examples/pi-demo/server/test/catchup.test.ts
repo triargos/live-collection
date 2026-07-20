@@ -5,7 +5,7 @@ import {
   deriveGroup,
   ModelId,
   ModelName,
-  PendingInsert,
+  PendingSyncEvent,
 } from "@triargos/live-collection-protocol"
 import {
   type Project,
@@ -67,7 +67,7 @@ describe("GET /api/catchup", () => {
       assert.strictEqual((yield* jsonRequest("/todos", todo)).status, 200)
       assert.strictEqual((yield* request(`/todos/${todo.id}`, { method: "DELETE" })).status, 204)
 
-      yield* dispatcher.dispatch(PendingInsert.make({
+      yield* dispatcher.dispatch(PendingSyncEvent.cases.Insert.make({
         modelName: ModelName.make("Foreign"),
         modelId: ModelId.make("hidden"),
         syncGroups: [deriveGroup(["other"])] as const,

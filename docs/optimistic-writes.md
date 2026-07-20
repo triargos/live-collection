@@ -173,7 +173,7 @@ Steps 6–7 are the read path — see [architecture.md](./architecture.md) and t
 ## Not built (and why)
 
 - **Offline-durable writes — deferred.** Persisted collections persist the *synced* store, not the optimistic overlay, so a write made offline does not survive reload today. A durable offline queue needs a **separate mutation log** (replayed on reconnect), which is a future pass. (`@tanstack/offline-transactions` does not exist — this path is built on the native handlers above, not a phantom dep.)
-- **`clientId` / echo-suppression — not needed.** Client-minted ids make the self-echo idempotent, so there is no server-side originator filter on events, `SyncContext`, or the HTTP contract.
+- **`clientId` / echo-suppression — not needed.** Client-minted ids make the self-echo idempotent, so there is no server-side originator filter on events or the HTTP contract.
 
 ---
 

@@ -1,14 +1,10 @@
 import { Context, Effect, Layer, Ref } from "effect"
 import {
   compareSyncId,
-  DeleteEvent,
   Epoch,
-  InsertEvent,
-  type PendingSyncEvent,
-  ResyncEvent,
+  PendingSyncEvent,
   SyncId,
-  type SyncEvent,
-  UpdateEvent,
+  SyncEvent,
 } from "@triargos/live-collection-protocol"
 
 export interface SyncEventStoreShape {
@@ -42,13 +38,12 @@ const makeMemory: Effect.Effect<SyncEventStoreShape> = Effect.gen(function* () {
           syncId: SyncId.make(String(next)),
           createdAt: new Date(),
         }
-        const event = pending._tag === "Insert"
-          ? InsertEvent.make({ ...pending, ...assigned })
-          : pending._tag === "Update"
-            ? UpdateEvent.make({ ...pending, ...assigned })
-            : pending._tag === "Delete"
-              ? DeleteEvent.make({ ...pending, ...assigned })
-              : ResyncEvent.make({ ...pending, ...assigned })
+        const event = PendingSyncEvent.match<SyncEvent>(pending, {
+          Insert: (p) => SyncEvent.cases.Insert.make({ ...p, ...assigned }),
+          Update: (p) => SyncEvent.cases.Update.make({ ...p, ...assigned }),
+          Delete: (p) => SyncEvent.cases.Delete.make({ ...p, ...assigned }),
+          Resync: (p) => SyncEvent.cases.Resync.make({ ...p, ...assigned }),
+        })
         return [event, { counter: next, events: [...events, event] }]
       }),
     since: (from) =>

@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import {
   defineCollection,
-  EventLogStore,
+  SyncJournal,
   type LiveCollection,
   type LiveRuntime,
   makeLiveRuntime,
@@ -45,9 +45,9 @@ export const createPlayground = async (): Promise<Playground> => {
 
   const bus = new DebugBus()
   const backend = makeSharedBackend({ bus, tabId })
-  // EventLogStore (replay-on-mount) — durable IndexedDB, per-tab so two tabs are independent clients (one
-  // origin-shared default DB would clobber each other's log/watermarks). Survives reload; powers replay.
-  const sync = Layer.merge(backend.sync, EventLogStore.layer({ databaseName: `${dbName}-eventlog` }))
+  // SyncJournal (replay-on-mount) — durable IndexedDB, per-tab so two tabs are independent clients (one
+  // origin-shared default DB would clobber each other's journal/last-applied marks). Survives reload; powers replay.
+  const sync = Layer.merge(backend.sync, SyncJournal.layer({ databaseName: `${dbName}-eventlog` }))
   const runtime = makeLiveRuntime({ persistence, sync })
 
   const rawWebhooks = defineCollection({

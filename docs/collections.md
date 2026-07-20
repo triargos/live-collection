@@ -60,7 +60,7 @@ The drain applies:
 
 Then it calls `broker.markApplied`. Model decoding and scope filtering live here, not in the broker.
 
-A malformed upsert is warned and skipped without stopping the stream. A valid upsert for another scope is also skipped. Both still advance this subscriber's watermark because the event was handled.
+A malformed upsert is warned and skipped without stopping the stream. A valid upsert for another scope is also skipped. Both still advance this subscriber's last-applied syncId because the event was handled.
 
 ## Optimistic writes
 

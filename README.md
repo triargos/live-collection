@@ -15,7 +15,7 @@ The dependency DAG is acyclic: `protocol → live-collection → react`.
 | Package | What it is | You import it when… |
 |---|---|---|
 | **`@triargos/live-collection-protocol`** | The shared **contract kit** — pure, no I/O. `SyncEvent`/`HydratedSyncEvent` schemas, the sync-group grammar, the squasher fold, the `/catchup` request/response schemas, and the branded `ModelId`. The backend implements against it. | …you build the backend, or need the branded `ModelId` / wire schemas in app code. |
-| **`@triargos/live-collection`** | The frontend engine. `defineCollection`, `makeLiveRuntime`, the SSE transport, catchup, persistence, the durable `EventLogStore`, and the `LiveCollection<T>` hero type. | …always, in the client app. |
+| **`@triargos/live-collection`** | The frontend engine. `defineCollection`, `makeLiveRuntime`, the SSE transport, catchup, persistence, the durable `SyncJournal`, and the `LiveCollection<T>` hero type. | …always, in the client app. |
 | **`@triargos/live-collection-react`** | One React-specific piece: `useLiveSync`, which starts broker ingest on mount and interrupts it on unmount. Reads use `@tanstack/react-db` directly. | …your app is React. |
 
 Core is framework-neutral; `defineCollection` returns a native TanStack collection, so non-React apps drive it through `@tanstack/db` directly.
@@ -50,7 +50,7 @@ A worked slice (drawn from [`examples/playground`](examples/playground/)). Two c
 **1. Build the runtime once at startup.** `persistence` is your app-owned value; `sync` provides transport, catchup, cursor, and durable event log services.
 
 ```ts
-import { makeLiveRuntime, EventLogStore } from "@triargos/live-collection"
+import { makeLiveRuntime, SyncJournal } from "@triargos/live-collection"
 import { Layer } from "effect"
 import {
   createBrowserWASQLitePersistence,
@@ -62,7 +62,7 @@ const persistence = createBrowserWASQLitePersistence({ database })
 
 const runtime = makeLiveRuntime({
   persistence,
-  sync: Layer.merge(myTransportLayer, EventLogStore.layer({ databaseName: "app-eventlog" })),
+  sync: Layer.merge(myTransportLayer, SyncJournal.layer({ databaseName: "app-eventlog" })),
 })
 ```
 
@@ -114,22 +114,22 @@ That's the whole loop: `coll.insert` with a client-minted id shows instantly (op
 ## How it fits together
 
 - **`makeLiveRuntime`** has a synchronous mount surface (`registry` + `persistence`) and asynchronous `forkSync`/collection-drain fibers. `useLiveSync` starts broker ingest.
-- **The watermark** (`LastSyncId`) is a durable, global cursor that gates catchup — *not* the framework's `staleTime` (which resets on reload). Catchup deltas write through the **synced-store** path (`writeSynced`/`deleteSynced`), never the optimistic path.
-- **Replay-on-mount** (`EventLogStore` + `SyncBroker`): a durable IndexedDB log lets a freshly mounted collection receive replay and live tail as one stream. An in-band `Snapshot` rebuilds an untrusted base.
+- **The cursor** (`LastSyncId`) is a durable, global record of the newest syncId this client has ingested; it gates catchup — *not* the framework's `staleTime` (which resets on reload). Catchup deltas write through the **synced-store** path (`writeSynced`/`deleteSynced`), never the optimistic path.
+- **Replay-on-mount** (`SyncJournal` + `SyncBroker`): a durable IndexedDB log lets a freshly mounted collection receive replay and live tail as one stream. An in-band `Snapshot` rebuilds an untrusted base.
 - **The squasher** (in `protocol`) is a pure fold both ends rely on: a client catching up from any `syncId` converges to the same state.
 - **Scope, not backend, is the lever for large data.** Per-workspace collections (`<entity>:<scope>`) keep the working set small; both persistence backends hold a collection's working set in memory.
 
 ### Not built yet (and why)
 
-Mentioned so you don't reach for them: automatic unmounted-workspace eviction, offline-durable writes, a registry eviction backstop, and target-aware resync. Watermarks are already batched; resync currently snapshots every active subscriber in place.
+Mentioned so you don't reach for them: automatic unmounted-workspace eviction, offline-durable writes, a registry eviction backstop, and target-aware resync. Last-applied marks are already batched; resync currently snapshots every active subscriber in place.
 
 ---
 
 ## Docs
 
-- [`docs/protocol.md`](docs/protocol.md) — the wire contract: `SyncEvent`/`HydratedSyncEvent`, sync-group grammar, the squasher, resync sentinels.
-- [`docs/backend.md`](docs/backend.md) — what **you** must build: `/catchup`, the SSE `/sync` stream, dispatch, permission resolution.
-- [`docs/architecture.md`](docs/architecture.md) — `makeLiveRuntime`, the two execution surfaces, the loop, persistence, and the watermark in depth.
+- [`docs/protocol.md`](docs/protocol.md) — the wire contract: `SyncEvent`/`HydratedSyncEvent`, sync-group grammar, the squasher, resync targets.
+- [`docs/backend.md`](docs/backend.md) — the contract your server must satisfy: the `/catchup` and SSE endpoints and the invariants the client depends on.
+- [`docs/architecture.md`](docs/architecture.md) — `makeLiveRuntime`, the two execution surfaces, the loop, persistence, and the sync cursor in depth.
 - [`docs/collections.md`](docs/collections.md) — `defineCollection`, scoping, the optimistic write path, and `LiveCollection<T>`.
 - [`docs/react.md`](docs/react.md) — `useLiveSync` lifecycle and reading with `useLiveQuery`.
 

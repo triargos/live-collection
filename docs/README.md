@@ -27,7 +27,7 @@ for depth.
 - [`architecture.md`](./architecture.md) — the package boundaries and DAG, `makeLiveRuntime`, the two
   execution surfaces, the seam convention, and the codebase-wide conventions.
 - [`read-path.md`](./read-path.md) — the forever-running sync loop: catchup from a durable cursor,
-  then tail SSE; the transport, the watermark, and reconnect/resync behaviour.
+  then tail SSE; the transport, the durable cursor, and reconnect/resync behaviour.
 - [`replay-on-mount.md`](./replay-on-mount.md) — how a late-mounted collection heals itself:
   skip / replay / bootstrap from the durable event log.
 
@@ -36,6 +36,6 @@ for depth.
 - [`protocol.md`](./protocol.md) — the shared, pure-`effect` contract kit: sync-event schemas, the
   sync-group grammar, resync targets, branded ids, the squasher, and the `/catchup` schemas. Both the
   frontend and your backend depend on it.
-- [`backend.md`](./backend.md) — a spec of obligations for the server you implement: the `sync_events`
-  store, the event bus, the dispatcher, the permission resolver, `GET /catchup` and `GET /sync`,
-  resync emission, and retention.
+- [`backend.md`](./backend.md) — the contract your server must satisfy: the `/catchup` and SSE
+  endpoints the client calls, and the invariants (cursor semantics, epoch, resync, no echo
+  suppression) its correctness depends on.

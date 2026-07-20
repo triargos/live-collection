@@ -1,6 +1,6 @@
-import { Context, type Duration, Effect, Layer, type Queue, Schema, Stream } from "effect"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
+import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol";
+import { Context, type Duration, Effect, Layer, type Queue, Schema, Stream } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 /**
  * The live connection dropped — it ended, errored, or fell silent past the keep-alive
@@ -73,7 +73,7 @@ const makeHttp = (config: {
       ),
       Stream.flatMap(Stream.fromIterable),
       Stream.mapError((error) =>
-        error instanceof SyncConnectionLost ? error : new SyncConnectionLost({ reason: error.message }),
+        error._tag === "SyncConnectionLost" ? error : new SyncConnectionLost({ reason: error.message }),
       ),
       // A server-closed stream is still a drop — surface it so the broker reconnects.
       Stream.concat(Stream.fail(new SyncConnectionLost({ reason: "stream ended" }))),

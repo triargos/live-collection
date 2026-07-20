@@ -2,8 +2,8 @@ import { Context, Effect, Layer, Option, Order, Ref, Schema } from "effect"
 import { compareSyncId, SyncId } from "@triargos/live-collection-protocol"
 
 /**
- * The single, durable, **global** sync cursor — the high-water mark of events this
- * client has applied. It gates catchup (`from = cursor ?? "0"`) and advances as catchup
+ * The single, durable, **global** sync cursor — the newest syncId this client has
+ * ingested from any model. It gates catchup (`from = cursor ?? "0"`) and advances as catchup
  * responses and live events land. It must survive reloads — that is its whole point, and
  * why it isn't TanStack's `staleTime` (which resets on reload).
  *
@@ -62,7 +62,7 @@ const makeMemory: Effect.Effect<LastSyncIdStoreShape> = Effect.gen(function* () 
  *   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
  *   CatchupClient.layer({ url: "/api/catchup" }),
  *   LastSyncIdStore.layer,
- *   EventLogStore.layer(),
+ *   SyncJournal.layer(),
  * )
  * ```
  */

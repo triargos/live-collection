@@ -31,7 +31,8 @@
     "@tanstack/db": "0.6.7",
     "@tanstack/db-sqlite-persistence-core": "0.1.11",
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.98"
+    "effect": "^4.0.0-beta.98",
+    "idb": "^8.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"

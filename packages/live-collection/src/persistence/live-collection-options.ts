@@ -16,7 +16,7 @@ export interface LiveCollectionOptions<T extends object> {
   readonly getKey: (entity: T) => ModelId
   /** `Infinity` — the registry owns collection lifetime; TanStack never GCs a live collection. */
   readonly gcTime: number
-  /** `"eager"` — load the persisted base when the collection starts, not query-driven. */
+  /** `"eager"` — load the saved rows when the collection starts, not query-driven. */
   readonly syncMode: "eager"
   /** `true` — start sync on mount, so the write session is captured and hydration runs. */
   readonly startSync: true
