@@ -3,6 +3,7 @@ import { TestClock } from "effect/testing"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
+  Epoch,
   type HydratedSyncEventEnvelope,
   ModelId,
   ModelName,
@@ -86,7 +87,7 @@ const run = <A, E>(options: {
       const events = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
-        options.catchup ?? CatchupClient.layerMemory({ events: [], lastSyncId: sid("0") }),
+        options.catchup ?? CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
         LastSyncIdStore.layerMemory,
         EventLogStore.layerMemory,
       )
@@ -217,7 +218,7 @@ describe("SyncBroker", () => {
 
   it.effect("a catchup Resync snapshots active subscribers at response.lastSyncId", () =>
     run({
-      catchup: CatchupClient.layerMemory({ events: [resync("3")], lastSyncId: sid("5") }),
+      catchup: CatchupClient.layerMemory({ events: [resync("3")], lastSyncId: sid("5"), epoch: Option.none() }),
       body: ({ broker }) =>
         Effect.gen(function* () {
           yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
@@ -260,7 +261,7 @@ describe("SyncBroker", () => {
       const log = yield* EventLogStore.pipe(Effect.provide(EventLogStore.layerMemory))
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
-        CatchupClient.layerMemory({ events: [], lastSyncId: sid("0") }),
+        CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
         LastSyncIdStore.layerMemory,
         Layer.succeed(EventLogStore, log),
       )
@@ -315,6 +316,91 @@ describe("SyncBroker", () => {
           const received = yield* Fiber.join(signals)
           assert.deepStrictEqual(tags(received), ["Snapshot", "Upsert"])
           assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("10"))
+          yield* Fiber.interrupt(start)
+        }),
+    }))
+
+  it.effect("the first catchup epoch is adopted and the response applies normally", () =>
+    run({
+      catchup: CatchupClient.layerMemory({ events: [insert("1")], lastSyncId: sid("1"), epoch: Option.some(Epoch.make("a")) }),
+      body: ({ broker, log }) =>
+        Effect.gen(function* () {
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
+          const signals = yield* collect(broker, 1)
+          const start = yield* Effect.forkScoped(broker.start)
+          assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Upsert"])
+          assert.deepStrictEqual(yield* log.getEpoch, Option.some(Epoch.make("a")))
+          yield* Fiber.interrupt(start)
+        }),
+    }))
+
+  it.effect("a matching catchup epoch applies normally — no reset, state intact", () =>
+    run({
+      catchup: CatchupClient.layerMemory({ events: [insert("11")], lastSyncId: sid("11"), epoch: Option.some(Epoch.make("a")) }),
+      body: ({ broker, log, cursor, events }) =>
+        Effect.gen(function* () {
+          yield* log.setEpoch(Epoch.make("a"))
+          yield* log.append([logged("10")])
+          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("10") })
+          yield* cursor.set(sid("10"))
+          const signals = yield* collect(broker, 1)
+          const start = yield* Effect.forkScoped(broker.start)
+          assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Upsert"]) // #11, replayed/tail — no Snapshot
+          assert.deepStrictEqual((yield* log.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("10"), sid("11")])
+          yield* Queue.shutdown(events)
+          yield* Fiber.interrupt(start)
+        }),
+    }))
+
+  it.effect("an epoch mismatch self-heals: mounted subscribers snapshot at the new cursor past the stale tail guard", () =>
+    run({
+      // The server timeline reset: its new head (3) is far below the client's durable state (500).
+      catchup: CatchupClient.layerMemory({ events: [], lastSyncId: sid("3"), epoch: Option.some(Epoch.make("b")) }),
+      body: ({ broker, log, cursor, events }) =>
+        Effect.gen(function* () {
+          yield* log.setEpoch(Epoch.make("a"))
+          yield* log.append([logged("500")])
+          yield* log.setBaseWatermark({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("500") })
+          yield* cursor.set(sid("500"))
+
+          // Mounted BEFORE the reset: decision Skip, tail head = 500 — the poisoned guard.
+          const signals = yield* collect(broker, 2)
+          const start = yield* Effect.forkScoped(broker.start)
+          yield* Queue.offer(events, insert("4")) // new-epoch live event, "below" the old head
+          const received = yield* Fiber.join(signals)
+          assert.deepStrictEqual(tags(received), ["Snapshot", "Upsert"])
+          assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("3"))
+          assert.strictEqual(received[1]!._tag === "Upsert" && received[1]!.syncId, sid("4"))
+
+          // Local sync state was wiped and rebuilt under the new timeline.
+          assert.deepStrictEqual(yield* log.getEpoch, Option.some(Epoch.make("b")))
+          yield* waitUntil(cursor.get.pipe(Effect.map(Option.contains(sid("4")))))
+          assert.deepStrictEqual((yield* log.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("4")])
+          yield* Fiber.interrupt(start)
+        }),
+    }))
+
+  it.effect("after an epoch reset a fresh mount decides Snapshot and a pre-reset pending watermark never resurfaces", () =>
+    run({
+      catchup: CatchupClient.layerMemory({ events: [], lastSyncId: sid("3"), epoch: Option.some(Epoch.make("b")) }),
+      body: ({ broker, log, cursor }) =>
+        Effect.gen(function* () {
+          const key = scopedKey({ entity: "Webhook", scope: "org-1" })
+          yield* log.setEpoch(Epoch.make("a"))
+          yield* cursor.set(sid("500"))
+          // An applied-but-unflushed old-epoch watermark — it must die with the reset,
+          // not flush later and re-poison the wiped log.
+          yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("500") })
+
+          const start = yield* Effect.forkScoped(broker.start)
+          yield* waitUntil(log.getEpoch.pipe(Effect.map(Option.contains(Epoch.make("b")))))
+          yield* TestClock.adjust("100 millis") // the flush tick — pending must already be empty
+          assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.none())
+
+          // A mount after the reset finds no watermark ⇒ Snapshot at the new cursor.
+          const signals = yield* collect(broker, 1)
+          const received = yield* Fiber.join(signals)
+          assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("3"))
           yield* Fiber.interrupt(start)
         }),
     }))

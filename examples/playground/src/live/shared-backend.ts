@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Layer, ManagedRuntime, Queue, Schema } from "effect"
+import { Context, Duration, Effect, Layer, ManagedRuntime, Option, Queue, Schema } from "effect"
 import { CatchupClient, LastSyncIdStore, SyncTransport } from "@triargos/live-collection"
 import {
   type CatchupResponse,
@@ -227,7 +227,9 @@ export const makeSharedBackend = (config: {
         Effect.flatMap((log) => {
           // compareSyncId, never Number(): syncIds are exact beyond MAX_SAFE_INTEGER (protocol ids.ts).
           const events = log.filter((e) => compareSyncId(e.syncId, from) > 0)
-          const response: CatchupResponse = { events, lastSyncId: SyncId.make(String(rawSeq())) }
+          // No epoch: the shared localStorage log is durable across reloads/redeploys, so its
+          // syncId timeline never resets — the epoch escape hatch is for backends that can't say that.
+          const response: CatchupResponse = { events, lastSyncId: SyncId.make(String(rawSeq())), epoch: Option.none() }
           return bus
             .tap({ direction: "in", channel: "catchup", label: `catchup from #${from} → ${events.length} events`, payload: { from, count: events.length } })
             .pipe(Effect.as(response))

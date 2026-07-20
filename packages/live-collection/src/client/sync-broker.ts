@@ -14,6 +14,8 @@ import {
 } from "effect"
 import {
   compareSyncId,
+  type CatchupResponse,
+  type Epoch,
   type HydratedSyncEventEnvelope,
   type ModelId,
   type ModelName,
@@ -69,9 +71,18 @@ export interface SyncBrokerOptions {
   readonly watermarkFlushEvery?: Duration.Input
 }
 
-type PublishedItem =
-  | { readonly _tag: "Event"; readonly row: LoggedEvent }
-  | { readonly _tag: "Resync"; readonly at: SyncId }
+/**
+ * What the ingest side publishes to subscriber tails. `Event`/`Resync` respect each
+ * subscriber's monotonic tail guard; `EpochReset` bypasses it — after a server timeline
+ * reset every mounted subscriber's head is an old-epoch (large) syncId, so a guarded
+ * item at the new-epoch (small) cursor would be silently dropped.
+ */
+type PublishedItem = Data.TaggedEnum<{
+  Event: { readonly row: LoggedEvent }
+  Resync: { readonly at: SyncId }
+  EpochReset: { readonly at: SyncId }
+}>
+const PublishedItem = Data.taggedEnum<PublishedItem>()
 
 type PendingWatermark = {
   readonly key: CollectionKey<unknown>
@@ -203,15 +214,21 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
             ...(decision === "Snapshot" ? [SyncSignal.Snapshot({ at })] : []),
             ...rows.map(signalFromRow),
           ]
+          type TailStep = readonly [SyncId, ReadonlyArray<SyncSignal>]
           const tail = Stream.fromSubscription(queue).pipe(
-            Stream.mapAccum(() => head, (lastEmitted, item) => {
-              if (compareSyncId(item._tag === "Resync" ? item.at : item.row.syncId, lastEmitted) <= 0) {
-                return [lastEmitted, []]
-              }
-              if (item._tag === "Resync") return [item.at, [SyncSignal.Snapshot({ at: item.at })]]
-              if (item.row.modelName !== modelName) return [lastEmitted, []]
-              return [item.row.syncId, [signalFromRow(item.row)]]
-            }),
+            Stream.mapAccum(() => head, (lastEmitted, item) =>
+              PublishedItem.$match(item, {
+                // Unconditional: the old-epoch head is meaningless against new-epoch syncIds.
+                EpochReset: ({ at }): TailStep => [at, [SyncSignal.Snapshot({ at })]],
+                Resync: ({ at }): TailStep =>
+                  compareSyncId(at, lastEmitted) <= 0 ? [lastEmitted, []] : [at, [SyncSignal.Snapshot({ at })]],
+                Event: ({ row }): TailStep => {
+                  if (compareSyncId(row.syncId, lastEmitted) <= 0) return [lastEmitted, []]
+                  if (row.modelName !== modelName) return [lastEmitted, []]
+                  return [row.syncId, [signalFromRow(row)]]
+                },
+              }),
+            ),
           )
           return Stream.concat(Stream.fromIterable(replay), tail)
         }),
@@ -242,7 +259,7 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
               data: Option.some(event.data),
             }
       return log.append([row]).pipe(
-        Effect.andThen(PubSub.publish(published, { _tag: "Event", row })),
+        Effect.andThen(PubSub.publish(published, PublishedItem.Event({ row }))),
         Effect.andThen(cursorStore.set(event.syncId)),
         Effect.andThen(trimIfNeeded()),
         Effect.asVoid,
@@ -253,20 +270,17 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
       event._tag === "Resync"
         ? log.setLastResync(event.syncId).pipe(
             Effect.andThen(cursorStore.set(event.syncId)),
-            Effect.andThen(PubSub.publish(published, { _tag: "Resync", at: event.syncId })),
+            Effect.andThen(PubSub.publish(published, PublishedItem.Resync({ at: event.syncId }))),
             Effect.asVoid,
           )
         : ingestEntity(event)
 
-    const applyCatchup = (response: {
-      readonly events: ReadonlyArray<HydratedSyncEventEnvelope>
-      readonly lastSyncId: SyncId
-    }): Effect.Effect<void> => {
+    const applyCatchup = (response: CatchupResponse): Effect.Effect<void> => {
       const resyncs = response.events.filter((event) => event._tag === "Resync")
       if (resyncs.length > 0) {
         return Effect.forEach(resyncs, (event) => log.setLastResync(event.syncId), { discard: true }).pipe(
           Effect.andThen(cursorStore.set(response.lastSyncId)),
-          Effect.andThen(PubSub.publish(published, { _tag: "Resync", at: response.lastSyncId })),
+          Effect.andThen(PubSub.publish(published, PublishedItem.Resync({ at: response.lastSyncId }))),
           Effect.asVoid,
         )
       }
@@ -274,6 +288,41 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
         discard: true,
       }).pipe(Effect.andThen(cursorStore.set(response.lastSyncId)))
     }
+
+    /**
+     * The server's event-log timeline changed identity — every locally remembered syncId
+     * (log rows, watermarks, floors, cursor, resync mark, pending marks) is a coordinate
+     * in a timeline that no longer exists. Wipe it all, adopt the new epoch, and snapshot
+     * every subscriber at the new cursor. Ordering matters:
+     * pending first (an unflushed old-epoch watermark must never reach the log after the
+     * wipe), then the store wipe, then the new identity, then the cursor, then the fanout.
+     */
+    const resetForEpoch = (epoch: Epoch, at: SyncId): Effect.Effect<void> =>
+      Ref.set(pending, new Map<string, PendingWatermark>()).pipe(
+        Effect.andThen(log.reset),
+        Effect.andThen(log.setEpoch(epoch)),
+        Effect.andThen(cursorStore.clear), // `set` is monotonic and would keep the old-epoch cursor
+        Effect.andThen(cursorStore.set(at)),
+        Effect.andThen(PubSub.publish(published, PublishedItem.EpochReset({ at }))),
+        Effect.asVoid,
+      )
+
+    // No epoch on the wire ⇒ no checking (the backend guarantees one everlasting timeline).
+    // First epoch seen ⇒ adopt it. Same ⇒ proceed. Different ⇒ the timeline reset: heal.
+    const applyEpochChecked = (response: CatchupResponse): Effect.Effect<void> =>
+      Option.match(response.epoch, {
+        onNone: () => applyCatchup(response),
+        onSome: (epoch) =>
+          log.getEpoch.pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => log.setEpoch(epoch).pipe(Effect.andThen(applyCatchup(response))),
+                onSome: (stored) =>
+                  stored === epoch ? applyCatchup(response) : resetForEpoch(epoch, response.lastSyncId),
+              }),
+            ),
+          ),
+      })
 
     const cycle = Effect.gen(function* () {
       const from = Option.getOrElse(yield* cursorStore.get, () => zero)
@@ -285,7 +334,7 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
           ),
         ),
       )
-      yield* Option.match(response, { onNone: () => Effect.void, onSome: applyCatchup })
+      yield* Option.match(response, { onNone: () => Effect.void, onSome: applyEpochChecked })
       yield* Stream.runForEach(transport.connect, ingestLive)
     })
 

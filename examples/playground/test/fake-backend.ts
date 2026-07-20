@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Layer, ManagedRuntime, Queue } from "effect"
+import { Context, Duration, Effect, Layer, ManagedRuntime, Option, Queue } from "effect"
 import { CatchupClient, EventLogStore, LastSyncIdStore, SyncTransport } from "@triargos/live-collection"
 import {
   type CatchupResponse,
@@ -90,6 +90,7 @@ export const makeFakeBackend = (config?: {
         Effect.as<CatchupResponse>({
           events: log.filter((e) => Number(e.syncId) > Number(from)),
           lastSyncId: SyncId.make(String(seq)),
+          epoch: Option.none(),
         }),
       ),
   })

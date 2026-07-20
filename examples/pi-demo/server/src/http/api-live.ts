@@ -175,7 +175,7 @@ export const SyncApiLive = HttpApiBuilder.group(DemoApi, "sync", (handlers) =>
       const context = { userId: UserId.make(session), syncGroups: allowed }
       const events = yield* hydrateEvents({ events: squash(visible), ctx: context })
       const lastSyncId = yield* store.currentSyncId
-      return { events, lastSyncId }
+      return { events, lastSyncId, epoch: Option.some(store.epoch) }
     }),
   ),
 )

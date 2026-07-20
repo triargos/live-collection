@@ -1,6 +1,8 @@
 import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import { ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { SchemaVersion } from "../src/persistence/schema-version.js"
+import { scopedKey } from "../src/registry/collection-key.js"
 import { EventLogStore, type LoggedEvent } from "../src/client/event-log-store.js"
 
 const sid = (s: string) => SyncId.make(s)
@@ -39,5 +41,33 @@ describe("EventLogStore (memory)", () => {
         rows.map((r) => r.syncId),
         [sid("2"), sid("3"), sid("4")],
       )
+    }).pipe(Effect.provide(EventLogStore.layerMemory)))
+
+  it.effect("epoch round-trips: None until set, then the stored value", () =>
+    Effect.gen(function* () {
+      const log = yield* EventLogStore
+      assert.deepStrictEqual(yield* log.getEpoch, Option.none())
+      yield* log.setEpoch(Epoch.make("a1c9"))
+      assert.deepStrictEqual(yield* log.getEpoch, Option.some(Epoch.make("a1c9")))
+    }).pipe(Effect.provide(EventLogStore.layerMemory)))
+
+  it.effect("reset wipes the entire store: events, watermarks, floors, lastResync, epoch", () =>
+    Effect.gen(function* () {
+      const log = yield* EventLogStore
+      const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
+      const version = SchemaVersion.make(1)
+      yield* log.append(["1", "2", "3"].map((s, i) => insert(s, "org-1", `w${i}`)))
+      yield* log.prune({ perModel: 2, total: 100 }) // establishes a floor at 1
+      yield* log.setBaseWatermark({ key, schemaVersion: version, at: sid("3") })
+      yield* log.setLastResync(sid("2"))
+      yield* log.setEpoch(Epoch.make("old"))
+
+      yield* log.reset
+
+      assert.deepStrictEqual(yield* log.read({ modelName: ModelName.make("Webhook"), since: sid("0") }), [])
+      assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.none())
+      assert.deepStrictEqual(yield* log.floor(ModelName.make("Webhook")), Option.none())
+      assert.deepStrictEqual(yield* log.getLastResync, Option.none())
+      assert.deepStrictEqual(yield* log.getEpoch, Option.none())
     }).pipe(Effect.provide(EventLogStore.layerMemory)))
 })

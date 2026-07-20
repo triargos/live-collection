@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { SyncId } from "./ids.js"
+import { Epoch, SyncId } from "./ids.js"
 import { HydratedSyncEventEnvelope } from "./sync-event.js"
 
 /**
@@ -25,6 +25,13 @@ export type CatchupRequest = typeof CatchupRequest.Type
  * The events since the requested cursor, plus the new cursor to store. Each event's
  * `data` is opaque JSON here, decoded later against the matching model schema.
  *
+ * `epoch` is the identity of the log timeline `lastSyncId` belongs to — **optional on
+ * the wire** (absent key ⇒ `None` ⇒ the client does no epoch checking). The protocol's
+ * invariant is that syncIds are durable and monotonic within one epoch; a backend whose
+ * log can reset (memory store, truncation, restore) sends `epoch` so the client can
+ * detect the mismatch and self-heal by wiping its local sync state and re-bootstrapping.
+ * Backends with a genuinely durable log omit it and lose nothing.
+ *
  * @example
  * ```ts
  * // Backend handler sketch — the route, auth, and errors are yours:
@@ -36,6 +43,7 @@ export type CatchupRequest = typeof CatchupRequest.Type
  */
 export const CatchupResponse = Schema.Struct({
   events: Schema.Array(HydratedSyncEventEnvelope),
-  lastSyncId: SyncId
+  lastSyncId: SyncId,
+  epoch: Schema.OptionFromOptionalKey(Epoch)
 })
 export type CatchupResponse = typeof CatchupResponse.Type

@@ -577,6 +577,23 @@ Resync events are emitted by:
 - **Admin tooling.** Manual data-correction flows can emit per-model or
   global resyncs to force clients to refresh.
 
+### The epoch invariant (when resync events can't reach the client)
+
+Every resync variant above arrives *as an event with a syncId* — which
+assumes the invariant that syncIds are **durable and monotonic within one
+epoch** (the identity of the event log's timeline). If the log's history is
+destroyed or replaced — memory-store restart, table truncation, backup
+restore, database migration — the sequence restarts and a resync event
+minted at the new (small) syncId lands *below* a client's durable cursor,
+so the client's monotonic guards silently drop it along with everything
+else: the client freezes. The escape hatch is the optional
+`CatchupResponse.epoch` (an opaque, server-minted timeline identity, not a
+software version): backends that can't guarantee the invariant send it;
+the client stores it durably and on mismatch self-heals by wiping its
+local sync state (event log, watermarks, floors, cursor) and
+re-bootstrapping every collection via `Snapshot`. Backends with a
+genuinely durable log omit the field and nothing changes.
+
 ## 10. Echo suppression
 
 Every client generates a `clientId` on first load. Every request
