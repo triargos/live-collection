@@ -4,6 +4,7 @@
     "plugins": [
       {
         "name": "@effect/language-service",
+        "ignoreEffectWarningsInTscExitCode": true,
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "suggestion",
           "asyncFunction": "warning",
