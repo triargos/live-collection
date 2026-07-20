@@ -13,7 +13,7 @@
 Handlers are **optional fields on `defineCollection`** — there is no separate handler type to learn. They are TanStack DB's native mutation params (`InsertMutationFnParams` / `UpdateMutationFnParams` / `DeleteMutationFnParams`), but **Effect-returning**, carrying your app's `R`. Insert/update **return the server-confirmed row** (`Effect<T>`); delete returns `Effect<void>` (the library has the key already):
 
 ```ts
-// packages/live-collection/src/registry/define-collection.ts:58
+// packages/live-collection/src/define-collection.ts:58
 interface MutationHandlers<T extends object, R> {
   readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
   readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
@@ -30,7 +30,7 @@ You write a **pure Effect** — `yield* SomeApi` — with no `runPromise` boiler
 The handler's `R` (and `listFn`'s `R`) is satisfied by a `ManagedRuntime` you pass as `services`. The field is **required iff `R ≠ never`** — a model whose handlers need no services may omit it. This is enforced at the type level:
 
 ```ts
-// packages/live-collection/src/registry/define-collection.ts:69
+// packages/live-collection/src/define-collection.ts:69
 type ServicesOf<R> = [R] extends [never]
   ? { readonly services?: ManagedRuntime.ManagedRuntime<never, never> }
   : { readonly services: ManagedRuntime.ManagedRuntime<R, never> }
@@ -43,7 +43,7 @@ type ServicesOf<R> = [R] extends [never]
 The reconcile the library performs for you writes through `collection.utils`, the **synced-store write path** — the same path the SSE dispatcher uses. This is `SyncWrite<T>`:
 
 ```ts
-// packages/live-collection/src/dispatch/sync-write.ts:15
+// packages/live-collection/src/persistence/sync-write.ts:15
 export interface SyncWrite<T> {
   /** Upsert one entity into the local baseline (insert if absent, replace if present). */
   readonly writeSynced: (entity: T) => Effect.Effect<void>

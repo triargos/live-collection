@@ -56,7 +56,7 @@ const runtime = makeLiveRuntime({
   sync: Layer.mergeAll(
     SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
     CatchupClient.layer({ url: "/api/catchup" }),
-    LastSyncIdStore.layer,
+    SyncCursor.layer,
     SyncJournal.layer(),
   ).pipe(Layer.provide(FetchHttpClient.layer)),
 })

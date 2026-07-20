@@ -5,8 +5,8 @@ import { persistedCollectionOptions, type PersistedCollectionPersistence } from 
 import { ModelId } from "@triargos/live-collection-protocol"
 import type { LiveCollection } from "../src/persistence/live-collection.js"
 import { liveCollectionOptions } from "../src/persistence/live-collection-options.js"
-import { deriveSchemaVersion } from "../src/persistence/schema-version.js"
-import type { SyncWrite } from "../src/dispatch/sync-write.js"
+import { deriveSchemaVersion } from "../src/core/schema-version.js"
+import type { SyncWrite } from "../src/persistence/sync-write.js"
 import { makeNodeSqlitePersistence } from "./sqlite-persistence.js"
 
 // The A.3 persistence gate over the real composition `defineCollection`'s `make` builds:

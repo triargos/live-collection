@@ -2,7 +2,7 @@ import type { HttpClient } from "effect/unstable/http"
 import {
   CatchupClient,
   SyncJournal,
-  LastSyncIdStore,
+  SyncCursor,
   type LiveRuntime,
   makeLiveRuntime,
   SyncTransport,
@@ -21,7 +21,7 @@ export const createRuntime = async (
   const sync = Layer.mergeAll(
     SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
     CatchupClient.layer({ url: "/api/catchup" }),
-    LastSyncIdStore.layer,
+    SyncCursor.layer,
     SyncJournal.layer({ databaseName: "pi-demo-eventlog" }),
   ).pipe(Layer.provide(httpClient))
 

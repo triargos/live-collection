@@ -1,7 +1,7 @@
 import { Context, Effect, Exit, Layer, Scope } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { CollectionRegistry } from "../src/registry/collection-registry.js"
-import { globalKey, scopedKey } from "../src/registry/collection-key.js"
+import { globalKey, scopedKey } from "../src/core/collection-key.js"
 
 const tracked = (name: string, log: Array<string>) => {
   let creations = 0

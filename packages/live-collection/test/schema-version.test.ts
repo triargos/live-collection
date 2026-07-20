@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { deriveSchemaVersion } from "../src/persistence/schema-version.js"
+import { deriveSchemaVersion } from "../src/core/schema-version.js"
 
 // Pure function over Effect Schema → regular vitest (no Effect runtime). We assert the *relation*
 // between schemas (same ⇒ equal version, any structural change ⇒ different version), not the exact

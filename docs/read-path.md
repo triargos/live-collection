@@ -10,7 +10,7 @@ Build the runtime with the four sync services:
 const sync = Layer.mergeAll(
   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
   CatchupClient.layer({ url: "/api/catchup" }),
-  LastSyncIdStore.layer,
+  SyncCursor.layer,
   SyncJournal.layer({ databaseName: "app-eventlog" }),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
@@ -41,7 +41,7 @@ For each entity event:
 ```text
 append opaque event to SyncJournal
 → publish it to active subscriptions
-→ advance LastSyncIdStore
+→ advance SyncCursor
 → occasionally prune the log (squash per entity, drop rows every collection applied, then count caps)
 ```
 

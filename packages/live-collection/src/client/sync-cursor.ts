@@ -13,17 +13,18 @@ import { advanceSyncId, SyncId } from "@triargos/live-collection-protocol"
  * backwards. `clear` is used by the live-resync reload path; the next start then catches
  * up cold and re-snapshots.
  */
-export interface LastSyncIdStoreShape {
+export interface SyncCursorShape {
   readonly get: Effect.Effect<Option.Option<SyncId>>
   readonly set: (id: SyncId) => Effect.Effect<void>
   readonly clear: Effect.Effect<void>
 }
 
+// Key predates the SyncCursor rename; changing it would cold-start every existing client.
 const STORAGE_KEY = "live-collection:lastSyncId"
 
 /** `localStorage`-backed cursor. The stored string is external input, so it is decoded against
  *  {@link SyncId} on read (a corrupt value reads as `None`); storage faults are defects (`orDie`). */
-const makeLocalStorage: Effect.Effect<LastSyncIdStoreShape> = Effect.sync(() => {
+const makeLocalStorage: Effect.Effect<SyncCursorShape> = Effect.sync(() => {
   const decode = Schema.decodeUnknownOption(SyncId)
   const get: Effect.Effect<Option.Option<SyncId>> = Effect.sync(() =>
     Option.fromNullishOr(localStorage.getItem(STORAGE_KEY)).pipe(Option.flatMap(decode)),
@@ -36,7 +37,7 @@ const makeLocalStorage: Effect.Effect<LastSyncIdStoreShape> = Effect.sync(() => 
 })
 
 /** In-memory cursor over a `Ref` — the test/SSR adapter. */
-const makeMemory: Effect.Effect<LastSyncIdStoreShape> = Effect.gen(function* () {
+const makeMemory: Effect.Effect<SyncCursorShape> = Effect.gen(function* () {
   const ref = yield* Ref.make(Option.none<SyncId>())
   return {
     get: Ref.get(ref),
@@ -54,17 +55,14 @@ const makeMemory: Effect.Effect<LastSyncIdStoreShape> = Effect.gen(function* () 
  * const loop = Layer.mergeAll(
  *   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
  *   CatchupClient.layer({ url: "/api/catchup" }),
- *   LastSyncIdStore.layer,
+ *   SyncCursor.layer,
  *   SyncJournal.layer(),
  * )
  * ```
  */
-export class LastSyncIdStore extends Context.Service<
-  LastSyncIdStore,
-  LastSyncIdStoreShape
->()("LastSyncIdStore") {
+export class SyncCursor extends Context.Service<SyncCursor, SyncCursorShape>()("SyncCursor") {
   /** Browser default: a single `localStorage` entry, durable across reloads. */
-  static readonly layer: Layer.Layer<LastSyncIdStore> = Layer.effect(LastSyncIdStore, makeLocalStorage)
+  static readonly layer: Layer.Layer<SyncCursor> = Layer.effect(SyncCursor, makeLocalStorage)
   /** In-memory (a `Ref`) — for tests and SSR; resets on every run. */
-  static readonly layerMemory: Layer.Layer<LastSyncIdStore> = Layer.effect(LastSyncIdStore, makeMemory)
+  static readonly layerMemory: Layer.Layer<SyncCursor> = Layer.effect(SyncCursor, makeMemory)
 }

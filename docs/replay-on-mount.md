@@ -11,7 +11,7 @@ The event log also stores:
 - a per-model prune floor: the highest deleted event id;
 - the latest resync id.
 
-The global cursor comes from `LastSyncIdStore`.
+The global cursor comes from `SyncCursor`.
 
 ## Subscription decision
 

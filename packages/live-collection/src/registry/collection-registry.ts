@@ -1,5 +1,5 @@
 import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
-import { type CollectionKey, serializeKey } from "./collection-key.js"
+import { type CollectionKey, serializeKey } from "../core/collection-key.js"
 
 /**
  * The collection lifetime table. It returns one canonical instance per key and owns the

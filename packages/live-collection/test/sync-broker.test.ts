@@ -12,7 +12,7 @@ import {
 } from "@triargos/live-collection-protocol"
 import { CatchupClient, CatchupFailed } from "../src/client/catchup-client.js"
 import { SyncJournal, type SyncJournalShape, type JournalEvent } from "../src/client/sync-journal.js"
-import { LastSyncIdStore, type LastSyncIdStoreShape } from "../src/client/last-sync-id-store.js"
+import { SyncCursor, type SyncCursorShape } from "../src/client/sync-cursor.js"
 import {
   SyncBroker,
   type SyncBrokerOptions,
@@ -20,8 +20,8 @@ import {
   type SyncSignal,
 } from "../src/client/sync-broker.js"
 import { SyncTransport } from "../src/client/sync-transport.js"
-import { SchemaVersion } from "../src/persistence/schema-version.js"
-import { scopedKey } from "../src/registry/collection-key.js"
+import { SchemaVersion } from "../src/core/schema-version.js"
+import { scopedKey } from "../src/core/collection-key.js"
 
 const sid = (value: string) => SyncId.make(value)
 const version = SchemaVersion.make(1)
@@ -78,7 +78,7 @@ const run = <A, E>(options: {
   readonly body: (services: {
     readonly broker: SyncBrokerShape
     readonly journal: SyncJournalShape
-    readonly cursor: LastSyncIdStoreShape
+    readonly cursor: SyncCursorShape
     readonly events: Queue.Queue<HydratedSyncEventEnvelope>
   }) => Effect.Effect<A, E, Scope.Scope>
 }): Effect.Effect<A, E> =>
@@ -88,14 +88,14 @@ const run = <A, E>(options: {
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
         options.catchup ?? CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
-        LastSyncIdStore.layerMemory,
+        SyncCursor.layerMemory,
         SyncJournal.layerMemory,
       )
       const brokerLayer = SyncBroker.layer(options.broker).pipe(Layer.provide(sync))
       return yield* Effect.gen(function* () {
         const broker = yield* SyncBroker
         const journal = yield* SyncJournal
-        const cursor = yield* LastSyncIdStore
+        const cursor = yield* SyncCursor
         return yield* options.body({ broker, journal, cursor, events })
       }).pipe(Effect.provide(Layer.merge(sync, brokerLayer)))
     }),
@@ -286,7 +286,7 @@ describe("SyncBroker", () => {
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
         CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
-        LastSyncIdStore.layerMemory,
+        SyncCursor.layerMemory,
         Layer.succeed(SyncJournal, journal),
       )
       const scope = yield* Scope.make()

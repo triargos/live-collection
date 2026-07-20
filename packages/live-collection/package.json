@@ -2,7 +2,7 @@
   "name": "@triargos/live-collection",
   "version": "0.0.0",
   "type": "module",
-  "description": "Frontend live-sync engine: collection registry + scoping, dispatch routing, persistence factory (TanStack DB), SSE/catchup client, and bootstrap orchestration. Hero type: LiveCollection<T>.",
+  "description": "Frontend live-sync engine: collection registry + scoping, persistence factory (TanStack DB), SSE/catchup client, sync broker, and bootstrap orchestration. Hero type: LiveCollection<T>.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

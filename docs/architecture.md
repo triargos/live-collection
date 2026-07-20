@@ -10,7 +10,7 @@ One app-wide broker owns:
 
 - the SSE connection (`SyncTransport`)
 - catchup (`CatchupClient`)
-- the global durable cursor (`LastSyncIdStore`)
+- the global durable cursor (`SyncCursor`)
 - the durable sync journal (`SyncJournal`)
 - pruning and resync handling
 - an in-memory `PubSub` for active subscribers
@@ -80,7 +80,7 @@ runtime.registry.disposeScope(orgId)
 runtime.dispose()
 ```
 
-`sync` is a layer containing `SyncTransport`, `CatchupClient`, `LastSyncIdStore`, and `SyncJournal`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
+`sync` is a layer containing `SyncTransport`, `CatchupClient`, `SyncCursor`, and `SyncJournal`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
 
 React apps call `useLiveSync(runtime)` once near the root. No model array is needed: mounted collections subscribe themselves.
 

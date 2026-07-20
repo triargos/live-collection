@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import type { PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core"
 import { ModelId } from "@triargos/live-collection-protocol"
 import { makeRegistry } from "../src/registry/collection-registry.js"
-import { defineCollection, type ScopedHandle } from "../src/registry/define-collection.js"
+import { defineCollection, type ScopedHandle } from "../src/define-collection.js"
 import type { LiveRuntime } from "../src/runtime/live-runtime.js"
 import { makeNodeSqlitePersistence } from "./sqlite-persistence.js"
 

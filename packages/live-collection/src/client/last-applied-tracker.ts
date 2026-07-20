@@ -1,7 +1,7 @@
 import { type Duration, Effect, Option, Ref, type Scope } from "effect"
 import { maxSyncId, type SyncId } from "@triargos/live-collection-protocol"
-import type { SchemaVersion } from "../persistence/schema-version.js"
-import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
+import type { SchemaVersion } from "../core/schema-version.js"
+import { type CollectionKey, serializeKey } from "../core/collection-key.js"
 import type { SyncJournalShape } from "./sync-journal.js"
 
 /**

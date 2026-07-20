@@ -1,12 +1,13 @@
 import { Effect, Option, PubSub, Stream } from "effect"
 import { maxSyncId, type ModelName } from "@triargos/live-collection-protocol"
-import type { SchemaVersion } from "../persistence/schema-version.js"
-import { type CollectionKey, globalKey, scopedKey } from "../registry/collection-key.js"
+import type { SchemaVersion } from "../core/schema-version.js"
+import { type CollectionKey, globalKey, scopedKey } from "../core/collection-key.js"
 import type { SyncJournalShape } from "./sync-journal.js"
-import type { LastSyncIdStoreShape } from "./last-sync-id-store.js"
+import type { SyncCursorShape } from "./sync-cursor.js"
 import type { PublishedItem } from "./ingest.js"
 import type { LastAppliedTracker } from "./last-applied-tracker.js"
-import { MountDecision, SyncSignal, concernsModel, dropStale, planMount, signalFromRow } from "./mount-plan.js"
+import { MountDecision, concernsModel, dropStale, planMount, signalFromRow } from "./mount-plan.js"
+import { SyncSignal } from "./sync-signal.js"
 
 /** Scoped collections key their persisted rows (and last-applied marks) per scope value. */
 export const keyFor = (modelName: ModelName, scope: Option.Option<string>): CollectionKey<unknown> =>
@@ -26,7 +27,7 @@ export const keyFor = (modelName: ModelName, scope: Option.Option<string>): Coll
 export const makeSubscribe =
   (deps: {
     readonly journal: SyncJournalShape
-    readonly cursorStore: LastSyncIdStoreShape
+    readonly cursorStore: SyncCursorShape
     readonly published: PubSub.PubSub<PublishedItem>
     readonly current: LastAppliedTracker["current"]
   }) =>

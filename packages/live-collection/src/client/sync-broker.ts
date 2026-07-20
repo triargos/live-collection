@@ -1,16 +1,16 @@
 import type { ModelName, SyncId } from "@triargos/live-collection-protocol";
 import { Context, Duration, Effect, Layer, Option, PubSub, type Scope, Stream } from "effect";
-import type { SchemaVersion } from "../persistence/schema-version.js";
+import type { SchemaVersion } from "../core/schema-version.js";
 import { CatchupClient } from "./catchup-client.js";
 import { makeIngest, PublishedItem, type RetentionOptions } from "./ingest.js";
 import { makeLastAppliedTracker } from "./last-applied-tracker.js";
-import { LastSyncIdStore } from "./last-sync-id-store.js";
-import { SyncSignal } from "./mount-plan.js";
+import { SyncCursor } from "./sync-cursor.js";
+import type { SyncSignal } from "./sync-signal.js";
 import { keyFor, makeSubscribe } from "./subscribe.js";
 import { SyncJournal } from "./sync-journal.js";
 import { SyncTransport } from "./sync-transport.js";
 
-export { SyncSignal } from "./mount-plan.js";
+export { SyncSignal } from "./sync-signal.js";
 
 export interface SyncBrokerShape {
   /**
@@ -62,12 +62,12 @@ const defaultOptions = {
 const make = (options: SyncBrokerOptions = {}): Effect.Effect<
   SyncBrokerShape,
   never,
-  SyncTransport | CatchupClient | LastSyncIdStore | SyncJournal | Scope.Scope
+  SyncTransport | CatchupClient | SyncCursor | SyncJournal | Scope.Scope
 > =>
   Effect.gen(function* () {
     const transport = yield* SyncTransport
     const catchup = yield* CatchupClient
-    const cursorStore = yield* LastSyncIdStore
+    const cursorStore = yield* SyncCursor
     const journal = yield* SyncJournal
     const published = yield* PubSub.unbounded<PublishedItem>()
 
@@ -99,6 +99,6 @@ export class SyncBroker extends Context.Service<SyncBroker, SyncBrokerShape>()("
   static readonly layer = (options?: SyncBrokerOptions): Layer.Layer<
     SyncBroker,
     never,
-    SyncTransport | CatchupClient | LastSyncIdStore | SyncJournal
+    SyncTransport | CatchupClient | SyncCursor | SyncJournal
   > => Layer.effect(SyncBroker, make(options))
 }

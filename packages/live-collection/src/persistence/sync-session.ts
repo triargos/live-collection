@@ -1,6 +1,6 @@
 import { Deferred, Effect, Exit } from "effect"
 import type { ModelId } from "@triargos/live-collection-protocol"
-import type { SyncWrite } from "../dispatch/sync-write.js"
+import type { SyncWrite } from "./sync-write.js"
 
 /**
  * The live handle into a started collection's synced-write path — the `begin/write/commit` trio the

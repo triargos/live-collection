@@ -1,6 +1,6 @@
 import type { Collection } from "@tanstack/db"
 import type { ModelId } from "@triargos/live-collection-protocol"
-import type { SyncWrite } from "../dispatch/sync-write.js"
+import type { SyncWrite } from "./sync-write.js"
 
 /**
  * A live-synced collection — what a collection handle from `defineCollection` returns.

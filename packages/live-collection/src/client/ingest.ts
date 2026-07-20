@@ -1,7 +1,7 @@
 import { Data, Effect, Option, Schedule, Stream } from "effect"
 import { type CatchupResponse, type Epoch, type HydratedSyncEventEnvelope, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { CatchupClientShape } from "./catchup-client.js"
-import type { LastSyncIdStoreShape } from "./last-sync-id-store.js"
+import type { SyncCursorShape } from "./sync-cursor.js"
 import type { SyncJournalShape, JournalEvent } from "./sync-journal.js"
 import type { SyncTransportShape } from "./sync-transport.js"
 
@@ -57,7 +57,7 @@ export const makeIngest = (deps: {
   readonly transport: SyncTransportShape
   readonly catchup: CatchupClientShape
   readonly journal: SyncJournalShape
-  readonly cursorStore: LastSyncIdStoreShape
+  readonly cursorStore: SyncCursorShape
   readonly publish: (item: PublishedItem) => Effect.Effect<void>
   readonly onEpochReset: Effect.Effect<void>
   /** Flush pending last-applied marks — run before each prune so stage-2 sees fresh marks. */

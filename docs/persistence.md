@@ -61,12 +61,12 @@ export interface LiveRuntime {
 
 `defineCollection`'s `make` reads it straight off the runtime as a captured value —
 `persistence: runtime.persistence` — not via `yield* SomeTag`
-([`define-collection.ts:136`](../packages/live-collection/src/registry/define-collection.ts)).
+([`define-collection.ts:136`](../packages/live-collection/src/define-collection.ts)).
 
 **Why a value and not a tag.** Mounting happens **during render** (inside `useLiveQuery`'s queryFn). The
 mount path is `Effect.runSync(registry.getOrCreate({ key, make }))`, and `make` is
 `Effect.sync(() => createCollection(...))` requiring only `Scope` (for `cleanup`), which the registry
-discharges ([`define-collection.ts:131-151`](../packages/live-collection/src/registry/define-collection.ts)). Because
+discharges ([`define-collection.ts:131-151`](../packages/live-collection/src/define-collection.ts)). Because
 persistence is closed over rather than a context dependency, that Effect is `Effect<A, never, never>` and
 `runSync` can never hit an async boundary. A persistence **tag** would force the mount path through async
 layer resolution — illegal at render time. Persistence therefore stays a plain value; never introduce a
@@ -119,7 +119,7 @@ per-tab session.
 `persistedCollectionOptions` and `PersistedCollectionPersistence` come from
 **`@tanstack/db-sqlite-persistence-core`**, *not* `@tanstack/db` core — core only exports
 `createCollection`. That is the import the library itself uses
-([`define-collection.ts:8`](../packages/live-collection/src/registry/define-collection.ts),
+([`define-collection.ts:8`](../packages/live-collection/src/define-collection.ts),
 [`live-runtime.ts:2`](../packages/live-collection/src/runtime/live-runtime.ts)).
 
 Node cannot run OPFS, so the test suite builds its persistence value over a node SQLite driver. That node
@@ -179,7 +179,7 @@ never restarts.
 
 `SyncWrite<T>` is the synced-store write path — distinct from the optimistic-mutation path the UI writes
 through. Synced writes reflect confirmed server truth and are never rolled back
-([`sync-write.ts`](../packages/live-collection/src/dispatch/sync-write.ts)):
+([`sync-write.ts`](../packages/live-collection/src/persistence/sync-write.ts)):
 
 ```ts
 export interface SyncWrite<T> {
@@ -204,14 +204,14 @@ export const deriveSchemaVersion = (schema: Schema.Schema.Any): number
 - The hash input is `String(schema.ast)` — the schema's full structural type string, which folds in **types
   and brands** (not just field names). So `name: string → number` (same field name) still bumps the version.
   That matters because we **trust** the local base: a missed type change would silently keep
-  stale-typed rows ([`schema-version.ts:8-12`](../packages/live-collection/src/persistence/schema-version.ts)).
+  stale-typed rows ([`schema-version.ts:8-12`](../packages/live-collection/src/core/schema-version.ts)).
 - It is **FNV-1a 32-bit → uint32**, the same family TanStack uses for table names
-  ([`schema-version.ts:19-27`](../packages/live-collection/src/persistence/schema-version.ts)).
+  ([`schema-version.ts:19-27`](../packages/live-collection/src/core/schema-version.ts)).
 - **Trade-off:** if Effect's AST-string format shifts between versions, the hash changes and you get a
   spurious reset on upgrade — a harmless refetch, deliberately chosen over a *missed* change (a real bug).
 
 You don't call this directly in app code; `defineCollection` calls it for you with the `schema` you pass
-([`define-collection.ts:110`](../packages/live-collection/src/registry/define-collection.ts)).
+([`define-collection.ts:110`](../packages/live-collection/src/define-collection.ts)).
 
 ---
 

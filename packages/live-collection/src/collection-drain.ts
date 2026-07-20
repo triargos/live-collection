@@ -1,8 +1,8 @@
 import { Effect, Option, Schema, Stream } from "effect"
 import { ModelName, type SyncId } from "@triargos/live-collection-protocol"
-import { SyncBroker, SyncSignal } from "../client/sync-broker.js"
-import type { LiveCollection } from "../persistence/live-collection.js"
-import type { SchemaVersion } from "../persistence/schema-version.js"
+import { SyncBroker, SyncSignal } from "./client/sync-broker.js"
+import type { LiveCollection } from "./persistence/live-collection.js"
+import type { SchemaVersion } from "./core/schema-version.js"
 import type { ModelMeta } from "./define-collection.js"
 
 /**

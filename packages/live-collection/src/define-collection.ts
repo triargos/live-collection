@@ -7,13 +7,13 @@ import {
 } from "@tanstack/db"
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core"
 import type { ModelId } from "@triargos/live-collection-protocol"
-import type { SyncWrite } from "../dispatch/sync-write.js"
-import type { LiveCollection } from "../persistence/live-collection.js"
-import { liveCollectionOptions } from "../persistence/live-collection-options.js"
-import { deriveSchemaVersion } from "../persistence/schema-version.js"
-import type { LiveRuntime } from "../runtime/live-runtime.js"
+import type { SyncWrite } from "./persistence/sync-write.js"
+import type { LiveCollection } from "./persistence/live-collection.js"
+import { liveCollectionOptions } from "./persistence/live-collection-options.js"
+import { deriveSchemaVersion } from "./core/schema-version.js"
+import type { LiveRuntime } from "./runtime/live-runtime.js"
 import { drainCollection } from "./collection-drain.js"
-import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./collection-key.js"
+import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./core/collection-key.js"
 
 /**
  * The per-model metadata each collection drain reads from its handle (`handle._meta`):

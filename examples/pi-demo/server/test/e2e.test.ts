@@ -7,7 +7,7 @@ import {
   CatchupClient,
   defineCollection,
   SyncJournal,
-  LastSyncIdStore,
+  SyncCursor,
   makeLiveRuntime,
   SyncTransport,
 } from "@triargos/live-collection"
@@ -108,8 +108,8 @@ describe("pi-demo client ↔ server", () => {
       yield* otherClient.projects.upsert({ payload: cursorMarker })
       yield* projectRepo.remove(cursorMarker.id)
 
-      const cursorContext = yield* Layer.build(LastSyncIdStore.layerMemory)
-      const cursor = Context.get(cursorContext, LastSyncIdStore)
+      const cursorContext = yield* Layer.build(SyncCursor.layerMemory)
+      const cursor = Context.get(cursorContext, SyncCursor)
       yield* cursor.set(SyncId.make("1"))
       const journalContext = yield* Layer.build(SyncJournal.layerMemory)
       const journal = Context.get(journalContext, SyncJournal)
@@ -122,7 +122,7 @@ describe("pi-demo client ↔ server", () => {
       const sync = Layer.mergeAll(
         SyncTransport.layer({ url: `${baseUrl}/api/sync`, keepAlive: "45 seconds" }),
         CatchupClient.layer({ url: `${baseUrl}/api/catchup` }),
-        Layer.succeed(LastSyncIdStore, cursor),
+        Layer.succeed(SyncCursor, cursor),
         Layer.succeed(SyncJournal, journal),
       ).pipe(Layer.provide(SessionHttpClient))
       const runtime = makeLiveRuntime({

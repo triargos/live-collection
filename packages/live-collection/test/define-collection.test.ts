@@ -2,8 +2,8 @@ import { Effect, Option, Schema, type Scope } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelId } from "@triargos/live-collection-protocol"
 import type { CollectionRegistryShape } from "../src/registry/collection-registry.js"
-import { type CollectionKey, scopedKey, serializeKey } from "../src/registry/collection-key.js"
-import { defineCollection } from "../src/registry/define-collection.js"
+import { type CollectionKey, scopedKey, serializeKey } from "../src/core/collection-key.js"
+import { defineCollection } from "../src/define-collection.js"
 import type { LiveRuntime } from "../src/runtime/live-runtime.js"
 
 const Webhook = Schema.Struct({ id: Schema.String, orgId: Schema.String })

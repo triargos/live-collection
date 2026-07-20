@@ -42,7 +42,7 @@ packages/
                     pure squasher, model-registry types, and catchup schemas. No I/O.
   live-collection/  @triargos/live-collection
                     Registry/scoping, persistence factory, catchup/SSE adapters, broker,
-                    dispatch, and runtime. Public hero: LiveCollection<T>.
+                    and runtime. Public hero: LiveCollection<T>.
   react/            @triargos/live-collection-react
                     Optional React lifecycle bindings; reads use TanStack useLiveQuery directly.
 
@@ -61,7 +61,7 @@ as one unit. `protocol` is separate because backend consumers need it without fr
    not gate the frontend package.
 2. **Persistence is TanStack DB 0.6 SQLite-WASM.** Do not restore the old Dexie whole-table bridge or
    invent another persistence engine.
-3. **The persistence factory is the containment seam.** Registry, dispatch, broker, and bootstrap must
+3. **The persistence factory is the containment seam.** Registry, drain, broker, and bootstrap must
    not depend on persistence internals.
 4. **Scoping controls working-set size.** Use per-scope collections and windowed queries; changing the
    persistence backend does not make in-memory collections unboundedly cheap.

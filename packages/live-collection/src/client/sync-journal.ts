@@ -1,8 +1,8 @@
 import { Context, Effect, Layer, Option, Order, Ref, Schema, type Scope } from "effect"
 import { type DBSchema, openDB } from "idb"
 import { advanceSyncId, compareSyncId, Epoch, maxSyncId, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
-import { SchemaVersion } from "../persistence/schema-version.js"
-import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
+import { SchemaVersion } from "../core/schema-version.js"
+import { type CollectionKey, serializeKey } from "../core/collection-key.js"
 import { prunePlan } from "./prune-plan.js"
 
 /**

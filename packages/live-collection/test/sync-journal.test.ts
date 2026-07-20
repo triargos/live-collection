@@ -1,8 +1,8 @@
 import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
-import { SchemaVersion } from "../src/persistence/schema-version.js"
-import { scopedKey } from "../src/registry/collection-key.js"
+import { SchemaVersion } from "../src/core/schema-version.js"
+import { scopedKey } from "../src/core/collection-key.js"
 import { SyncJournal, type JournalEvent } from "../src/client/sync-journal.js"
 
 const sid = (s: string) => SyncId.make(s)

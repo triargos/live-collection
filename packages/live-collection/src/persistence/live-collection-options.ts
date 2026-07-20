@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import type { SyncConfig } from "@tanstack/db"
 import type { ModelId } from "@triargos/live-collection-protocol"
-import type { SyncWrite } from "../dispatch/sync-write.js"
+import type { SyncWrite } from "./sync-write.js"
 import { makeSyncWrite, type SyncSession } from "./sync-session.js"
 
 /**

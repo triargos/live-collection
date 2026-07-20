@@ -1,15 +1,8 @@
 import { Data, Option } from "effect"
-import { compareSyncId, maxSyncId, type ModelId, type ModelName, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
+import { compareSyncId, maxSyncId, type ModelName, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { JournalEvent } from "./sync-journal.js"
 import { PublishedItem } from "./ingest.js"
-
-/** Replay + live tail as one stream. Snapshot means the subscriber's local base is untrusted. */
-export type SyncSignal = Data.TaggedEnum<{
-  Snapshot: { readonly at: SyncId }
-  Upsert: { readonly syncId: SyncId; readonly modelId: ModelId; readonly data: unknown }
-  Delete: { readonly syncId: SyncId; readonly modelId: ModelId }
-}>
-export const SyncSignal = Data.taggedEnum<SyncSignal>()
+import { SyncSignal } from "./sync-signal.js"
 
 /**
  * The on-mount verdict. `Snapshot` carries the syncId the subscriber must snapshot at —

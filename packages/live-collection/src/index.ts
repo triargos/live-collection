@@ -13,27 +13,30 @@
  * The hero type is `LiveCollection<T>` — what a collection handle returns. The wire
  * contract shared with your backend lives in `@triargos/live-collection-protocol`.
  */
-// registry/ — collection lifetime table, structured keys, and runtime-bound handles.
-export * from "./registry/collection-key.js"
-export * from "./registry/collection-registry.js"
-export * from "./registry/define-collection.js"
+// core/ — shared identity primitives: structured collection keys and the derived schema version.
+export * from "./core/collection-key.js"
+export * from "./core/schema-version.js"
 
-// dispatch/ — the synced-store write path contract
-export * from "./dispatch/sync-write.js"
+// persistence/ — LiveCollection<T> (the hero type), the synced-store write path contract, and
+// the building blocks for assembling a persisted collection by hand (defineCollection uses them).
+export type { LiveCollection } from "./persistence/live-collection.js"
+export * from "./persistence/live-collection-options.js"
+export * from "./persistence/sync-write.js"
 
 // client/ — SSE transport, catchup, durable cursor/journal, and the subscription broker.
-// (prune-plan and sync-session are internal policy/plumbing.)
-export * from "./client/last-sync-id-store.js"
+// (ingest, subscribe, mount-plan, prune-plan are internal machines/policies.)
+export * from "./client/sync-cursor.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
 export * from "./client/sync-journal.js"
 export * from "./client/sync-broker.js"
 
-// runtime/ — the live runtime that owns infra and forks broker ingest
+// registry/ — the collection lifetime table.
+export * from "./registry/collection-registry.js"
+
+// runtime/ — the live runtime that owns infra and forks broker ingest.
 export * from "./runtime/live-runtime.js"
 
-// persistence/ — LiveCollection<T> (the hero type) and the building blocks for assembling
-// a persisted collection by hand (defineCollection uses them internally).
-export type { LiveCollection } from "./persistence/live-collection.js"
-export * from "./persistence/live-collection-options.js"
-export * from "./persistence/schema-version.js"
+// Top-level assembly — defineCollection wires persistence + drain + registry + runtime
+// into one collection handle.
+export * from "./define-collection.js"
