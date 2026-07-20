@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import { ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import { EventLogStore, type LoggedEvent, SchemaVersion, scopedKey } from "@triargos/live-collection"
 
 // The durable EventLogStore.layer over **real IndexedDB** — the one thing node cannot prove (jsdom has no
@@ -156,5 +156,43 @@ describe("EventLogStore.layer (IndexedDB, browser)", () => {
       )
       assert.deepStrictEqual(stale, Option.none()) // new version ⇒ no watermark ⇒ mount snapshots
       assert.deepStrictEqual(fresh, Option.some(sid("10"))) // old entry is inert, not corrupted
+    }))
+
+  it.live("epoch survives a reload — a fresh layer scope reads back what the prior scope stored", () =>
+    Effect.gen(function* () {
+      const databaseName = freshDb()
+      yield* session(databaseName, EventLogStore.pipe(Effect.flatMap((log) => log.setEpoch(Epoch.make("epoch-a")))))
+      const stored = yield* session(databaseName, EventLogStore.pipe(Effect.flatMap((log) => log.getEpoch)))
+      assert.deepStrictEqual(stored, Option.some(Epoch.make("epoch-a")))
+    }))
+
+  it.live("reset wipes events + every meta record in one pass — and the wipe survives a reload", () =>
+    Effect.gen(function* () {
+      const databaseName = freshDb()
+      const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
+      yield* session(
+        databaseName,
+        Effect.gen(function* () {
+          const log = yield* EventLogStore
+          yield* log.append(["1", "2", "3"].map((s, i) => insert(s, "org-1", `w${i}`)))
+          yield* log.prune({ perModel: 2, total: 100 }) // floor ⇒ 1
+          yield* log.setBaseWatermark({ key, schemaVersion: version, at: sid("3") })
+          yield* log.setLastResync(sid("2"))
+          yield* log.setEpoch(Epoch.make("old"))
+          yield* log.reset
+        }),
+      )
+      // The "reload": a fresh scope over the same database must find cold-start state.
+      yield* session(
+        databaseName,
+        Effect.gen(function* () {
+          const log = yield* EventLogStore
+          assert.deepStrictEqual(yield* log.read({ modelName: Webhook, since: sid("0") }), [])
+          assert.deepStrictEqual(yield* log.getBaseWatermark({ key, schemaVersion: version }), Option.none())
+          assert.deepStrictEqual(yield* log.floor(Webhook), Option.none())
+          assert.deepStrictEqual(yield* log.getLastResync, Option.none())
+          assert.deepStrictEqual(yield* log.getEpoch, Option.none())
+        }),
+      )
     }))
 })

@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Ref } from "effect"
 import {
   compareSyncId,
   DeleteEvent,
+  Epoch,
   InsertEvent,
   type PendingSyncEvent,
   ResyncEvent,
@@ -14,6 +15,13 @@ export interface SyncEventStoreShape {
   readonly append: (pending: PendingSyncEvent) => Effect.Effect<SyncEvent>
   readonly since: (from: SyncId) => Effect.Effect<ReadonlyArray<SyncEvent>>
   readonly currentSyncId: Effect.Effect<SyncId>
+  /**
+   * This log's timeline identity, minted fresh at construction. The store is memory-only,
+   * so every server boot starts a new timeline at syncId 0 — sending the epoch on catchup
+   * lets clients holding durable old-timeline cursors detect the reset and self-heal
+   * instead of silently dropping every new event below their stale head.
+   */
+  readonly epoch: Epoch
 }
 
 interface State {
@@ -23,8 +31,10 @@ interface State {
 
 const makeMemory: Effect.Effect<SyncEventStoreShape> = Effect.gen(function* () {
   const state = yield* Ref.make<State>({ counter: 0n, events: [] })
+  const epoch = Epoch.make(crypto.randomUUID())
 
   return {
+    epoch,
     append: (pending) =>
       Ref.modify(state, ({ counter, events }) => {
         const next = counter + 1n

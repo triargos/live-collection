@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Layer, Queue } from "effect"
+import { Duration, Effect, Fiber, Layer, Option, Queue } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import {
   CatchupClient,
@@ -56,7 +56,7 @@ const run = (body: (context: Ctx) => Effect.Effect<void>): Effect.Effect<void> =
     const queue = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
     const sync = Layer.mergeAll(
       LastSyncIdStore.layerMemory,
-      CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0") }),
+      CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0"), epoch: Option.none() }),
       SyncTransport.layerMemory(queue),
       EventLogStore.layer({ databaseName }),
     )

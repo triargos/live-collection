@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Order, Ref, Schema, type Scope } from "effect"
-import { compareSyncId, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { compareSyncId, Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import type { SchemaVersion } from "../persistence/schema-version.js"
 import { type CollectionKey, serializeKey } from "../registry/collection-key.js"
 import { prunePlan } from "./prune-plan.js"
@@ -61,6 +61,20 @@ export interface EventLogStoreShape {
   /** The newest resync the client has ingested (monotonic) — invalidates replay across it. */
   readonly getLastResync: Effect.Effect<Option.Option<SyncId>>
   readonly setLastResync: (at: SyncId) => Effect.Effect<void>
+
+  /**
+   * The epoch of the server timeline this log was built from — the identity every
+   * stored syncId is relative to. `None` until a catchup response first carries one.
+   */
+  readonly getEpoch: Effect.Effect<Option.Option<Epoch>>
+  readonly setEpoch: (epoch: Epoch) => Effect.Effect<void>
+  /**
+   * Global reset — wipes the ENTIRE store back to cold-start: every logged event and
+   * every meta record (all base watermarks, all prune floors, lastResync, epoch).
+   * Nothing survives; the next mount necessarily decides Snapshot. A stale epoch means
+   * *no* local sync state is trustworthy, so partial retention has no correct form.
+   */
+  readonly reset: Effect.Effect<void>
 }
 
 /** Keep whichever syncId is numerically larger — the monotonic step shared by watermark/resync setters. */
@@ -73,6 +87,7 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
   const watermarks = yield* Ref.make(new Map<string, SyncId>()) // keyed by serializeKey(key) + schemaVersion
   const floors = yield* Ref.make(new Map<string, SyncId>()) // modelName ⇒ prune boundary (highest deleted)
   const lastResync = yield* Ref.make(Option.none<SyncId>())
+  const epoch = yield* Ref.make(Option.none<Epoch>())
 
   return {
     append: (incoming) =>
@@ -121,6 +136,18 @@ const makeMemory: Effect.Effect<EventLogStoreShape> = Effect.gen(function* () {
       }),
     getLastResync: Ref.get(lastResync),
     setLastResync: (at) => Ref.update(lastResync, (c) => Option.some(advance(c, at))),
+    getEpoch: Ref.get(epoch),
+    setEpoch: (value) => Ref.set(epoch, Option.some(value)),
+    reset: Effect.all(
+      [
+        Ref.set(rows, new Map<string, LoggedEvent>()),
+        Ref.set(watermarks, new Map<string, SyncId>()),
+        Ref.set(floors, new Map<string, SyncId>()),
+        Ref.set(lastResync, Option.none<SyncId>()),
+        Ref.set(epoch, Option.none<Epoch>()),
+      ],
+      { discard: true },
+    ),
   }
 })
 
@@ -151,6 +178,7 @@ const wmKey = (key: CollectionKey<unknown>, schemaVersion: SchemaVersion): strin
   `wm:${serializeKey(key)}:${schemaVersion}`
 const floorKey = (modelName: string): string => `floor:${modelName}`
 const RESYNC_KEY = "lastResync"
+const EPOCH_KEY = "epoch"
 
 /** Resolve an `IDBRequest` to its result (rejection ⇒ a defect, surfaced by the caller's `Effect.promise`). */
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>
@@ -270,6 +298,29 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<EventLogStoreShape, 
       setBaseWatermark: ({ key, schemaVersion, at }) => advanceMetaSyncId(wmKey(key, schemaVersion), at),
       getLastResync: getMetaSyncId(RESYNC_KEY),
       setLastResync: (at) => advanceMetaSyncId(RESYNC_KEY, at),
+
+      getEpoch: Effect.promise(() =>
+        requestResult(db.transaction(META, "readonly").objectStore(META).get(EPOCH_KEY)),
+      ).pipe(
+        Effect.flatMap((value) =>
+          value === undefined ? Effect.succeedNone : Schema.decodeUnknownEffect(Epoch)(value).pipe(Effect.asSome),
+        ),
+        Effect.orDie,
+      ),
+      setEpoch: (epoch) =>
+        Effect.promise(async () => {
+          const tx = db.transaction(META, "readwrite")
+          tx.objectStore(META).put(epoch, EPOCH_KEY)
+          await transactionDone(tx)
+        }),
+      // One tx: events + every meta record go together — a partial wipe (events without
+      // watermarks, or vice versa) would recreate exactly the inconsistency reset exists to end.
+      reset: Effect.promise(async () => {
+        const tx = db.transaction([EVENTS, META], "readwrite")
+        tx.objectStore(EVENTS).clear()
+        tx.objectStore(META).clear()
+        await transactionDone(tx)
+      }),
     }
   })
 

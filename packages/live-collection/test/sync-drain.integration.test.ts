@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Layer, Queue, Ref, Schema } from "effect"
+import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -50,7 +50,7 @@ const withRuntime = <A>(
     const events = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
     const sync = Layer.mergeAll(
       LastSyncIdStore.layerMemory,
-      CatchupClient.layerMemory({ events: [], lastSyncId: sid("0") }),
+      CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
       SyncTransport.layerMemory(events),
       EventLogStore.layerMemory,
     )

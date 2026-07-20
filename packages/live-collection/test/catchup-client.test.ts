@@ -5,7 +5,7 @@ import { CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
 import { CatchupClient, CatchupFailed } from "../src/client/catchup-client.js"
 
 const sid = (s: string) => SyncId.make(s)
-const canned: CatchupResponse = { events: [], lastSyncId: sid("42") }
+const canned: CatchupResponse = { events: [], lastSyncId: sid("42"), epoch: Option.none() }
 
 /** A real in-memory HttpClient adapter (DI, not a mock): each GET is answered by `respond(url)`,
  *  and every requested URL is recorded into `urls` so a test can assert what was fetched. */

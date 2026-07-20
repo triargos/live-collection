@@ -350,14 +350,29 @@ export const CatchupRequest = Schema.Struct({ from: SyncId })
 export const CatchupResponse = Schema.Struct({
   events: Schema.Array(HydratedSyncEventEnvelope),   // data opaque (unknown); per-model decode later
   lastSyncId: SyncId,
+  epoch: Schema.OptionFromOptionalKey(Epoch),        // wire-optional timeline identity; see below
 })
 ```
 
-`catchup.ts:19` (`CatchupRequest`), `:28` (`CatchupResponse`).
+`catchup.ts` (`CatchupRequest`, `CatchupResponse`); `Epoch` in `ids.ts`.
 
 **No `group` parameter.** A client cannot narrow scope from the wire. The server resolves
 the caller's full set of sync groups from their permissions (`GroupsFor`) and returns everything
 visible since `from`. This keeps ACL authority on the server and the request trivial.
+
+**The epoch invariant.** The protocol assumes `SyncId`s are **durable and monotonic within one
+epoch** — the identity of the server event log's timeline. A backend whose log lives continuously
+for its whole lifetime never needs to send `epoch` (absent key ⇒ the client does no checking, and
+nothing changes). But if the log's history can be destroyed or replaced — an in-memory store that
+resets on restart, a truncation, a backup restore, a database migration — the syncId sequence
+restarts and every cursor a client durably remembers points into a timeline that no longer exists.
+Without an epoch this freezes clients silently: each new event is minted *below* the client's stale
+head and the monotonic guards discard it. Such backends mint an opaque `Epoch` (a UUID at boot for
+memory stores; a stored-once value for durable ones) and return it on catchup. The client stores it
+next to its event log; on mismatch it self-heals — wipes its local sync state (event log,
+watermarks, floors, cursor) and re-bootstraps every collection via `Snapshot`. It is **not** a
+software version: a redeploy over a durable log must not change it, and a backup restore under
+unchanged code must.
 
 On the client side, `CatchupClient` (in `live-collection`) decodes the body against `CatchupResponse`
 at the boundary — `packages/live-collection/src/client/catchup-client.ts:34` — and surfaces a modeled

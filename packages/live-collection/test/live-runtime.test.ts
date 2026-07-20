@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Layer, Queue } from "effect"
+import { Effect, Exit, Fiber, Layer, Option, Queue } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { type HydratedSyncEventEnvelope, SyncId } from "@triargos/live-collection-protocol"
 import { CatchupClient } from "../src/client/catchup-client.js"
@@ -14,7 +14,7 @@ describe("makeLiveRuntime", () => {
       const queue = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
       const sync = Layer.mergeAll(
         LastSyncIdStore.layerMemory,
-        CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0") }),
+        CatchupClient.layerMemory({ events: [], lastSyncId: SyncId.make("0"), epoch: Option.none() }),
         SyncTransport.layerMemory(queue),
         EventLogStore.layerMemory,
       )
