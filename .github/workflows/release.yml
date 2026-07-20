@@ -17,6 +17,8 @@ permissions:
 
 jobs:
   release:
+    # Temporarily disabled until pre-1.0 cleanup/verification is done.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
