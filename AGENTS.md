@@ -33,13 +33,18 @@ Guidance for agents working in this repository.
 
 ### Packages and dependency DAG
 
-The npm DAG is acyclic: `protocol → live-collection → react`.
+The npm DAG is acyclic: `protocol → live-collection → react`, plus `protocol → server`
+(the server kernel never depends on the frontend package).
 
 ```text
 packages/
   protocol/         @triargos/live-collection-protocol
                     Shared contract kit: wire schemas, sync-group routing keys, resync targets,
                     pure squasher, model-registry types, and catchup schemas. No I/O.
+  server/           @triargos/live-collection-server
+                    Optional backend kernel: SyncEventStore port, event bus, dispatcher
+                    (persist-then-publish), and SyncFeed (catchup + SSE frames) enforcing the
+                    backend contract's invariants. effect + protocol only; no HTTP/storage/auth.
   live-collection/  @triargos/live-collection
                     Registry/scoping, persistence factory, catchup/SSE adapters, broker,
                     and runtime. Public hero: LiveCollection<T>.
@@ -48,7 +53,8 @@ packages/
 
 examples/
   playground/       Browser lab with real OPFS persistence and cross-tab fake backend.
-  pi-demo/          Shared HttpApi contract, reference Effect backend, and React web app.
+  pi-demo/          Shared HttpApi contract, reference Effect backend (consumes
+                    @triargos/live-collection-server), and React web app.
 ```
 
 `core`/`persistence`/`client` remain modules inside the main package because consumers need them

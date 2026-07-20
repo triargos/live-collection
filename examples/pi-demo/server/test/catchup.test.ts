@@ -18,8 +18,7 @@ import {
 import { makeTestServerLayer } from "../src/http/server.js"
 import { ProjectRepo } from "../src/repo/project-repo.js"
 import { TodoRepo } from "../src/repo/todo-repo.js"
-import { SyncDispatcher } from "../src/sync/sync-dispatcher.js"
-import { SyncEventStore } from "../src/sync/sync-event-store.js"
+import { SyncDispatcher, SyncEventStore } from "@triargos/live-collection-server"
 
 const port = 34671
 const base = `http://127.0.0.1:${port}/api`
@@ -81,7 +80,7 @@ describe("GET /api/catchup", () => {
       const response = yield* request("/catchup?from=0")
       const unknownBody = yield* Effect.tryPromise(() => response.json()).pipe(Effect.orDie)
       const caughtUp = yield* Schema.decodeUnknownEffect(CatchupResponse)(unknownBody)
-      const cursor = yield* store.currentSyncId
+      const cursor = yield* store.getLatestSyncId
 
       assert.strictEqual(caughtUp.lastSyncId, cursor)
       assert.strictEqual(caughtUp.events.length, 1)

@@ -14,7 +14,8 @@
     "@effect/platform-node": "^4.0.0-beta.98",
     "@pi-demo/shared": "workspace:*",
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.98"
+    "effect": "^4.0.0-beta.98",
+    "@triargos/live-collection-server": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "^4.0.0-beta.98",

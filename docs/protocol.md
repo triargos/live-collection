@@ -431,3 +431,6 @@ and the client must use `compareSyncId` for cursors that can exceed `Number.MAX_
   `CatchupClient`, the `lastSyncId` cursor, and the resync handler.
 - [`backend.md`](./backend.md) — the contract your backend must satisfy: the `/catchup` and SSE
   endpoints and the invariants the client depends on.
+- [`../packages/server/README.md`](../packages/server/README.md) — the optional
+  `@triargos/live-collection-server` kernel that enforces the backend contract as code for
+  Effect backends (SyncFeed, SyncDispatcher, and the SyncEventStore port).

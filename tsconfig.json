@@ -3,6 +3,7 @@
   "files": [],
   "references": [
     { "path": "packages/protocol" },
+    { "path": "packages/server" },
     { "path": "packages/live-collection" },
     { "path": "packages/react" }
   ]

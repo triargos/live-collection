@@ -38,6 +38,9 @@ importers:
       '@triargos/live-collection-protocol':
         specifier: workspace:*
         version: link:../../../packages/protocol
+      '@triargos/live-collection-server':
+        specifier: workspace:*
+        version: link:../../../packages/server
       effect:
         specifier: ^4.0.0-beta.98
         version: 4.0.0-beta.98
@@ -274,6 +277,15 @@ importers:
       react:
         specifier: ^19.2.7
         version: 19.2.7
+
+  packages/server:
+    dependencies:
+      '@triargos/live-collection-protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      effect:
+        specifier: ^4.0.0-beta.98
+        version: 4.0.0-beta.98
 
 packages:
 

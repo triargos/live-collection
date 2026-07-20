@@ -5,11 +5,15 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { DemoApi } from "@pi-demo/shared"
+import {
+  SyncDispatcher,
+  SyncEventBus,
+  SyncEventStore,
+  SyncFeed,
+} from "@triargos/live-collection-server"
 import { ProjectRepo } from "../repo/project-repo.js"
 import { TodoRepo } from "../repo/todo-repo.js"
-import { SyncEventBus } from "../sync/sync-event-bus.js"
-import { SyncDispatcher } from "../sync/sync-dispatcher.js"
-import { SyncEventStore } from "../sync/sync-event-store.js"
+import { RegistryLayer } from "../sync/registry.js"
 import { ProjectsApiLive, SyncApiLive, TodosApiLive } from "./api-live.js"
 import { SessionAuthLive } from "./session-auth.js"
 import { SseRoute } from "./sse.js"
@@ -18,12 +22,15 @@ const StorageServices = Layer.mergeAll(
   ProjectRepo.layerMemory,
   TodoRepo.layerMemory,
   SyncEventStore.layerMemory,
-  SyncEventBus.layer,
+  SyncEventBus.layerMemory,
 )
 
 export const BackendServices = Layer.merge(
   StorageServices,
-  SyncDispatcher.layer.pipe(Layer.provide(StorageServices)),
+  Layer.merge(SyncDispatcher.layer, SyncFeed.layer).pipe(
+    Layer.provide(RegistryLayer),
+    Layer.provide(StorageServices),
+  ),
 )
 
 const ApiHandlers = Layer.mergeAll(ProjectsApiLive, TodosApiLive, SyncApiLive)

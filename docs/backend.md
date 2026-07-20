@@ -101,6 +101,19 @@ already holds.
 
 ---
 
+## The kernel package — the contract as code (optional)
+
+Everything above remains satisfiable by hand on any stack. For backends built on Effect,
+[`@triargos/live-collection-server`](../packages/server/README.md) ships the invariant-bearing
+orchestration as code instead of prose: `SyncFeed.catchup` (filter → squash → batched hydration →
+`Option.none` ⇒ `Delete` → retention ⇒ `Resync(All)` → epoch passthrough), `SyncFeed.streamEvents`
+(hydrated, group-filtered SSE frames with keepalive; drop-don't-kill), and `SyncDispatcher`
+(persist-then-best-effort-publish, no echo suppression). You supply two ports — a `SyncEventStore`
+(`appendEvent` / `listEvents({ cursor })` / `getLatestSyncId` / `getCurrentEpoch`) and a model
+registry built with the make-pattern (`ModelRegistry.layer(Effect.gen(...))` — repos resolved once,
+descriptors close over them, requirements inferred from the build effect) — and keep auth, routes,
+and storage. The pi-demo reference backend below consumes it.
+
 ## What the kit offers (all optional except the schemas)
 
 Decode and encode the wire shapes with the protocol schemas — `CatchupRequest`,
@@ -124,8 +137,9 @@ Who is syncing and how you map them to groups is your backend's own design.
 
 ## Reference implementations
 
-- [`examples/pi-demo/server`](../examples/pi-demo/server) — a real Effect HTTP backend: event
-  store, dispatcher, `/catchup` and SSE routes, hydration through the model registry.
+- [`examples/pi-demo/server`](../examples/pi-demo/server) — a real Effect HTTP backend consuming
+  `@triargos/live-collection-server`: memory adapters behind the kernel's ports, a two-model
+  registry, and `/catchup` + SSE routes that reduce to `SyncFeed` calls.
 - [`examples/playground/src/live/shared-backend.ts`](../examples/playground/src/live/shared-backend.ts)
   — the same contract as a browser-local fake authority (localStorage log + `BroadcastChannel`),
   useful for seeing the contract with zero HTTP.

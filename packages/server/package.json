@@ -1,0 +1,34 @@
+{
+  "name": "@triargos/live-collection-server",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Optional backend kernel for the live-collection sync system: event store port, in-process event bus, dispatcher (persist-then-publish), and the SyncFeed read path (catchup + SSE frames) that enforces the client contract's invariants. Transport-, storage-, and auth-agnostic.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triargos/live-collection.git",
+    "directory": "packages/server"
+  },
+  "scripts": {
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@triargos/live-collection-protocol": "workspace:*",
+    "effect": "^4.0.0-beta.98"
+  }
+}

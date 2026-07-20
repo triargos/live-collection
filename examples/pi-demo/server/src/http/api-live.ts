@@ -12,16 +12,10 @@ import {
   TODO_MODEL,
   UnauthorizedError,
 } from "@pi-demo/shared"
-import {
-  intersects,
-  PendingSyncEvent,
-  squash,
-} from "@triargos/live-collection-protocol"
+import { PendingSyncEvent } from "@triargos/live-collection-protocol"
+import { SyncDispatcher, SyncFeed } from "@triargos/live-collection-server"
 import { ProjectRepo } from "../repo/project-repo.js"
 import { TodoRepo } from "../repo/todo-repo.js"
-import { SyncDispatcher } from "../sync/sync-dispatcher.js"
-import { SyncEventStore } from "../sync/sync-event-store.js"
-import { hydrateEvents } from "../sync/hydration.js"
 
 const dispatchRow = (args: {
   readonly kind: "Insert" | "Update"
@@ -159,13 +153,11 @@ export const SyncApiLive = HttpApiBuilder.group(DemoApi, "sync", (handlers) =>
   handlers.handle("catchup", ({ query }) =>
     Effect.gen(function* () {
       const session = yield* CurrentSession
-      const store = yield* SyncEventStore
-      const allowed = [sessionGroup(session)]
-      const all = yield* store.since(query.from)
-      const visible = all.filter((event) => intersects(event.syncGroups, allowed))
-      const events = yield* hydrateEvents({ events: squash(visible), syncGroups: allowed })
-      const lastSyncId = yield* store.currentSyncId
-      return { events, lastSyncId, epoch: Option.some(store.epoch) }
+      const feed = yield* SyncFeed
+      return yield* feed.catchup({
+        fromSyncId: query.from,
+        syncGroups: [sessionGroup(session)],
+      })
     }),
   ),
 )
