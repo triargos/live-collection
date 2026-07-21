@@ -36,8 +36,7 @@ const fakeApiLayer = (log: Array<string>, rows: ReadonlyArray<Webhook> = []): La
 
 const waitUntil = (cond: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() => (cond() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(cond))))).pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("condition not met") ) }),
-    Effect.orDie,
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
   )
 
 /** Shared, reload-surviving persistence + a `services` runtime over {@link fakeApiLayer}. */
@@ -110,8 +109,10 @@ const reloadUntilHas = (persistence: PersistedCollectionPersistence, services: S
       }),
     ).pipe(Effect.flatMap((has) => (has === want ? Effect.succeed(has) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())))))
   return attempt().pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error(`reload has(${key}) never settled to ${want}`) ) }),
-    Effect.orDie,
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(2),
+      orElse: () => Effect.die(`reload has(${key}) never settled to ${want}`),
+    }),
   )
 }
 

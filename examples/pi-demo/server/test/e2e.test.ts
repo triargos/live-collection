@@ -27,21 +27,18 @@ import { ProjectRepo } from "../src/repo/project-repo.js"
 import { TodoRepo } from "../src/repo/todo-repo.js"
 import { SyncId } from "@triargos/live-collection-protocol"
 import { makeNodeSqlitePersistence } from "./support/sqlite-persistence.js"
+import { testServerUrl } from "./support/test-url.js"
 
-const port = 34673
-const baseUrl = `http://127.0.0.1:${port}`
 const session = randomSessionCode()
 const addSessionHeader = HttpClient.mapRequest(
   HttpClientRequest.setHeader("x-session-code", session),
 )
-const makeApi = HttpApiClient.make(DemoApi, {
-  baseUrl,
-  transformClient: addSessionHeader,
-})
-type DemoClient = Effect.Success<typeof makeApi>
-
-const withApi = <A, E>(f: (client: DemoClient) => Effect.Effect<A, E>) =>
-  makeApi.pipe(Effect.flatMap(f))
+const makeApiFor = (baseUrl: string) =>
+  HttpApiClient.make(DemoApi, {
+    baseUrl,
+    transformClient: addSessionHeader,
+  })
+type DemoClient = Effect.Success<ReturnType<typeof makeApiFor>>
 
 const waitUntil = (condition: () => boolean): Effect.Effect<void> => {
   const attempt: Effect.Effect<void> = Effect.suspend(() =>
@@ -88,7 +85,11 @@ const todo = (args: {
 describe("pi-demo client ↔ server", () => {
   it.live("converges across snapshots, SSE, optimistic writes, cascades, and reconnect catchup", () =>
     Effect.gen(function* () {
-      const backend = yield* Layer.build(makeTestServerLayer({ port }))
+      const backend = yield* Layer.build(makeTestServerLayer({ port: 0 }))
+      const baseUrl = testServerUrl(backend)
+      const makeApi = makeApiFor(baseUrl)
+      const withApi = <A, E>(f: (client: DemoClient) => Effect.Effect<A, E>) =>
+        makeApi.pipe(Effect.flatMap(f))
       const projectRepo = Context.get(backend, ProjectRepo)
       const todoRepo = Context.get(backend, TodoRepo)
       const seedProjects = [project("e2e-seed-work", "Work"), project("e2e-seed-home", "Home")] as const

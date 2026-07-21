@@ -159,26 +159,29 @@ export const makeIdbStore = (databaseName: string): Effect.Effect<JournalStore, 
     return {
       commit: (write) =>
         JournalWrite.$match(write, {
-          Patch: ({ putLog = [], deleteLog = [], putRecords = [] }) =>
-            Effect.promise(async () => {
-              const tx = db.transaction([EVENTS, META], "readwrite")
-              const events = tx.objectStore(EVENTS)
-              const meta = tx.objectStore(META)
-              await Promise.all([
+          Patch: ({ putLog = [], deleteLog = [], putRecords = [] }) => {
+            const tx = db.transaction([EVENTS, META], "readwrite")
+            const events = tx.objectStore(EVENTS)
+            const meta = tx.objectStore(META)
+            return Effect.promise(() =>
+              Promise.all([
                 ...deleteLog.map((syncId) => events.delete(syncId)),
                 // put = upsert by the `syncId` keyPath inside `value` ⇒ dedupe
                 ...putLog.map((row) => events.put(row.value)),
                 ...putRecords.map(([key, value]) => meta.put(value, key)),
                 tx.done,
-              ])
-            }),
+              ]),
+            ).pipe(Effect.asVoid)
+          },
           Reset: ({ records }) =>
-            Effect.promise(async () => {
+            Effect.gen(function* () {
               const tx = db.transaction([EVENTS, META], "readwrite")
               const meta = tx.objectStore(META)
-              await tx.objectStore(EVENTS).clear()
-              await meta.clear()
-              await Promise.all([...records.map(([key, value]) => meta.put(value, key)), tx.done])
+              yield* Effect.promise(() => tx.objectStore(EVENTS).clear())
+              yield* Effect.promise(() => meta.clear())
+              yield* Effect.promise(() =>
+                Promise.all([...records.map(([key, value]) => meta.put(value, key)), tx.done]),
+              )
             }),
         }),
 

@@ -19,18 +19,17 @@ import { makeTestServerLayer } from "../src/http/server.js"
 import { ProjectRepo } from "../src/repo/project-repo.js"
 import { TodoRepo } from "../src/repo/todo-repo.js"
 import { SyncDispatcher, SyncEventStore } from "@triargos/live-collection-server"
+import { testServerUrl } from "./support/test-url.js"
 
-const port = 34671
-const base = `http://127.0.0.1:${port}/api`
 const session = SessionCode.make("ABC234")
 const otherSession = SessionCode.make("XYZ789")
-const request = (path: string, init?: RequestInit, code = session) =>
+const request = (base: string, path: string, init?: RequestInit, code = session) =>
   Effect.tryPromise(() => fetch(`${base}${path}`, {
     ...init,
     headers: { ...init?.headers, "x-session-code": code },
   })).pipe(Effect.orDie)
-const jsonRequest = (path: string, body: unknown) =>
-  request(path, {
+const jsonRequest = (base: string, path: string, body: unknown) =>
+  request(base, path, {
     method: "POST",
     headers: { "content-type": "application/json", "x-session-code": session },
     body: JSON.stringify(body),
@@ -55,16 +54,17 @@ const todo: Todo = {
 describe("GET /api/catchup", () => {
   it.effect("filters, squashes, hydrates, and converges to repository state", () =>
     Effect.gen(function* () {
-      const services = yield* Layer.build(makeTestServerLayer({ port }))
+      const services = yield* Layer.build(makeTestServerLayer({ port: 0 }))
+      const base = `${testServerUrl(services)}/api`
       const dispatcher = Context.get(services, SyncDispatcher)
       const store = Context.get(services, SyncEventStore)
       const projects = Context.get(services, ProjectRepo)
       const todos = Context.get(services, TodoRepo)
 
-      assert.strictEqual((yield* jsonRequest("/projects", project)).status, 200)
-      assert.strictEqual((yield* jsonRequest("/projects", { ...project, name: "Confirmed" })).status, 200)
-      assert.strictEqual((yield* jsonRequest("/todos", todo)).status, 200)
-      assert.strictEqual((yield* request(`/todos/${todo.id}`, { method: "DELETE" })).status, 204)
+      assert.strictEqual((yield* jsonRequest(base, "/projects", project)).status, 200)
+      assert.strictEqual((yield* jsonRequest(base, "/projects", { ...project, name: "Confirmed" })).status, 200)
+      assert.strictEqual((yield* jsonRequest(base, "/todos", todo)).status, 200)
+      assert.strictEqual((yield* request(base, `/todos/${todo.id}`, { method: "DELETE" })).status, 204)
 
       yield* dispatcher.dispatch(PendingSyncEvent.cases.Insert.make({
         modelName: ModelName.make("Foreign"),
@@ -72,12 +72,12 @@ describe("GET /api/catchup", () => {
         syncGroups: [deriveGroup(["other"])] as const,
       }))
 
-      const otherResponse = yield* request("/catchup?from=0", undefined, otherSession)
+      const otherResponse = yield* request(base, "/catchup?from=0", undefined, otherSession)
       const otherBody = yield* Effect.tryPromise(() => otherResponse.json()).pipe(Effect.orDie)
       const otherCatchup = yield* Schema.decodeUnknownEffect(CatchupResponse)(otherBody)
       assert.strictEqual(otherCatchup.events.length, 0)
 
-      const response = yield* request("/catchup?from=0")
+      const response = yield* request(base, "/catchup?from=0")
       const unknownBody = yield* Effect.tryPromise(() => response.json()).pipe(Effect.orDie)
       const caughtUp = yield* Schema.decodeUnknownEffect(CatchupResponse)(unknownBody)
       const cursor = yield* store.getLatestSyncId

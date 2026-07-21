@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref, Scope } from "effect"
+import { Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { assert, describe, it } from "@effect/vitest"
 import {
@@ -28,6 +28,7 @@ const modelId = (value: string) => ModelId.make(value)
 const Webhook = ModelName.make("Webhook")
 const Setting = ModelName.make("Setting")
 const group = deriveGroup(["organization", "org-1"])
+const epoch = DateTime.makeUnsafe(0).pipe(DateTime.toDateUtc)
 
 const insert = (syncId: string, modelName = Webhook, id = `w-${syncId}`): HydratedSyncEventEnvelope => ({
   _tag: "Insert",
@@ -35,7 +36,7 @@ const insert = (syncId: string, modelName = Webhook, id = `w-${syncId}`): Hydrat
   modelName,
   modelId: modelId(id),
   syncGroups: [group],
-  createdAt: new Date(0),
+  createdAt: epoch,
   data: { id, orgId: "org-1" },
 })
 
@@ -45,7 +46,7 @@ const del = (syncId: string, id: string): HydratedSyncEventEnvelope => ({
   modelName: Webhook,
   modelId: modelId(id),
   syncGroups: [group],
-  createdAt: new Date(0),
+  createdAt: epoch,
 })
 
 const resync = (syncId: string): HydratedSyncEventEnvelope => ({
@@ -53,7 +54,7 @@ const resync = (syncId: string): HydratedSyncEventEnvelope => ({
   syncId: sid(syncId),
   target: ResyncTarget.cases.All.make({}),
   syncGroups: [group],
-  createdAt: new Date(0),
+  createdAt: epoch,
 })
 
 const logged = (syncId: string): JournalEvent => ({

@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from "effect"
+import { DateTime, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -20,6 +20,7 @@ const modelName = ModelName.make("Webhook")
 const group = deriveGroup(["organization", "org-1"])
 const sid = (value: string) => SyncId.make(value)
 const key = (value: string) => ModelId.make(value)
+const epoch = DateTime.makeUnsafe(0).pipe(DateTime.toDateUtc)
 
 const event = (syncId: string, data: unknown, id = `w-${syncId}`): HydratedSyncEventEnvelope => ({
   _tag: "Insert",
@@ -27,7 +28,7 @@ const event = (syncId: string, data: unknown, id = `w-${syncId}`): HydratedSyncE
   modelName,
   modelId: key(id),
   syncGroups: [group],
-  createdAt: new Date(0),
+  createdAt: epoch,
   data,
 })
 
@@ -35,8 +36,15 @@ const waitUntil = (condition: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() =>
     condition() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(condition))),
   ).pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("condition not met") ) }),
-    Effect.orDie,
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
+  )
+
+const waitUntilEffect = (condition: Effect.Effect<boolean>): Effect.Effect<void> =>
+  condition.pipe(
+    Effect.flatMap((ready) =>
+      ready ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntilEffect(condition))),
+    ),
+    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
   )
 
 const withRuntime = <A>(
@@ -96,7 +104,7 @@ describe("defineCollection broker drain", () => {
           modelName,
           modelId: key("mine"),
           syncGroups: [group],
-          createdAt: new Date(0),
+          createdAt: epoch,
         })
         yield* waitUntil(() => !collection.has(key("mine")))
       }),
@@ -115,10 +123,12 @@ describe("defineCollection broker drain", () => {
           listFn: () => Ref.set(entered, true).pipe(Effect.andThen(Effect.never)),
         })
         webhooks("org-1")
-        yield* waitUntil(() => Effect.runSync(Ref.get(entered)))
+        yield* waitUntilEffect(Ref.get(entered))
         yield* runtime.registry.disposeScope("org-1").pipe(
-          Effect.timeoutOrElse({ duration: Duration.seconds(1), orElse: () => Effect.fail(new Error("drain was not interrupted") ) }),
-          Effect.orDie,
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(1),
+            orElse: () => Effect.die("drain was not interrupted"),
+          }),
         )
       }),
     ))

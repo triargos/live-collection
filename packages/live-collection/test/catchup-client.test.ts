@@ -29,7 +29,11 @@ describe("CatchupClient", () => {
   it.effect("layer GETs /catchup?from=<cursor> and decodes the body at the boundary", () =>
     Effect.gen(function* () {
       const urls: Array<string> = []
-      const body = JSON.stringify({ events: [], lastSyncId: "99" })
+      const body = yield* Schema.encodeEffect(Schema.fromJsonString(CatchupResponse))({
+        events: [],
+        lastSyncId: sid("99"),
+        epoch: Option.none(),
+      })
       const http = fakeHttp(urls, () => new Response(body, { status: 200 }))
       const resp = yield* Effect.provide(
         Effect.flatMap(CatchupClient, (c) => c.fetch({ from: sid("7") })),

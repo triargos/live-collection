@@ -66,23 +66,23 @@ export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
  * temp-id swap needed). One mutation per transaction: a batched transaction dies with
  * {@link BatchedMutationsUnsupported} before any server call.
  */
-interface MutationHandlers<T extends object, R> {
+interface MutationHandlers<T extends object, E, R> {
   /**
    * Runs when an optimistic `collection.insert(...)` commits: send the row to your
    * backend and return the **server-confirmed row** (required — without it the library
    * can't reconcile and the optimistic row would flicker).
    */
-  readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
+  readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, E, R>
   /**
    * Runs when an optimistic `collection.update(...)` commits: persist the change on
    * your backend and return the **server-confirmed row**.
    */
-  readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, unknown, R>
+  readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, E, R>
   /**
    * Runs when an optimistic `collection.delete(...)` commits: delete on your backend.
    * On success the library removes the row from the synced baseline by its key.
    */
-  readonly onDelete?: (params: DeleteMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, unknown, R>
+  readonly onDelete?: (params: DeleteMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, E, R>
 }
 
 /**
@@ -115,6 +115,24 @@ type ServicesOf<R> = [R] extends [never]
        */
       readonly services: ManagedRuntime.ManagedRuntime<R, never>
     }
+
+interface CollectionEffectExecutor<R> {
+  readonly provide: <A>(effect: Effect.Effect<A, never, R>) => Effect.Effect<A>
+  readonly runPromise: <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>
+}
+
+const defaultExecutor: CollectionEffectExecutor<never> = {
+  provide: (effect) => effect,
+  runPromise: Effect.runPromise,
+}
+
+const managedExecutor = <R>(
+  runtime: ManagedRuntime.ManagedRuntime<R, never>,
+): CollectionEffectExecutor<R> => ({
+  provide: (effect) =>
+    runtime.contextEffect.pipe(Effect.flatMap((context) => effect.pipe(Effect.provide(context)))),
+  runPromise: (effect) => runtime.runPromise(effect),
+})
 
 interface ConfigBase<T extends object> {
   /** The runtime from `makeLiveRuntime` — the registry and persistence this collection mounts against. */
@@ -149,8 +167,8 @@ interface ScopedBase<T extends object, R> extends ConfigBase<T> {
   /** Fetches one scope's current server truth — run on cold starts and resyncs to (re)build that instance's base. */
   readonly listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>, never, R>
 }
-type GlobalConfig<T extends object, R> = GlobalBase<T, R> & MutationHandlers<T, R> & ServicesOf<R>
-type ScopedConfig<T extends object, R> = ScopedBase<T, R> & MutationHandlers<T, R> & ServicesOf<R>
+type GlobalConfig<T extends object, E, R> = GlobalBase<T, R> & MutationHandlers<T, E, R> & ServicesOf<R>
+type ScopedConfig<T extends object, E, R> = ScopedBase<T, R> & MutationHandlers<T, E, R> & ServicesOf<R>
 
 /**
  * Define one synced model and get back its collection handle. Calling the handle mounts
@@ -188,10 +206,10 @@ type ScopedConfig<T extends object, R> = ScopedBase<T, R> & MutationHandlers<T, 
  * webhooks.insert({ id: crypto.randomUUID(), orgId, url }) // optimistic, reconciled on confirm
  * ```
  */
-export function defineCollection<T extends object, R = never>(config: GlobalConfig<T, R>): GlobalHandle<T>
-export function defineCollection<T extends object, R = never>(config: ScopedConfig<T, R>): ScopedHandle<T>
-export function defineCollection<T extends object, R = never>(
-  config: GlobalConfig<T, R> | ScopedConfig<T, R>,
+export function defineCollection<T extends object, E = never, R = never>(config: GlobalConfig<T, E, R>): GlobalHandle<T>
+export function defineCollection<T extends object, E = never, R = never>(config: ScopedConfig<T, E, R>): ScopedHandle<T>
+export function defineCollection<T extends object, E = never, R = never>(
+  config: GlobalConfig<T, E, R> | ScopedConfig<T, E, R>,
 ): Handle<T> {
   const { runtime, entity, schema, getKey } = config
   const scopeOf = "scopeOf" in config ? config.scopeOf : undefined
@@ -205,14 +223,17 @@ export function defineCollection<T extends object, R = never>(
   // the casts below are that contract, stated once per seam.
   const services = config.services as ManagedRuntime.ManagedRuntime<R, never> | undefined
 
+  // ServicesOf<R> permits the default executor only when R is never. TypeScript cannot narrow a
+  // conditional generic from `services === undefined`, so this assertion records that config proof
+  // on the executor rather than narrowing individual Effect values at each execution seam.
+  const executor = (
+    services === undefined ? defaultExecutor : managedExecutor(services)
+  ) as CollectionEffectExecutor<R>
+
   // Bridge listFn to `R = never` for the drain. The drain is itself an Effect fiber, so this stays in
-  // Effect-land: `Effect.provide(services)` runs the listFn with the services runtime (the same
-  // memoized runtime `runPromise` uses) without a promise detour — interruption of an in-flight
-  // snapshot and cause structure are preserved.
-  const provideServices = <A>(eff: Effect.Effect<A, never, R>): Effect.Effect<A> =>
-    services
-      ? services.contextEffect.pipe(Effect.flatMap((context) => eff.pipe(Effect.provide(context))))
-      : (eff as Effect.Effect<A>)
+  // Effect-land: the managed executor provides the same memoized context that `runPromise` uses,
+  // preserving interruption of an in-flight snapshot and its cause structure.
+  const provideServices = executor.provide
 
   // A scoped collection is always mounted with Some(scope); the drain-facing listFn takes
   // Option<string> only because ModelMeta is the uniform shape — the None branch asserts
@@ -239,7 +260,7 @@ export function defineCollection<T extends object, R = never>(
   // dies before the handler runs — only `mutations[0]` would be reconciled.
   const bridge =
     <P extends { readonly transaction: { readonly mutations: ReadonlyArray<unknown> } }, A>(
-      handler: (params: P) => Effect.Effect<A, unknown, R>,
+      handler: (params: P) => Effect.Effect<A, E, R>,
       reconcile: (params: P, result: A) => Effect.Effect<void>,
     ) =>
     (params: P): Promise<void> => {
@@ -247,9 +268,7 @@ export function defineCollection<T extends object, R = never>(
         params.transaction.mutations.length > 1
           ? Effect.die(new BatchedMutationsUnsupported({ entity, mutationCount: params.transaction.mutations.length }))
           : handler(params).pipe(Effect.flatMap((result) => reconcile(params, result)))
-      return services
-        ? services.runPromise(composed)
-        : Effect.runPromise(composed as Effect.Effect<void, unknown>)
+      return executor.runPromise(composed)
     }
 
   // Build one collection instance. Sync (`createCollection`), with `persistence` a closed-over VALUE

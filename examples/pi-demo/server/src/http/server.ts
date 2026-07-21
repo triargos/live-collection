@@ -75,11 +75,14 @@ const Routes = Layer.mergeAll(ApiRoute, SseRoute, StaticRoute)
 
 const serve = (config: { readonly port: number }) =>
   HttpRouter.serve(Routes).pipe(
-    Layer.provide(NodeHttpServer.layer(createServer, { port: config.port })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port })),
     Layer.provide(NodeServices.layer),
   )
 
-/** Unseeded server that also exposes its service graph, so tests drive real seams. */
+/**
+ * Unseeded server that also exposes its service graph (including `HttpServer`,
+ * so tests can bind port 0 and read back the ephemeral port).
+ */
 export const makeTestServerLayer = (config: { readonly port: number }) =>
   serve(config).pipe(Layer.provideMerge(BackendServices))
 

@@ -29,22 +29,25 @@ export class NodeSqliteDriver implements SQLiteDriver {
     return Promise.resolve()
   }
 
-  transaction = async <T>(fn: (tx: SQLiteDriver) => Promise<T>): Promise<T> => {
+  transaction = <T>(fn: (tx: SQLiteDriver) => Promise<T>): Promise<T> => {
     const d = this.#depth++
     const open = d === 0 ? "BEGIN" : `SAVEPOINT s${d}`
     const release = d === 0 ? "COMMIT" : `RELEASE s${d}`
     const rollback = d === 0 ? "ROLLBACK" : `ROLLBACK TO s${d}; RELEASE s${d}`
     this.db.exec(open)
-    try {
-      const result = await fn(this)
-      this.db.exec(release)
-      return result
-    } catch (error) {
-      this.db.exec(rollback)
-      throw error
-    } finally {
-      this.#depth--
-    }
+    return Promise.resolve()
+      .then(() => fn(this))
+      .then((result) => {
+        this.db.exec(release)
+        return result
+      })
+      .catch((error: unknown) => {
+        this.db.exec(rollback)
+        throw error
+      })
+      .finally(() => {
+        this.#depth--
+      })
   }
 }
 

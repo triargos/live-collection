@@ -1,6 +1,6 @@
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import {
   type Project,
   ProjectId,
@@ -11,17 +11,16 @@ import {
 } from "@pi-demo/shared"
 import { SyncTransport } from "@triargos/live-collection"
 import { makeTestServerLayer } from "../src/http/server.js"
+import { testServerUrl } from "./support/test-url.js"
 
-const port = 34672
-const base = `http://127.0.0.1:${port}/api`
 const session = SessionCode.make("ABC234")
-const jsonRequest = (path: string, body: unknown) =>
+const jsonRequest = (base: string, path: string, body: unknown) =>
   Effect.tryPromise(() => fetch(`${base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-session-code": session },
     body: JSON.stringify(body),
   })).pipe(Effect.orDie)
-const remove = (path: string) =>
+const remove = (base: string, path: string) =>
   Effect.tryPromise(() => fetch(`${base}${path}`, {
     method: "DELETE",
     headers: { "x-session-code": session },
@@ -51,16 +50,18 @@ const SessionHttpClient = Layer.effect(
   ),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
-const TransportLayer = SyncTransport.layer({
-  url: `${base}/sync`,
-  keepAlive: "45 seconds",
-}).pipe(Layer.provide(SessionHttpClient))
-
 describe("GET /api/sync", () => {
   it.effect("is decoded by the library client and streams cascade deletes in order", () =>
     Effect.gen(function* () {
-      yield* Layer.build(makeTestServerLayer({ port }))
-      const transport = yield* SyncTransport
+      const services = yield* Layer.build(makeTestServerLayer({ port: 0 }))
+      const base = `${testServerUrl(services)}/api`
+      const transportContext = yield* Layer.build(
+        SyncTransport.layer({
+          url: `${base}/sync`,
+          keepAlive: "45 seconds",
+        }).pipe(Layer.provide(SessionHttpClient)),
+      )
+      const transport = Context.get(transportContext, SyncTransport)
       const receivedFiber = yield* transport.connect.pipe(
         Stream.take(7),
         Stream.runCollect,
@@ -68,14 +69,14 @@ describe("GET /api/sync", () => {
       )
       yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 100)))
 
-      assert.strictEqual((yield* jsonRequest("/projects", project)).status, 200)
+      assert.strictEqual((yield* jsonRequest(base, "/projects", project)).status, 200)
       const first = todo("sse-todo-1", "First")
-      assert.strictEqual((yield* jsonRequest("/todos", first)).status, 200)
-      assert.strictEqual((yield* jsonRequest("/todos", { ...first, title: "Updated" })).status, 200)
-      assert.strictEqual((yield* remove(`/todos/${first.id}`)).status, 204)
+      assert.strictEqual((yield* jsonRequest(base, "/todos", first)).status, 200)
+      assert.strictEqual((yield* jsonRequest(base, "/todos", { ...first, title: "Updated" })).status, 200)
+      assert.strictEqual((yield* remove(base, `/todos/${first.id}`)).status, 204)
       const cascaded = todo("sse-todo-2", "Cascaded")
-      assert.strictEqual((yield* jsonRequest("/todos", cascaded)).status, 200)
-      assert.strictEqual((yield* remove(`/projects/${project.id}`)).status, 204)
+      assert.strictEqual((yield* jsonRequest(base, "/todos", cascaded)).status, 200)
+      assert.strictEqual((yield* remove(base, `/projects/${project.id}`)).status, 204)
 
       const events = yield* Fiber.join(receivedFiber)
       assert.deepStrictEqual(events.map((event) => event._tag), [
@@ -90,5 +91,5 @@ describe("GET /api/sync", () => {
         const decoded = yield* Schema.decodeUnknownEffect(Todo)(update.data)
         assert.strictEqual(decoded.title, "Updated")
       }
-    }).pipe(Effect.provide(TransportLayer), Effect.scoped))
+    }).pipe(Effect.scoped))
 })

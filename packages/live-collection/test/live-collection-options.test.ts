@@ -65,8 +65,10 @@ const reloadUntil = <T extends object, A>(
       ),
     )
   return attempt().pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.fail(new Error("persisted state did not settle within 2s")) }),
-    Effect.orDie,
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(2),
+      orElse: () => Effect.die("persisted state did not settle within 2s"),
+    }),
   )
 }
 

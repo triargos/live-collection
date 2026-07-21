@@ -1,4 +1,4 @@
-import { Cause, Effect, Layer, Option, Queue, Stream } from "effect"
+import { Cause, DateTime, Effect, Layer, Option, Queue, Stream } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import {
@@ -27,7 +27,7 @@ const env = (id: string): HydratedSyncEventEnvelope => ({
   modelName: ModelName.make("Webhook"),
   modelId: ModelId.make(id),
   syncGroups: [SyncGroup.make("organization:o1")],
-  createdAt: new Date(0),
+  createdAt: DateTime.makeUnsafe(0).pipe(DateTime.toDateUtc),
   data: { id, orgId: "o1" },
 })
 
