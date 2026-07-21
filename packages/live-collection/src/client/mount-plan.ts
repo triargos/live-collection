@@ -6,10 +6,10 @@ import { SyncSignal } from "./sync-signal.js"
 
 /**
  * The on-mount verdict. `Snapshot` carries the syncId the subscriber must snapshot at —
- * the point replay becomes trustworthy again (max of cursor and last resync).
+ * the point replay becomes trustworthy again (max of last-ingested and last resync).
  */
 export type MountDecision = Data.TaggedEnum<{
-  /** Local rows are complete through the cursor — nothing to replay. */
+  /** Local rows are complete through the last-ingested syncId — nothing to replay. */
   Skip: {}
   /** The journal still holds every event the collection is missing — replay the slice. */
   Replay: {}
@@ -37,24 +37,24 @@ export interface MountPlan {
  *
  * - No last-applied record for `(key, schemaVersion)` ⇒ `Snapshot` (fresh install or schema bump).
  * - A resync newer than the last-applied ⇒ `Snapshot` (replay across a resync is invalid).
- * - Last-applied ≥ cursor ⇒ `Skip` (nothing missed).
- * - Pruning deleted events above the last-applied (`maxDeletedSyncId`) ⇒ `Snapshot` (the gap is gone).
+ * - Last-applied ≥ last-ingested ⇒ `Skip` (nothing missed).
+ * - Pruning deleted events above the last-applied (`highestPruned`) ⇒ `Snapshot` (the gap is gone).
  * - Otherwise ⇒ `Replay` from the last-applied.
  */
 export const planMount = (input: {
   /** max(durable, pending) last-applied syncId for this `(key, schemaVersion)`. */
   readonly collectionLastApplied: Option.Option<SyncId>
-  /** The client's global ingest cursor. */
-  readonly cursor: Option.Option<SyncId>
+  /** The client's global ingest high-water mark — how far the world has moved. */
+  readonly lastIngested: Option.Option<SyncId>
   /** Highest syncId pruning ever deleted for this model — replay below it is impossible. */
-  readonly maxDeletedSyncId: Option.Option<SyncId>
+  readonly highestPruned: Option.Option<SyncId>
   /** The newest resync the client has ingested — replay across it is invalid. */
   readonly lastResyncAt: Option.Option<SyncId>
 }): MountPlan => {
-  const cursorAt = Option.getOrElse(input.cursor, () => zeroSyncId)
+  const ingestedAt = Option.getOrElse(input.lastIngested, () => zeroSyncId)
   const snapshotPoint = Option.match(input.lastResyncAt, {
-    onNone: () => cursorAt,
-    onSome: (resyncAt) => maxSyncId(cursorAt, resyncAt),
+    onNone: () => ingestedAt,
+    onSome: (resyncAt) => maxSyncId(ingestedAt, resyncAt),
   })
   const snapshot: MountPlan = {
     decision: MountDecision.Snapshot({ at: snapshotPoint }),
@@ -69,8 +69,8 @@ export const planMount = (input: {
     since: lastApplied,
     tailGuardSeed: maxSyncId(snapshotPoint, lastApplied),
   })
-  if (compareSyncId(lastApplied, cursorAt) >= 0) return continuation(MountDecision.Skip())
-  if (Option.exists(input.maxDeletedSyncId, (deleted) => compareSyncId(deleted, lastApplied) > 0)) return snapshot
+  if (compareSyncId(lastApplied, ingestedAt) >= 0) return continuation(MountDecision.Skip())
+  if (Option.exists(input.highestPruned, (pruned) => compareSyncId(pruned, lastApplied) > 0)) return snapshot
   return continuation(MountDecision.Replay())
 }
 

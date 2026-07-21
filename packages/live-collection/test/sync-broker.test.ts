@@ -105,7 +105,7 @@ const waitUntil = (effect: Effect.Effect<boolean>): Effect.Effect<void> =>
   )
 
 describe("SyncBroker", () => {
-  it.effect("cold subscribe emits Snapshot at the cursor; a pending mark is visible to the next subscribe", () =>
+  it.effect("cold subscribe emits Snapshot at the last-ingested syncId; a pending mark is visible to the next subscribe", () =>
     run({
       body: ({ broker, events }) =>
         Effect.gen(function* () {
@@ -124,7 +124,7 @@ describe("SyncBroker", () => {
         }),
     }))
 
-  it.effect("live ingest fans matching Upserts and Deletes out, journals them, and advances the cursor", () =>
+  it.effect("live ingest fans matching Upserts and Deletes out, journals them, and advances the last-ingested syncId", () =>
     run({
       body: ({ broker, events, journal }) =>
         Effect.gen(function* () {
@@ -144,7 +144,7 @@ describe("SyncBroker", () => {
           assert.deepStrictEqual(tags(yield* Fiber.join(other)), ["Upsert"])
           assert.deepStrictEqual((yield* journal.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("1"), sid("2")])
           assert.deepStrictEqual((yield* journal.read({ modelName: Setting, since: sid("0") })).map((row) => row.syncId), [sid("3")])
-          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("3")))))
+          yield* waitUntil(journal.getLastIngestedSyncId.pipe(Effect.map(Option.contains(sid("3")))))
           yield* Fiber.interrupt(start)
         }),
     }))
@@ -154,7 +154,7 @@ describe("SyncBroker", () => {
       body: ({ broker, events, journal }) =>
         Effect.gen(function* () {
           yield* journal.append([logged("2")])
-          yield* journal.setCursor(sid("2"))
+          yield* journal.setLastIngestedSyncId(sid("2"))
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("1") })
           const signals = yield* collect(broker, 2)
           const start = yield* Effect.forkScoped(broker.start)
@@ -182,18 +182,18 @@ describe("SyncBroker", () => {
           yield* Queue.offer(events, insert("1"))
           yield* Queue.offer(events, insert("2"))
           yield* Queue.offer(events, insert("3")) // 3rd ingest ⇒ trim tick: flush marks, then prune
-          // Ingest is done once the cursor reaches 3; the trim tick runs within that same chain,
+          // Ingest is done once the last-ingested mark reaches 3; the trim tick runs within that same chain,
           // so the journal now holds the pruned state. With the flush, min last-applied is 2 ⇒
           // rows 1 AND 2 are dead weight; a stale (durable-only) prune would keep row 2.
-          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("3")))))
+          yield* waitUntil(journal.getLastIngestedSyncId.pipe(Effect.map(Option.contains(sid("3")))))
           const rows = yield* journal.read({ modelName: Webhook, since: sid("0") })
           assert.deepStrictEqual(rows.map((row) => row.syncId), [sid("3")])
-          assert.deepStrictEqual(yield* journal.floor(Webhook), Option.none()) // dead weight is floor-neutral
+          assert.deepStrictEqual(yield* journal.highestPrunedSyncId(Webhook), Option.none()) // dead weight is boundary-neutral
           yield* Fiber.interrupt(start)
         }),
     }))
 
-  it.effect("a prune floor above the collection's last-applied syncId forces Snapshot", () =>
+  it.effect("a prune boundary above the collection's last-applied syncId forces Snapshot", () =>
     run({
       body: ({ broker, journal }) =>
         Effect.gen(function* () {
@@ -201,7 +201,7 @@ describe("SyncBroker", () => {
           yield* journal.append([logged("1"), logged("2")])
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("0") })
           yield* journal.prune({ maxEventsPerModel: 1, maxEventsTotal: 10 })
-          yield* journal.setCursor(sid("2"))
+          yield* journal.setLastIngestedSyncId(sid("2"))
           const signals = yield* collect(broker, 1)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Snapshot"])
         }),
@@ -213,7 +213,7 @@ describe("SyncBroker", () => {
         Effect.gen(function* () {
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("2") })
           yield* journal.setLastResync(sid("3"))
-          yield* journal.setCursor(sid("3"))
+          yield* journal.setLastIngestedSyncId(sid("3"))
           const signals = yield* collect(broker, 1)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Snapshot"])
         }),
@@ -325,10 +325,10 @@ describe("SyncBroker", () => {
             schemaVersion: oldVersion,
             at: sid("10"),
           })
-          yield* journal.setCursor(sid("10"))
+          yield* journal.setLastIngestedSyncId(sid("10"))
 
           // …then the schema changed: the saved rows were dumped, so the remount must
-          // NOT trust the old last-applied mark. It snapshots at the cursor and keeps tailing.
+          // NOT trust the old last-applied mark. It snapshots at the last-ingested syncId and keeps tailing.
           const signals = yield* collect(broker, 2, newVersion)
           const start = yield* Effect.forkScoped(broker.start)
           yield* Queue.offer(events, insert("11"))
@@ -361,7 +361,7 @@ describe("SyncBroker", () => {
           yield* journal.setEpoch(Epoch.make("a"))
           yield* journal.append([logged("10")])
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("10") })
-          yield* journal.setCursor(sid("10"))
+          yield* journal.setLastIngestedSyncId(sid("10"))
           const signals = yield* collect(broker, 1)
           const start = yield* Effect.forkScoped(broker.start)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Upsert"]) // #11, replayed/tail — no Snapshot
@@ -371,7 +371,7 @@ describe("SyncBroker", () => {
         }),
     }))
 
-  it.effect("an epoch mismatch self-heals: mounted subscribers snapshot at the new cursor past the stale tail guard", () =>
+  it.effect("an epoch mismatch self-heals: mounted subscribers snapshot at the new position past the stale tail guard", () =>
     run({
       // The server timeline reset: its new head (3) is far below the client's durable state (500).
       catchup: CatchupClient.layerMemory({ events: [], lastSyncId: sid("3"), epoch: Option.some(Epoch.make("b")) }),
@@ -380,7 +380,7 @@ describe("SyncBroker", () => {
           yield* journal.setEpoch(Epoch.make("a"))
           yield* journal.append([logged("500")])
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("500") })
-          yield* journal.setCursor(sid("500"))
+          yield* journal.setLastIngestedSyncId(sid("500"))
 
           // Mounted BEFORE the reset: decision Skip, tail head = 500 — the poisoned guard.
           const signals = yield* collect(broker, 2)
@@ -393,7 +393,7 @@ describe("SyncBroker", () => {
 
           // Local sync state was wiped and rebuilt under the new timeline.
           assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("b")))
-          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("4")))))
+          yield* waitUntil(journal.getLastIngestedSyncId.pipe(Effect.map(Option.contains(sid("4")))))
           assert.deepStrictEqual((yield* journal.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("4")])
           yield* Fiber.interrupt(start)
         }),
@@ -406,7 +406,7 @@ describe("SyncBroker", () => {
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
           yield* journal.setEpoch(Epoch.make("a"))
-          yield* journal.setCursor(sid("500"))
+          yield* journal.setLastIngestedSyncId(sid("500"))
           // An applied-but-unflushed old-epoch last-applied mark — it must die with the reset,
           // not flush later and re-poison the wiped journal.
           yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("500") })
@@ -416,7 +416,7 @@ describe("SyncBroker", () => {
           yield* TestClock.adjust("100 millis") // the flush tick — pending must already be empty
           assert.deepStrictEqual(yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: version }), Option.none())
 
-          // A mount after the reset finds no last-applied mark ⇒ Snapshot at the new cursor.
+          // A mount after the reset finds no last-applied mark ⇒ Snapshot at the new position.
           const signals = yield* collect(broker, 1)
           const received = yield* Fiber.join(signals)
           assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("3"))

@@ -359,7 +359,8 @@ Without an epoch this freezes clients silently: each new event is minted *below*
 head and the monotonic guards discard it. Such backends mint an opaque `Epoch` (a UUID at boot for
 memory stores; a stored-once value for durable ones) and return it on catchup. The client stores it
 next to its event log; on mismatch it self-heals — wipes its local sync state (event log,
-last-applied marks, floors, cursor) and re-bootstraps every collection via `Snapshot`. It is **not** a
+last-applied marks, prune boundaries, last-ingested syncId) and re-bootstraps every collection via
+`Snapshot`. It is **not** a
 software version: a redeploy over a durable log must not change it, and a backup restore under
 unchanged code must.
 

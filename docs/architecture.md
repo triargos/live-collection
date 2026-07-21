@@ -10,11 +10,11 @@ One app-wide broker owns:
 
 - the SSE connection (`SyncTransport`)
 - catchup (`CatchupClient`)
-- the durable sync journal (`SyncJournal`), which carries the global durable cursor
+- the durable sync journal (`SyncJournal`), which carries the global durable last-ingested syncId
 - pruning and resync handling
 - an in-memory `PubSub` for active subscribers
 
-Ingest is single-fibered. Each entity event is appended to the log, published, and advances the journal's cursor. Connection loss retries the cycle, running catchup before reconnecting.
+Ingest is single-fibered. Each entity event is appended to the log, published, and advances the journal's last-ingested syncId. Connection loss retries the cycle, running catchup before reconnecting.
 
 ```ts
 interface SyncBrokerShape {
@@ -85,7 +85,7 @@ React apps call `useLiveSync(runtime)` once near the root. No model array is nee
 
 ## Replay and subscription switchover
 
-A subscription first attaches to PubSub so new events begin buffering. It then reads the collection's last-applied syncId, global cursor, prune floor, last resync, and replay slice. The resulting stream is:
+A subscription first attaches to PubSub so new events begin buffering. It then reads the collection's last-applied syncId, the global last-ingested syncId, the model's highest pruned syncId, last resync, and replay slice. The resulting stream is:
 
 ```text
 Snapshot? → durable replay rows → filtered live tail
@@ -108,7 +108,7 @@ useLiveSync(runtime)
   → runtime.forkSync()
     → broker.start
       → catchup + SSE
-        → journal (event log + cursor) + PubSub
+        → journal (event log + last-ingested syncId) + PubSub
 
 collectionHandle(scope)
   → registry.getOrCreate

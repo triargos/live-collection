@@ -27,7 +27,7 @@ export interface LastAppliedTracker {
   }) => Effect.Effect<Option.Option<SyncId>>
   /**
    * Drop all pending marks un-flushed. Epoch reset only: an old-epoch mark must
-   * never reach the journal after the wipe — call this BEFORE `journal.adoptEpoch`.
+   * never reach the journal after the wipe — call this BEFORE `journal.resetToEpoch`.
    */
   readonly clear: Effect.Effect<void>
   /**

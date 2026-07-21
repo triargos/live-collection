@@ -29,8 +29,8 @@ No collection list is passed. Collections subscribe themselves when their handle
 
 `SyncBroker.start` repeatedly performs:
 
-1. read the global cursor, defaulting to `0`;
-2. request `/catchup?from=<cursor>`;
+1. read the journal's last-ingested syncId, defaulting to `0`;
+2. request `/catchup?from=<lastIngested>`;
 3. ingest the response or log a recoverable catchup failure;
 4. tail the multiplexed SSE stream;
 5. on connection loss, wait and restart at step 1.
@@ -40,7 +40,7 @@ For each entity event:
 ```text
 append opaque event to SyncJournal
 → publish it to active subscriptions
-→ advance the journal's cursor
+→ advance the journal's last-ingested syncId
 → occasionally prune the log (squash per entity, drop rows every collection applied, then count caps)
 ```
 
@@ -60,8 +60,8 @@ Stream.runForEach(
 `subscribe` hides the replay/live switchover. It subscribes to PubSub first, then examines:
 
 - the collection's last-applied syncId;
-- the global cursor;
-- the model's prune floor;
+- the global last-ingested syncId;
+- the model's highest pruned syncId;
 - the latest resync marker.
 
 It chooses one of three outcomes:
@@ -107,10 +107,10 @@ A live resync:
 ```text
 record lastResync
 → publish Snapshot(at = resync.syncId) globally
-→ advance cursor
+→ advance the last-ingested syncId
 → keep tailing
 ```
 
-A catchup response containing resync publishes `Snapshot(at = response.lastSyncId)` and advances the cursor to the response head. Active subscribers refetch in place. Unmounted collections detect that `lastResync` is newer than their last-applied syncId and snapshot when remounted.
+A catchup response containing resync publishes `Snapshot(at = response.lastSyncId)` and advances the last-ingested syncId to the response head. Active subscribers refetch in place. Unmounted collections detect that `lastResync` is newer than their last-applied syncId and snapshot when remounted.
 
 There is no reload hook. Resync target-specific routing is deferred; all current resync arms invalidate all subscribers.

@@ -8,9 +8,9 @@ Each collection key `(modelName, scope)` has one last-applied record: the newest
 
 The event log also stores:
 
-- a per-model prune floor: the highest deleted event id;
+- a per-model highest pruned syncId: the highest event id pruning permanently deleted;
 - the latest resync id;
-- the global cursor: the newest syncId ingested from any model.
+- the global last-ingested syncId: the newest syncId ingested from any model.
 
 ## Subscription decision
 
@@ -18,8 +18,8 @@ When a collection subscribes, the broker compares those positions:
 
 1. no last-applied syncId → `Snapshot`;
 2. resync newer than the last-applied syncId → `Snapshot`;
-3. last-applied syncId at or ahead of cursor → no replay;
-4. prune floor above the last-applied syncId → `Snapshot`;
+3. last-applied syncId at or ahead of the last-ingested syncId → no replay;
+4. highest pruned syncId above the last-applied syncId → `Snapshot`;
 5. otherwise → replay model events after the last-applied syncId.
 
 “Skip” is simply an empty replay. Callers do not branch between separate bootstrap, replay, and live APIs.
@@ -64,7 +64,7 @@ makeLiveRuntime({
 })
 ```
 
-Stages 1–2 delete only history no replayer can ever need, so they never move the prune floor and can never force a `Snapshot`. Only the count caps move the floor: if they remove any part of a collection's missing range, replay is unsafe and the broker emits `Snapshot`. Because squash bounds the log by distinct churned entities rather than raw event count, the caps rarely bite in practice.
+Stages 1–2 delete only history no replayer can ever need, so they never move the highest pruned syncId and can never force a `Snapshot`. Only the count caps move it: if they remove any part of a collection's missing range, replay is unsafe and the broker emits `Snapshot`. Because squash bounds the log by distinct churned entities rather than raw event count, the caps rarely bite in practice.
 
 ## Last-applied batching
 

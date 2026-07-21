@@ -41,8 +41,8 @@ export const makeSubscribe =
         const key = keyFor(modelName, scope)
         const plan = planMount({
           collectionLastApplied: yield* deps.current({ key, schemaVersion }),
-          cursor: yield* deps.journal.getCursor,
-          maxDeletedSyncId: yield* deps.journal.floor(modelName),
+          lastIngested: yield* deps.journal.getLastIngestedSyncId,
+          highestPruned: yield* deps.journal.highestPrunedSyncId(modelName),
           lastResyncAt: yield* deps.journal.getLastResync,
         })
         const rows = yield* deps.journal.read({ modelName, since: plan.since })

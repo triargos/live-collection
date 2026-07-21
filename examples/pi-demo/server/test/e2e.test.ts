@@ -109,7 +109,7 @@ describe("pi-demo client ↔ server", () => {
 
       const journalContext = yield* Layer.build(SyncJournal.layerMemory)
       const journal = Context.get(journalContext, SyncJournal)
-      yield* journal.setCursor(SyncId.make("1"))
+      yield* journal.setLastIngestedSyncId(SyncId.make("1"))
 
       const SessionHttpClient = Layer.effect(
         HttpClient.HttpClient,

@@ -58,48 +58,48 @@ describe("SyncJournal (memory)", () => {
       assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("a1c9")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("cursor starts None, then returns what was set", () =>
+  it.effect("last-ingested syncId starts None, then returns what was set", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
-      assert.isTrue(Option.isNone(yield* journal.getCursor))
-      yield* journal.setCursor(sid("5"))
-      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("5")))
+      assert.isTrue(Option.isNone(yield* journal.getLastIngestedSyncId))
+      yield* journal.setLastIngestedSyncId(sid("5"))
+      assert.deepStrictEqual(yield* journal.getLastIngestedSyncId, Option.some(sid("5")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  // The cursor must never regress: a late-arriving older event can't pull it back. And the compare is
+  // The mark must never regress: a late-arriving older event can't pull it back. And the compare is
   // numeric, not lexical — "12" beats "3" even though it sorts before it as a string.
-  it.effect("setCursor is monotonic by numeric magnitude — a smaller id does not regress the cursor", () =>
+  it.effect("setLastIngestedSyncId is monotonic by numeric magnitude — a smaller id does not regress the mark", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
-      yield* journal.setCursor(sid("10"))
-      yield* journal.setCursor(sid("3"))
-      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("10")))
-      yield* journal.setCursor(sid("12"))
-      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("12")))
+      yield* journal.setLastIngestedSyncId(sid("10"))
+      yield* journal.setLastIngestedSyncId(sid("3"))
+      assert.deepStrictEqual(yield* journal.getLastIngestedSyncId, Option.some(sid("10")))
+      yield* journal.setLastIngestedSyncId(sid("12"))
+      assert.deepStrictEqual(yield* journal.getLastIngestedSyncId, Option.some(sid("12")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("adoptEpoch wipes the entire journal and installs the new epoch + cursor atomically", () =>
+  it.effect("resetToEpoch wipes the entire journal and installs the new epoch + last-ingested syncId atomically", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
       const version = SchemaVersion.make(1)
       yield* journal.append(["1", "2", "3"].map((s, i) => insert(s, "org-1", `w${i}`)))
       yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("0") })
-      yield* journal.prune({ maxEventsPerModel: 2, maxEventsTotal: 100 }) // establishes a floor at 1
+      yield* journal.prune({ maxEventsPerModel: 2, maxEventsTotal: 100 }) // establishes a prune boundary at 1
       yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("3") })
       yield* journal.setLastResync(sid("2"))
       yield* journal.setEpoch(Epoch.make("old"))
-      yield* journal.setCursor(sid("500"))
+      yield* journal.setLastIngestedSyncId(sid("500"))
 
-      yield* journal.adoptEpoch({ epoch: Epoch.make("new"), at: sid("4") })
+      yield* journal.resetToEpoch({ epoch: Epoch.make("new"), at: sid("4") })
 
       assert.deepStrictEqual(yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") }), [])
       assert.deepStrictEqual(yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: version }), Option.none())
-      assert.deepStrictEqual(yield* journal.floor(ModelName.make("Webhook")), Option.none())
+      assert.deepStrictEqual(yield* journal.highestPrunedSyncId(ModelName.make("Webhook")), Option.none())
       assert.deepStrictEqual(yield* journal.getLastResync, Option.none())
       assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("new")))
-      // Not a monotonic set — the new-epoch cursor is *smaller* than the wiped one and must win.
-      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("4")))
+      // Not a monotonic set — the new-epoch position is *smaller* than the wiped one and must win.
+      assert.deepStrictEqual(yield* journal.getLastIngestedSyncId, Option.some(sid("4")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
   it.effect("a last-applied write under a new schema version supersedes the old record", () =>
@@ -136,7 +136,7 @@ describe("SyncJournal (memory)", () => {
       )
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("prune deletes rows every collection has applied — without moving the floor", () =>
+  it.effect("prune deletes rows every collection has applied — without moving the prune boundary", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -147,10 +147,10 @@ describe("SyncJournal (memory)", () => {
       yield* journal.prune({ maxEventsPerModel: 100, maxEventsTotal: 100 })
       const rows = yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") })
       assert.deepStrictEqual(rows.map((r) => r.syncId), [sid("3")]) // 1 and 2 are ≤ min ⇒ dead weight
-      assert.deepStrictEqual(yield* journal.floor(ModelName.make("Webhook")), Option.none()) // floor-neutral
+      assert.deepStrictEqual(yield* journal.highestPrunedSyncId(ModelName.make("Webhook")), Option.none()) // floor-neutral
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("prune drops all rows of a model with no last-applied record, floor untouched", () =>
+  it.effect("prune drops all rows of a model with no last-applied record, prune boundary untouched", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
       const key = scopedKey<unknown>({ entity: "Settings", scope: "org-1" })
@@ -162,10 +162,10 @@ describe("SyncJournal (memory)", () => {
       assert.deepStrictEqual(yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") }), [])
       const settings = yield* journal.read({ modelName: ModelName.make("Settings"), since: sid("0") })
       assert.deepStrictEqual(settings.map((r) => r.syncId), [sid("3")])
-      assert.deepStrictEqual(yield* journal.floor(ModelName.make("Webhook")), Option.none())
+      assert.deepStrictEqual(yield* journal.highestPrunedSyncId(ModelName.make("Webhook")), Option.none())
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("prune squashes an entity's history to its newest event without moving the floor", () =>
+  it.effect("prune squashes an entity's history to its newest event without moving the prune boundary", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -176,6 +176,6 @@ describe("SyncJournal (memory)", () => {
       yield* journal.prune({ maxEventsPerModel: 100, maxEventsTotal: 100 })
       const rows = yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") })
       assert.deepStrictEqual(rows.map((r) => r.syncId), [sid("5")])
-      assert.deepStrictEqual(yield* journal.floor(ModelName.make("Webhook")), Option.none())
+      assert.deepStrictEqual(yield* journal.highestPrunedSyncId(ModelName.make("Webhook")), Option.none())
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 })

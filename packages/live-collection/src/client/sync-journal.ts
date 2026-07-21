@@ -1,8 +1,14 @@
-import { Context, Effect, Layer, Option, Order, Ref, Schema, type Scope } from "effect"
-import { type DBSchema, openDB } from "idb"
-import { advanceSyncId, compareSyncId, Epoch, maxSyncId, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
+import { Context, Effect, Layer, Option, Order, Schema } from "effect"
+import { advanceSyncId, compareSyncId, Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import { SchemaVersion } from "../core/schema-version.js"
 import { type CollectionKey, serializeKey } from "../core/collection-key.js"
+import {
+  type JournalStore,
+  JournalWrite,
+  LAST_APPLIED_PREFIX,
+  makeIdbStore,
+  makeMemoryStore,
+} from "./journal-store.js"
 import { prunePlan } from "./prune-plan.js"
 
 /**
@@ -30,16 +36,21 @@ export type JournalEvent = typeof JournalEvent.Type
  *
  * - **The log** — every received event for every model, mounted or not. `append` is fed
  *   by the broker's single ingest path; `read` serves a mounting collection's replay
- *   slice; `prune`/`floor` trim history and remember, per model, how much was destroyed.
- * - **Trust metadata** — the global cursor ("the newest syncId ingested from any model";
- *   it gates catchup), per-collection last-applied syncIds ("the last event applied
- *   to this collection's saved rows was N"), `lastResync` ("replay across this point is
- *   invalid"), and the epoch ("every stored syncId is a coordinate on server timeline E").
+ *   slice; `prune`/`highestPrunedSyncId` trim history and remember, per model, how much
+ *   was destroyed.
+ * - **Trust metadata** — the last-ingested syncId ("the newest syncId ingested from any
+ *   model"; it gates catchup), per-collection last-applied syncIds ("the last event
+ *   applied to this collection's saved rows was N"), `lastResync` ("replay across this
+ *   point is invalid"), and the epoch ("every stored syncId is a coordinate on server
+ *   timeline E").
  *
  * The broker's on-mount decision (Skip / Replay / Snapshot) is computed from journal
- * reads alone. The halves share one service because an epoch reset (`adoptEpoch`) must
- * wipe the log and move the cursor atomically, and `prune` + `floor` are one operation
- * split across both stores.
+ * reads alone. The halves share one service because an epoch reset (`resetToEpoch`)
+ * must wipe the log and move the last-ingested syncId atomically, and `prune` +
+ * `highestPrunedSyncId` are one operation split across both halves.
+ *
+ * All policy — codecs, fold rules, prune orchestration — lives here, written once over
+ * the {@link JournalStore} port; the per-engine adapters are dumb keyed storage.
  */
 export interface SyncJournalShape {
   /** Append received events; upsert by `syncId` so catchup/tail overlap dedupes for free. */
@@ -54,15 +65,21 @@ export interface SyncJournalShape {
   }) => Effect.Effect<ReadonlyArray<JournalEvent>>
   /**
    * Trim the log in three stages: squash to the newest event per entity, drop rows every
-   * collection has already applied (both floor-neutral), then enforce the count caps —
-   * the only stage that moves the floor. See {@link prunePlan} for the full policy.
+   * collection has already applied (both prune-boundary-neutral), then enforce the count
+   * caps — the only stage that moves {@link highestPrunedSyncId}. See {@link prunePlan}
+   * for the full policy.
    */
   readonly prune: (caps: {
     readonly maxEventsPerModel: number
     readonly maxEventsTotal: number
   }) => Effect.Effect<void>
-  /** The model's prune boundary: `None` ⇒ nothing pruned (complete from the start); `Some(f)` ⇒ deleted below `f`. */
-  readonly floor: (modelName: ModelName) => Effect.Effect<Option.Option<SyncId>>
+  /**
+   * The highest syncId among events pruning permanently deleted for this model.
+   * `None` ⇒ nothing pruned (the log is complete from the start); `Some(p)` ⇒ events at
+   * or below `p` are gone forever, so a replay gap starting at or below it is unfillable
+   * — the mount must decide `Snapshot`.
+   */
+  readonly highestPrunedSyncId: (modelName: ModelName) => Effect.Effect<Option.Option<SyncId>>
 
   /**
    * The syncId of the last event applied to this collection's saved rows. Application
@@ -84,33 +101,62 @@ export interface SyncJournalShape {
     readonly schemaVersion: SchemaVersion
     readonly at: SyncId
   }) => Effect.Effect<void>
-  /** The newest resync the client has ingested (monotonic) — invalidates replay across it. */
+  /**
+   * The newest server-declared break in the timeline (a `Resync` event) — replay across
+   * it is invalid: the server itself cannot connect the two sides by deltas (permission
+   * change, bulk correction, or its own retention loss). A collection whose last-applied
+   * syncId predates it must `Snapshot`, no matter what the log contains. Monotonic —
+   * only the newest break matters.
+   */
   readonly getLastResync: Effect.Effect<Option.Option<SyncId>>
   readonly setLastResync: (at: SyncId) => Effect.Effect<void>
 
-  /** The durable global cursor — newest syncId ingested from any model; gates catchup
-   *  (`from = cursor ?? "0"`). `None` only on a truly cold start. */
-  readonly getCursor: Effect.Effect<Option.Option<SyncId>>
+  /**
+   * The global high-water mark of the log: the newest syncId durably ingested from
+   * *any* model. Gates catchup (`from = lastIngested ?? "0"`) and is the "how far has
+   * the world moved" side of the mount decision. NOT per-collection "applied" — an
+   * unmounted collection's last-applied mark can trail far behind this. `None` only on
+   * a truly cold start.
+   */
+  readonly getLastIngestedSyncId: Effect.Effect<Option.Option<SyncId>>
   /** Monotonic — keeps the larger id by numeric magnitude; a late out-of-order event can
-   *  never pull the cursor backwards. */
-  readonly setCursor: (id: SyncId) => Effect.Effect<void>
+   *  never pull the mark backwards. */
+  readonly setLastIngestedSyncId: (id: SyncId) => Effect.Effect<void>
 
   /**
    * The epoch of the server timeline this journal was built from — the identity every
    * stored syncId is relative to. `None` until a catchup response first carries one.
+   * `setEpoch` is the first-seen stamp: it labels *existing, trusted* state and wipes
+   * nothing — the gentle sibling of {@link resetToEpoch}.
    */
   readonly getEpoch: Effect.Effect<Option.Option<Epoch>>
   readonly setEpoch: (epoch: Epoch) => Effect.Effect<void>
   /**
-   * Epoch reset in ONE transaction: wipe the ENTIRE journal (every logged event, all
-   * collection last-applied syncIds, all prune floors, lastResync), install the new
-   * epoch, and place the cursor at `at`. Nothing survives; the next mount necessarily
-   * decides Snapshot. A stale epoch means *no* local sync state is trustworthy, so
-   * partial retention has no correct form — and a cursor that outlived the wipe would
-   * be an old-timeline coordinate gating catchup on the new timeline.
+   * The server timeline changed identity: wipe the ENTIRE journal (every logged event,
+   * all collection last-applied syncIds, all prune boundaries, lastResync), install the
+   * new epoch, and place the last-ingested syncId at `at` — in ONE atomic write. Nothing
+   * survives; the next mount necessarily decides Snapshot.
+   *
+   * This is NOT expressible as prune-then-set: `prune` records destruction (it advances
+   * {@link highestPrunedSyncId}), but those boundaries are coordinates on the dead
+   * timeline — poison on the new one, forcing `Snapshot` forever. The epoch reset must
+   * destroy the record of destruction too. And it must be one write: a partial reset
+   * (log wiped but an old-epoch last-ingested mark surviving, or vice versa) would
+   * recreate exactly the inconsistency this method exists to end.
    */
-  readonly adoptEpoch: (args: { readonly epoch: Epoch; readonly at: SyncId }) => Effect.Effect<void>
+  readonly resetToEpoch: (args: { readonly epoch: Epoch; readonly at: SyncId }) => Effect.Effect<void>
 }
+
+// ── Record keys — the frozen physical encodings ──
+// The spellings predate the honest method names ("cursor", "wm:") and are only ever
+// built and looked up, never parsed back; changing them would orphan every existing
+// client's journal (a silent global reset), so they stay.
+
+const lastAppliedKey = (key: CollectionKey<unknown>): string => `${LAST_APPLIED_PREFIX}${serializeKey(key)}`
+const prunedKey = (modelName: string): string => `floor:${modelName}`
+const RESYNC_KEY = "lastResync"
+const EPOCH_KEY = "epoch"
+const LAST_INGESTED_KEY = "cursor"
 
 /**
  * The stored last-applied mark — a structured value so `prune` can group by `entity`
@@ -150,276 +196,158 @@ const minLastAppliedByModel = (records: Iterable<LastAppliedRecord>): Map<string
   return min
 }
 
-/** In-memory adapter over `Ref`s — broker behavior tests. */
-const makeMemory: Effect.Effect<SyncJournalShape> = Effect.gen(function* () {
-  const rows = yield* Ref.make(new Map<string, JournalEvent>()) // keyed by syncId ⇒ upsert dedupe
-  const lastApplied = yield* Ref.make(new Map<string, LastAppliedRecord>()) // keyed by serializeKey(key) — one record per collection
-  const floors = yield* Ref.make(new Map<string, SyncId>()) // modelName ⇒ prune boundary (highest deleted)
-  const lastResync = yield* Ref.make(Option.none<SyncId>())
-  const epoch = yield* Ref.make(Option.none<Epoch>())
-  const cursor = yield* Ref.make(Option.none<SyncId>())
-
-  return {
-    append: (incoming) =>
-      Ref.update(rows, (m) => {
-        const next = new Map(m)
-        for (const row of incoming) next.set(row.syncId, row)
-        return next
-      }),
-    read: ({ modelName, since }) =>
-      Ref.get(rows).pipe(
-        Effect.map((m) =>
-          [...m.values()]
-            .filter((r) => r.modelName === modelName && compareSyncId(r.syncId, since) > 0)
-            .sort((a, b) => compareSyncId(a.syncId, b.syncId)),
-        ),
-      ),
-    prune: ({ maxEventsPerModel, maxEventsTotal }) =>
-      Effect.all([Ref.get(rows), Ref.get(lastApplied)]).pipe(
-        Effect.flatMap(([m, applied]) => {
-          const plan = prunePlan({
-            rows: [...m.values()],
-            minLastApplied: minLastAppliedByModel(applied.values()),
-            maxEventsPerModel,
-            maxEventsTotal,
-          })
-          return Ref.set(rows, new Map(plan.keep.map((r) => [r.syncId, r] as const))).pipe(
-            Effect.andThen(
-              Ref.update(floors, (f) => {
-                const next = new Map(f)
-                for (const [model, at] of plan.maxDeletedSyncId) {
-                  const current = next.get(model)
-                  next.set(model, current ? maxSyncId(current, at) : at)
-                }
-                return next
-              }),
-            ),
-          )
-        }),
-      ),
-    floor: (modelName) => Ref.get(floors).pipe(Effect.map((f) => Option.fromNullishOr(f.get(modelName)))),
-    getCollectionLastAppliedSyncId: ({ key, schemaVersion }) =>
-      Ref.get(lastApplied).pipe(
-        Effect.map((m) =>
-          Option.fromNullishOr(m.get(serializeKey(key))).pipe(
-            Option.filter((record) => record.schemaVersion === schemaVersion),
-            Option.map((record) => record.at),
-          ),
-        ),
-      ),
-    setCollectionLastAppliedSyncId: ({ key, schemaVersion, at }) =>
-      Ref.update(lastApplied, (m) => {
-        const next = new Map(m)
-        const id = serializeKey(key)
-        next.set(id, foldLastApplied(Option.fromNullishOr(m.get(id)), { entity: key.entity, schemaVersion, at }))
-        return next
-      }),
-    getLastResync: Ref.get(lastResync),
-    setLastResync: (at) => Ref.update(lastResync, (c) => Option.some(advanceSyncId(c, at))),
-    getCursor: Ref.get(cursor),
-    setCursor: (id) => Ref.update(cursor, (c) => Option.some(advanceSyncId(c, id))),
-    getEpoch: Ref.get(epoch),
-    setEpoch: (value) => Ref.set(epoch, Option.some(value)),
-    adoptEpoch: ({ epoch: next, at }) =>
-      Effect.all(
-        [
-          Ref.set(rows, new Map<string, JournalEvent>()),
-          Ref.set(lastApplied, new Map<string, LastAppliedRecord>()),
-          Ref.set(floors, new Map<string, SyncId>()),
-          Ref.set(lastResync, Option.none<SyncId>()),
-          Ref.set(epoch, Option.some(next)),
-          Ref.set(cursor, Option.some(at)),
-        ],
-        { discard: true },
-      ),
-  }
-})
-
-// ── IndexedDB adapter (`layer`) — the durable home that survives reload/workspace-switch ──
-
 const StoredEvents = Schema.Array(JournalEvent)
 
 // The on-disk name predates the SyncJournal rename; changing it would orphan every
 // existing client's journal (a silent global reset), so it stays "eventlog".
 const DEFAULT_DATABASE_NAME = "live-collection-eventlog"
-const EVENTS = "events" // object store: journal rows, keyed by `syncId` (PK), indexed by `modelName`
-const BY_MODEL = "byModel" // index on `events.modelName` — the replay read narrows to one model first
-const META = "meta" // keyval object store (out-of-line keys): collection last-applied syncIds, prune floors, lastResync
-
-// One record per collection key; the schema version lives in the *value* as the
-// supersede guard. The "wm:" prefix predates the rename; it is only ever used for
-// lookup and prefix ranges — never parsed back (the entity for prune's grouping comes
-// from the stored record).
-const LAST_APPLIED_PREFIX = "wm:"
-const lastAppliedKey = (key: CollectionKey<unknown>): string => `${LAST_APPLIED_PREFIX}${serializeKey(key)}`
-const floorKey = (modelName: string): string => `floor:${modelName}`
-const RESYNC_KEY = "lastResync"
-const EPOCH_KEY = "epoch"
-const CURSOR_KEY = "cursor"
-
-interface SyncJournalDbSchema extends DBSchema {
-  [EVENTS]: {
-    key: string
-    value: Schema.Codec.Encoded<typeof JournalEvent>
-    indexes: { [BY_MODEL]: string }
-  }
-  [META]: {
-    key: string
-    value: unknown
-  }
-}
 
 /**
- * The durable adapter. IDB orders string keys *lexicographically*, but `syncId`s order by *magnitude*, so
- * this never range-scans on the `syncId` key: `read`/`prune` narrow with the `modelName` index (or read
- * the whole — cap-bounded — store), then filter/sort/retain in memory with {@link compareSyncId}. Driver
- * faults are defects (`Effect.promise` dies on rejection); the method error channel stays empty.
+ * The policy layer — every codec, fold rule, and orchestration, written ONCE over the
+ * {@link JournalStore} port. The port's contract carries what the policy relies on:
+ * single-writer read-fold-commit sequences (sequential under broker ingest) and
+ * all-or-nothing `commit`s. Store faults are defects; the error channel stays empty.
  */
-const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, never, Scope.Scope> =>
-  Effect.gen(function* () {
-    const db = yield* Effect.acquireRelease(
-      Effect.promise(() =>
-        openDB<SyncJournalDbSchema>(databaseName, 1, {
-          upgrade(db) {
-            db.createObjectStore(EVENTS, { keyPath: "syncId" }).createIndex(BY_MODEL, "modelName", { unique: false })
-            db.createObjectStore(META)
-          },
+const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
+  const decodeRows = (raw: ReadonlyArray<unknown>): Effect.Effect<ReadonlyArray<JournalEvent>> =>
+    Schema.decodeUnknownEffect(StoredEvents)(raw).pipe(Effect.orDie)
+
+  const recordSyncId = (key: string): Effect.Effect<Option.Option<SyncId>> =>
+    store.record(key).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (value) => Schema.decodeUnknownEffect(SyncId)(value).pipe(Effect.asSome),
         }),
       ),
-      (db) => Effect.sync(() => db.close()),
+      Effect.orDie,
     )
 
-    const getMetaSyncId = (key: string): Effect.Effect<Option.Option<SyncId>> =>
-      Effect.promise(() => db.get(META, key)).pipe(
-        Effect.flatMap((value) =>
-          value === undefined ? Effect.succeedNone : Schema.decodeUnknownEffect(SyncId)(value).pipe(Effect.asSome),
-        ),
+  // Monotonic write: read the current mark, keep the larger, persist. (Sequential under broker ingest.)
+  const advanceRecordSyncId = (key: string, at: SyncId): Effect.Effect<void> =>
+    recordSyncId(key).pipe(
+      Effect.flatMap((current) => store.commit(JournalWrite.Patch({ putRecords: [[key, advanceSyncId(current, at)]] }))),
+    )
+
+  const readLastAppliedRecords: Effect.Effect<ReadonlyArray<LastAppliedRecord>> = store.lastAppliedRecords.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(LastAppliedRecord))),
+    Effect.orDie,
+  )
+
+  const getLastAppliedRecord = (key: CollectionKey<unknown>): Effect.Effect<Option.Option<LastAppliedRecord>> =>
+    store.record(lastAppliedKey(key)).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (value) => Schema.decodeUnknownEffect(LastAppliedRecord)(value).pipe(Effect.asSome),
+        }),
+      ),
+      Effect.orDie,
+    )
+
+  return {
+    append: (incoming) =>
+      Schema.encodeEffect(StoredEvents)(incoming).pipe(
         Effect.orDie,
-      )
-
-    // Monotonic write: read the current cursor, keep the larger, persist. (Sequential under broker ingest.)
-    const advanceMetaSyncId = (key: string, at: SyncId): Effect.Effect<void> =>
-      getMetaSyncId(key).pipe(
-        Effect.flatMap((current) => Effect.promise(() => db.put(META, advanceSyncId(current, at), key))),
-        Effect.asVoid,
-      )
-
-    const decodeAll = (raw: unknown): Effect.Effect<ReadonlyArray<JournalEvent>> =>
-      Schema.decodeUnknownEffect(StoredEvents)(raw).pipe(Effect.orDie)
-
-    // Every last-applied record, via a prefix range over the "wm:" keys (keys are never
-    // parsed — the entity for grouping comes from the stored record's value).
-    const readLastAppliedRecords: Effect.Effect<ReadonlyArray<LastAppliedRecord>> = Effect.promise(() =>
-      db.getAll(META, IDBKeyRange.bound(LAST_APPLIED_PREFIX, `${LAST_APPLIED_PREFIX}\uffff`)),
-    ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(LastAppliedRecord))), Effect.orDie)
-
-    const getLastAppliedRecord = (key: CollectionKey<unknown>): Effect.Effect<Option.Option<LastAppliedRecord>> =>
-      Effect.promise(() => db.get(META, lastAppliedKey(key))).pipe(
-        Effect.flatMap((value) =>
-          value === undefined
-            ? Effect.succeedNone
-            : Schema.decodeUnknownEffect(LastAppliedRecord)(value).pipe(Effect.asSome),
-        ),
-        Effect.orDie,
-      )
-
-    return {
-      append: (incoming) =>
-        Schema.encodeEffect(StoredEvents)(incoming).pipe(
-          Effect.orDie,
-          Effect.flatMap((stored) =>
-            Effect.promise(async () => {
-              const tx = db.transaction(EVENTS, "readwrite")
-              // put = upsert by `syncId` keyPath ⇒ dedupe
-              await Promise.all([...stored.map((row) => tx.store.put(row)), tx.done])
+        Effect.flatMap((stored) =>
+          store.commit(
+            JournalWrite.Patch({
+              putLog: incoming.map((row, index) => ({
+                syncId: row.syncId,
+                modelName: row.modelName,
+                value: stored[index],
+              })),
             }),
           ),
         ),
-
-      read: ({ modelName, since }) =>
-        Effect.promise(() => db.getAllFromIndex(EVENTS, BY_MODEL, modelName)).pipe(
-          Effect.flatMap(decodeAll),
-          Effect.map((rows) =>
-            rows.filter((r) => compareSyncId(r.syncId, since) > 0).sort((a, b) => compareSyncId(a.syncId, b.syncId)),
-          ),
-        ),
-
-      prune: ({ maxEventsPerModel, maxEventsTotal }) =>
-        Effect.all([Effect.promise(() => db.getAll(EVENTS)).pipe(Effect.flatMap(decodeAll)), readLastAppliedRecords]).pipe(
-          Effect.flatMap(([all, records]) => {
-            const plan = prunePlan({
-              rows: all,
-              minLastApplied: minLastAppliedByModel(records),
-              maxEventsPerModel,
-              maxEventsTotal,
-            })
-            const kept = new Set(plan.keep.map((r) => r.syncId))
-            const deleted = all.filter((r) => !kept.has(r.syncId))
-            if (deleted.length === 0) return Effect.void
-            // Merge each model's max deleted syncId into the current floor (monotonic) before the delete tx.
-            return Effect.forEach([...plan.maxDeletedSyncId], ([model, at]) =>
-              getMetaSyncId(floorKey(model)).pipe(Effect.map((cur) => [floorKey(model), advanceSyncId(cur, at)] as const)),
-            ).pipe(
-              Effect.flatMap((floors) =>
-                Effect.promise(async () => {
-                  const tx = db.transaction([EVENTS, META], "readwrite")
-                  const events = tx.objectStore(EVENTS)
-                  const meta = tx.objectStore(META)
-                  await Promise.all([
-                    ...deleted.map((r) => events.delete(r.syncId)),
-                    ...floors.map(([key, at]) => meta.put(at, key)),
-                    tx.done,
-                  ])
-                }),
-              ),
-            )
-          }),
-        ),
-
-      floor: (modelName) => getMetaSyncId(floorKey(modelName)),
-      getCollectionLastAppliedSyncId: ({ key, schemaVersion }) =>
-        getLastAppliedRecord(key).pipe(
-          Effect.map(
-            Option.flatMap((record) =>
-              record.schemaVersion === schemaVersion ? Option.some(record.at) : Option.none(),
-            ),
-          ),
-        ),
-      // Supersede-or-advance: read the record, fold, persist. (Sequential under broker ingest.)
-      setCollectionLastAppliedSyncId: ({ key, schemaVersion, at }) =>
-        getLastAppliedRecord(key).pipe(
-          Effect.flatMap((current) =>
-            Effect.promise(() =>
-              db.put(META, foldLastApplied(current, { entity: key.entity, schemaVersion, at }), lastAppliedKey(key)),
-            ),
-          ),
-          Effect.asVoid,
-        ),
-      getLastResync: getMetaSyncId(RESYNC_KEY),
-      setLastResync: (at) => advanceMetaSyncId(RESYNC_KEY, at),
-      getCursor: getMetaSyncId(CURSOR_KEY),
-      setCursor: (id) => advanceMetaSyncId(CURSOR_KEY, id),
-
-      getEpoch: Effect.promise(() => db.get(META, EPOCH_KEY)).pipe(
-        Effect.flatMap((value) =>
-          value === undefined ? Effect.succeedNone : Schema.decodeUnknownEffect(Epoch)(value).pipe(Effect.asSome),
-        ),
-        Effect.orDie,
       ),
-      setEpoch: (epoch) => Effect.promise(() => db.put(META, epoch, EPOCH_KEY)).pipe(Effect.asVoid),
-      // One tx: wipe events + every meta record, then install the new epoch and cursor —
-      // a partial reset (events wiped but an old-epoch cursor surviving, or vice versa)
-      // would recreate exactly the inconsistency this method exists to end.
-      adoptEpoch: ({ epoch, at }) =>
-        Effect.promise(async () => {
-          const tx = db.transaction([EVENTS, META], "readwrite")
-          const meta = tx.objectStore(META)
-          await tx.objectStore(EVENTS).clear()
-          await meta.clear()
-          await Promise.all([meta.put(epoch, EPOCH_KEY), meta.put(at, CURSOR_KEY), tx.done])
+
+    read: ({ modelName, since }) =>
+      store.logByModel(modelName).pipe(
+        Effect.flatMap(decodeRows),
+        Effect.map((rows) =>
+          rows.filter((r) => compareSyncId(r.syncId, since) > 0).sort((a, b) => compareSyncId(a.syncId, b.syncId)),
+        ),
+      ),
+
+    prune: ({ maxEventsPerModel, maxEventsTotal }) =>
+      Effect.all([store.logAll.pipe(Effect.flatMap(decodeRows)), readLastAppliedRecords]).pipe(
+        Effect.flatMap(([all, records]) => {
+          const plan = prunePlan({
+            rows: all,
+            minLastApplied: minLastAppliedByModel(records),
+            maxEventsPerModel,
+            maxEventsTotal,
+          })
+          const kept = new Set(plan.keep.map((r) => r.syncId))
+          const deleted = all.filter((r) => !kept.has(r.syncId))
+          if (deleted.length === 0) return Effect.void
+          // Merge each model's max deleted syncId into the current boundary (monotonic),
+          // then land deletions + boundaries in ONE commit.
+          return Effect.forEach([...plan.maxDeletedSyncId], ([model, at]) =>
+            recordSyncId(prunedKey(model)).pipe(
+              Effect.map((current) => [prunedKey(model), advanceSyncId(current, at)] as const),
+            ),
+          ).pipe(
+            Effect.flatMap((boundaries) =>
+              store.commit(
+                JournalWrite.Patch({ deleteLog: deleted.map((r) => r.syncId), putRecords: boundaries }),
+              ),
+            ),
+          )
         }),
-    }
-  })
+      ),
+
+    highestPrunedSyncId: (modelName) => recordSyncId(prunedKey(modelName)),
+
+    getCollectionLastAppliedSyncId: ({ key, schemaVersion }) =>
+      getLastAppliedRecord(key).pipe(
+        Effect.map(
+          Option.flatMap((record) =>
+            record.schemaVersion === schemaVersion ? Option.some(record.at) : Option.none(),
+          ),
+        ),
+      ),
+    // Supersede-or-advance: read the record, fold, persist. (Sequential under broker ingest.)
+    setCollectionLastAppliedSyncId: ({ key, schemaVersion, at }) =>
+      getLastAppliedRecord(key).pipe(
+        Effect.flatMap((current) =>
+          store.commit(
+            JournalWrite.Patch({
+              putRecords: [[lastAppliedKey(key), foldLastApplied(current, { entity: key.entity, schemaVersion, at })]],
+            }),
+          ),
+        ),
+      ),
+
+    getLastResync: recordSyncId(RESYNC_KEY),
+    setLastResync: (at) => advanceRecordSyncId(RESYNC_KEY, at),
+    getLastIngestedSyncId: recordSyncId(LAST_INGESTED_KEY),
+    setLastIngestedSyncId: (id) => advanceRecordSyncId(LAST_INGESTED_KEY, id),
+
+    getEpoch: store.record(EPOCH_KEY).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (value) => Schema.decodeUnknownEffect(Epoch)(value).pipe(Effect.asSome),
+        }),
+      ),
+      Effect.orDie,
+    ),
+    setEpoch: (epoch) => store.commit(JournalWrite.Patch({ putRecords: [[EPOCH_KEY, epoch]] })),
+
+    // One atomic Reset: nothing survives, the new identity and position land together.
+    resetToEpoch: ({ epoch, at }) =>
+      store.commit(
+        JournalWrite.Reset({
+          records: [
+            [EPOCH_KEY, epoch],
+            [LAST_INGESTED_KEY, at],
+          ],
+        }),
+      ),
+  }
+}
 
 /**
  * The sync-journal service tag. Provide one of its layers as part of the `loop` layer
@@ -432,9 +360,15 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, ne
  * ```
  */
 export class SyncJournal extends Context.Service<SyncJournal, SyncJournalShape>()("SyncJournal") {
-  /** In-memory (`Ref`-backed), non-durable — for tests and SSR. */
-  static readonly layerMemory: Layer.Layer<SyncJournal> = Layer.effect(SyncJournal, makeMemory)
+  /** In-memory (`Ref`-backed), non-durable — for tests and SSR. Same policy layer as production. */
+  static readonly layerMemory: Layer.Layer<SyncJournal> = Layer.effect(
+    SyncJournal,
+    Effect.map(makeMemoryStore, makeSyncJournal),
+  )
   /** Browser default: durable IndexedDB. Opens (and closes on scope-out) `databaseName` ?? `"live-collection-eventlog"`. */
   static readonly layer = (options?: { readonly databaseName?: string }): Layer.Layer<SyncJournal> =>
-    Layer.effect(SyncJournal, makeIndexedDb(options?.databaseName ?? DEFAULT_DATABASE_NAME))
+    Layer.effect(
+      SyncJournal,
+      Effect.map(makeIdbStore(options?.databaseName ?? DEFAULT_DATABASE_NAME), makeSyncJournal),
+    )
 }

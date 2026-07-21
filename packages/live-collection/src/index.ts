@@ -23,7 +23,7 @@ export type { LiveCollection } from "./persistence/live-collection.js"
 export * from "./persistence/live-collection-options.js"
 export * from "./persistence/sync-write.js"
 
-// client/ — SSE transport, catchup, durable cursor/journal, and the subscription broker.
+// client/ — SSE transport, catchup, the durable sync journal, and the subscription broker.
 // (ingest, subscribe, mount-plan, prune-plan are internal machines/policies.)
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"

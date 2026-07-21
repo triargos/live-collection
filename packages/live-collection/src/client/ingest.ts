@@ -1,5 +1,5 @@
 import { Data, Effect, Option, Schedule, Stream } from "effect"
-import { type CatchupResponse, type Epoch, type HydratedSyncEventEnvelope, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
+import { type CatchupResponse, type HydratedSyncEventEnvelope, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { CatchupClientShape } from "./catchup-client.js"
 import type { SyncJournalShape, JournalEvent } from "./sync-journal.js"
 import type { SyncTransportShape } from "./sync-transport.js"
@@ -45,11 +45,13 @@ const rowFromEvent = (event: EntityEvent): JournalEvent =>
  * stale is better than dead.
  *
  * Ordering invariants owned here:
- * - Live tail, per event: `append` → publish → `setCursor`. The cursor only advances
- *   after the row is durable, so a crash mid-ingest re-fetches rather than skips.
- * - Catchup, per batch: full `append` (one tx) → ordered publishes → one `setCursor`.
+ * - Live tail, per event: `append` → publish → `setLastIngestedSyncId`. The mark only
+ *   advances after the row is durable, so a crash mid-ingest re-fetches rather than skips.
+ * - Catchup, per batch: full `append` (one commit) → ordered publishes → one
+ *   `setLastIngestedSyncId`.
  * - Epoch reset: `onEpochReset` (drop pending last-applied marks) strictly before
- *   `journal.adoptEpoch` (the atomic wipe + new epoch + cursor); `EpochReset` fanout last.
+ *   `journal.resetToEpoch` (the atomic wipe + new epoch + last-ingested mark);
+ *   `EpochReset` fanout last.
  */
 export const makeIngest = (deps: {
   readonly transport: SyncTransportShape
@@ -83,7 +85,7 @@ export const makeIngest = (deps: {
     const row = rowFromEvent(event)
     return journal.append([row]).pipe(
       Effect.andThen(publish(PublishedItem.Event({ row }))),
-      Effect.andThen(journal.setCursor(event.syncId)),
+      Effect.andThen(journal.setLastIngestedSyncId(event.syncId)),
       Effect.andThen(trimIfNeeded(1)),
       Effect.asVoid,
     )
@@ -92,7 +94,7 @@ export const makeIngest = (deps: {
   const ingestLive = (event: HydratedSyncEventEnvelope): Effect.Effect<void> =>
     event._tag === "Resync"
       ? journal.setLastResync(event.syncId).pipe(
-          Effect.andThen(journal.setCursor(event.syncId)),
+          Effect.andThen(journal.setLastIngestedSyncId(event.syncId)),
           Effect.andThen(publish(PublishedItem.Resync({ at: event.syncId }))),
           Effect.asVoid,
         )
@@ -103,35 +105,25 @@ export const makeIngest = (deps: {
     // Any resync in the batch ⇒ everyone snapshots anyway; journaling the entities would be wasted work.
     if (resyncs.length > 0) {
       return Effect.forEach(resyncs, (event) => journal.setLastResync(event.syncId), { discard: true }).pipe(
-        Effect.andThen(journal.setCursor(response.lastSyncId)),
+        Effect.andThen(journal.setLastIngestedSyncId(response.lastSyncId)),
         Effect.andThen(publish(PublishedItem.Resync({ at: response.lastSyncId }))),
         Effect.asVoid,
       )
     }
-    // One consistent chunk: all rows durable in one append, then fanout in order, then one cursor advance.
+    // One consistent chunk: all rows durable in one append, then fanout in order, then one ingest-mark advance.
     const rows = response.events.filter((event): event is EntityEvent => event._tag !== "Resync").map(rowFromEvent)
     return journal.append(rows).pipe(
       Effect.andThen(Effect.forEach(rows, (row) => publish(PublishedItem.Event({ row })), { discard: true })),
-      Effect.andThen(journal.setCursor(response.lastSyncId)),
+      Effect.andThen(journal.setLastIngestedSyncId(response.lastSyncId)),
       Effect.andThen(trimIfNeeded(rows.length)),
       Effect.asVoid,
     )
   }
 
-  /**
-   * The server's timeline changed identity — every locally remembered syncId is a
-   * coordinate in a timeline that no longer exists. Wipe it all, adopt the new epoch,
-   * and snapshot every subscriber at the new cursor.
-   */
-  const resetForEpoch = (epoch: Epoch, at: SyncId): Effect.Effect<void> =>
-    onEpochReset.pipe(
-      Effect.andThen(journal.adoptEpoch({ epoch, at })),
-      Effect.andThen(publish(PublishedItem.EpochReset({ at }))),
-      Effect.asVoid,
-    )
-
   // No epoch on the wire ⇒ no checking (the backend guarantees one everlasting timeline).
-  // First epoch seen ⇒ adopt it. Same ⇒ proceed. Different ⇒ the timeline reset: heal.
+  // First epoch seen ⇒ stamp it (existing state is trusted). Same ⇒ proceed. Different ⇒
+  // the timeline changed identity: drop pending old-epoch marks, then the atomic
+  // `resetToEpoch` wipe, then snapshot every subscriber at the new position.
   const applyEpochChecked = (response: CatchupResponse): Effect.Effect<void> =>
     Option.match(response.epoch, {
       onNone: () => applyCatchup(response),
@@ -141,14 +133,20 @@ export const makeIngest = (deps: {
             Option.match({
               onNone: () => journal.setEpoch(epoch).pipe(Effect.andThen(applyCatchup(response))),
               onSome: (stored) =>
-                stored === epoch ? applyCatchup(response) : resetForEpoch(epoch, response.lastSyncId),
+                stored === epoch
+                  ? applyCatchup(response)
+                  : onEpochReset.pipe(
+                      Effect.andThen(journal.resetToEpoch({ epoch, at: response.lastSyncId })),
+                      Effect.andThen(publish(PublishedItem.EpochReset({ at: response.lastSyncId }))),
+                      Effect.asVoid,
+                    ),
             }),
           ),
         ),
     })
 
   const cycle = Effect.gen(function* () {
-    const from = Option.getOrElse(yield* journal.getCursor, () => zeroSyncId)
+    const from = Option.getOrElse(yield* journal.getLastIngestedSyncId, () => zeroSyncId)
     const response = yield* catchup.fetch({ from }).pipe(
       Effect.map(Option.some),
       Effect.catchTag("CatchupFailed", (error) =>

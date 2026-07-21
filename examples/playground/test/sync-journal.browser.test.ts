@@ -88,7 +88,7 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
       assert.deepStrictEqual(rows.map((r) => r.modelId), [ModelId.make("x")])
     }))
 
-  it.live("prune keeps the newest `maxEventsPerModel` and records the max deleted syncId as the floor (durable)", () =>
+  it.live("prune keeps the newest `maxEventsPerModel` and records the max deleted syncId as the prune boundary (durable)", () =>
     Effect.gen(function* () {
       const databaseName = freshDb()
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -99,17 +99,17 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           yield* journal.append(["1", "2", "3", "4", "5"].map((s, i) => insert(s, "org-1", `w${i}`)))
           // A record at "0" keeps every row above the dead-weight line — this exercises the count cap.
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("0") })
-          yield* journal.prune({ maxEventsPerModel: 3, maxEventsTotal: 100 }) // keep 3,4,5 ; delete 1,2 ; floor ⇒ 2
+          yield* journal.prune({ maxEventsPerModel: 3, maxEventsTotal: 100 }) // keep 3,4,5 ; delete 1,2 ; boundary ⇒ 2
           const kept = yield* journal.read({ modelName: Webhook, since: sid("0") })
           assert.deepStrictEqual(kept.map((r) => r.syncId), [sid("3"), sid("4"), sid("5")])
         }),
       )
       // Floor persists across the reload (a remount must still see the prune boundary).
-      const floor = yield* session(databaseName, SyncJournal.pipe(Effect.flatMap((journal) => journal.floor(Webhook))))
-      assert.deepStrictEqual(floor, Option.some(sid("2")))
+      const pruned = yield* session(databaseName, SyncJournal.pipe(Effect.flatMap((journal) => journal.highestPrunedSyncId(Webhook))))
+      assert.deepStrictEqual(pruned, Option.some(sid("2")))
     }))
 
-  it.live("prune deletes rows every collection has applied — durably, with the floor still None", () =>
+  it.live("prune deletes rows every collection has applied — durably, with the prune boundary still None", () =>
     Effect.gen(function* () {
       const databaseName = freshDb()
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -122,14 +122,14 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           yield* journal.prune({ maxEventsPerModel: 100, maxEventsTotal: 100 }) // 1,2 ≤ min ⇒ dead weight
         }),
       )
-      // The deletion is durable AND floor-neutral: dead weight can never force a Snapshot.
+      // The deletion is durable AND boundary-neutral: dead weight can never force a Snapshot.
       yield* session(
         databaseName,
         Effect.gen(function* () {
           const journal = yield* SyncJournal
           const rows = yield* journal.read({ modelName: Webhook, since: sid("0") })
           assert.deepStrictEqual(rows.map((r) => r.syncId), [sid("3")])
-          assert.deepStrictEqual(yield* journal.floor(Webhook), Option.none())
+          assert.deepStrictEqual(yield* journal.highestPrunedSyncId(Webhook), Option.none())
         }),
       )
     }))
@@ -203,7 +203,7 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
       assert.deepStrictEqual(stored, Option.some(Epoch.make("epoch-a")))
     }))
 
-  it.live("adoptEpoch wipes events + every meta record and installs the new epoch + cursor — in one tx, surviving a reload", () =>
+  it.live("resetToEpoch wipes the log + every record and installs the new epoch + last-ingested syncId — in one commit, surviving a reload", () =>
     Effect.gen(function* () {
       const databaseName = freshDb()
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -213,12 +213,12 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           const journal = yield* SyncJournal
           yield* journal.append(["1", "2", "3"].map((s, i) => insert(s, "org-1", `w${i}`)))
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("0") })
-          yield* journal.prune({ maxEventsPerModel: 2, maxEventsTotal: 100 }) // floor ⇒ 1
+          yield* journal.prune({ maxEventsPerModel: 2, maxEventsTotal: 100 }) // boundary ⇒ 1
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("3") })
           yield* journal.setLastResync(sid("2"))
           yield* journal.setEpoch(Epoch.make("old"))
-          yield* journal.setCursor(sid("500"))
-          yield* journal.adoptEpoch({ epoch: Epoch.make("new"), at: sid("4") })
+          yield* journal.setLastIngestedSyncId(sid("500"))
+          yield* journal.resetToEpoch({ epoch: Epoch.make("new"), at: sid("4") })
         }),
       )
       // The "reload": a fresh scope over the same database must find the post-reset state.
@@ -228,11 +228,11 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           const journal = yield* SyncJournal
           assert.deepStrictEqual(yield* journal.read({ modelName: Webhook, since: sid("0") }), [])
           assert.deepStrictEqual(yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: version }), Option.none())
-          assert.deepStrictEqual(yield* journal.floor(Webhook), Option.none())
+          assert.deepStrictEqual(yield* journal.highestPrunedSyncId(Webhook), Option.none())
           assert.deepStrictEqual(yield* journal.getLastResync, Option.none())
           assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("new")))
-          // Not a monotonic set — the new-epoch cursor is *smaller* than the wiped one and must win.
-          assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("4")))
+          // Not a monotonic set — the new-epoch position is *smaller* than the wiped one and must win.
+          assert.deepStrictEqual(yield* journal.getLastIngestedSyncId, Option.some(sid("4")))
         }),
       )
     }))
