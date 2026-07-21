@@ -68,7 +68,7 @@ Stages 1–2 delete only history no replayer can ever need, so they never move t
 
 ## Last-applied batching
 
-`markApplied` updates pending last-applied marks in memory and flushes them durably on an interval (100 ms by default) and on broker shutdown. A stale durable mark may cause a few events to replay after a crash, but synced upserts and deletes are idempotent.
+The broker's per-signal ack (recorded after each subscriber `apply` returns) updates pending last-applied marks in memory and flushes them durably on an interval (100 ms by default) and on broker shutdown. A stale durable mark may cause a few events to replay after a crash, but synced upserts and deletes are idempotent.
 
 Configure the interval with `broker.pendingLastAppliedFlushInterval`.
 

@@ -50,17 +50,15 @@ The app's workspace concept appears only through the opaque scope string. The pa
 
 ## Self-owned sync drain
 
-On first mount, `defineCollection` creates the persisted TanStack collection and forks a broker drain in the registry child scope.
-
-The drain applies:
+On first mount, `defineCollection` creates the persisted TanStack collection and forks a broker drain in the registry child scope. The drain attaches to the broker with an `apply` that lands each signal:
 
 - `Snapshot`: `listFn → replaceSynced`
 - `Upsert`: schema decode → scope filter → `writeSynced`
 - `Delete`: `deleteSynced`
 
-Then it calls `broker.markApplied`. Model decoding and scope filtering live here, not in the broker.
+The broker acks each signal itself after `apply` returns. Model decoding and scope filtering live here, not in the broker.
 
-A malformed upsert is warned and skipped without stopping the stream. A valid upsert for another scope is also skipped. Both still advance this subscriber's last-applied syncId because the event was handled.
+A malformed upsert is warned and skipped without stopping the drain. A valid upsert for another scope is also skipped. Both still advance this subscriber's last-applied syncId because returning from `apply` means the event was handled.
 
 ## Optimistic writes
 

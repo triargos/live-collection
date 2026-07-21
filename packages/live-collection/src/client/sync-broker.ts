@@ -1,10 +1,10 @@
-import type { ModelName, SyncId } from "@triargos/live-collection-protocol";
+import type { ModelName } from "@triargos/live-collection-protocol";
 import { Context, Duration, Effect, Layer, Option, PubSub, type Scope, Stream } from "effect";
 import type { SchemaVersion } from "../core/schema-version.js";
 import { CatchupClient } from "./catchup-client.js";
 import { makeIngest, PublishedItem, type RetentionOptions } from "./ingest.js";
 import { makeLastAppliedTracker } from "./last-applied-tracker.js";
-import type { SyncSignal } from "./sync-signal.js";
+import { SyncSignal } from "./sync-signal.js";
 import { keyFor, makeSubscribe } from "./subscribe.js";
 import { SyncJournal } from "./sync-journal.js";
 import { SyncTransport } from "./sync-transport.js";
@@ -13,23 +13,22 @@ export { SyncSignal } from "./sync-signal.js";
 
 export interface SyncBrokerShape {
   /**
-   * Replay this collection's missing history, then continue with its live tail.
+   * Attach a subscriber: replay its missing history, then continue with its live
+   * tail, invoking `apply` sequentially per signal. The broker acks each signal
+   * itself after `apply` returns — a subscriber cannot ack early, skip an ack, or
+   * apply out of order. `apply` is infallible by contract: handle-or-log is the
+   * subscriber's job (a defect kills the attachment fiber). Never completes;
+   * interrupt to detach.
+   *
    * `schemaVersion` identifies the saved rows the subscriber hydrates from — the
    * collection's last-applied syncId is read under `(key, schemaVersion)`, so a schema
    * change (which dumps the saved table) finds no record and decides `Snapshot`.
    */
-  readonly subscribe: (args: {
+  readonly attachSubscriber: (args: {
     readonly modelName: ModelName
     readonly scope: Option.Option<string>
     readonly schemaVersion: SchemaVersion
-  }) => Stream.Stream<SyncSignal>
-
-  /** Record that a subscriber has applied every relevant signal through this sync id. */
-  readonly markApplied: (args: {
-    readonly modelName: ModelName
-    readonly scope: Option.Option<string>
-    readonly schemaVersion: SchemaVersion
-    readonly through: SyncId
+    readonly apply: (signal: SyncSignal) => Effect.Effect<void>
   }) => Effect.Effect<void>
 
   /** Run the single catchup and live-event ingest fiber. Fork exactly once. */
@@ -86,10 +85,23 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
       retention: options.retention ?? defaultOptions.retention,
     })
 
-    const markApplied: SyncBrokerShape["markApplied"] = ({ modelName, scope, schemaVersion, through }) =>
-      tracker.markApplied({ key: keyFor(modelName, scope), schemaVersion, through })
+    // The syncId a fully-handled signal acks: a Snapshot covers everything through `at`.
+    const syncIdOf = SyncSignal.$match({
+      Snapshot: ({ at }) => at,
+      Upsert: ({ syncId }) => syncId,
+      Delete: ({ syncId }) => syncId,
+    })
 
-    return { subscribe, markApplied, start }
+    const attachSubscriber: SyncBrokerShape["attachSubscriber"] = ({ modelName, scope, schemaVersion, apply }) =>
+      Stream.runForEach(subscribe({ modelName, scope, schemaVersion }), (signal) =>
+        apply(signal).pipe(
+          Effect.andThen(
+            tracker.markApplied({ key: keyFor(modelName, scope), schemaVersion, through: syncIdOf(signal) }),
+          ),
+        ),
+      )
+
+    return { attachSubscriber, start }
   })
 
 export class SyncBroker extends Context.Service<SyncBroker, SyncBrokerShape>()("SyncBroker") {

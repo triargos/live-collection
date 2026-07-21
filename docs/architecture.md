@@ -18,24 +18,21 @@ Ingest is single-fibered. Each entity event is appended to the log, published, a
 
 ```ts
 interface SyncBrokerShape {
-  readonly subscribe: (args: {
+  readonly attachSubscriber: (args: {
     readonly modelName: ModelName
     readonly scope: Option<string>
-  }) => Stream<SyncSignal>
-
-  readonly markApplied: (args: {
-    readonly modelName: ModelName
-    readonly scope: Option<string>
-    readonly through: SyncId
+    readonly apply: (signal: SyncSignal) => Effect<void>
   }) => Effect<void>
 
   readonly start: Effect<void>
 }
 ```
 
+`attachSubscriber` drives the subscriber's whole loop: it replays the missing history, tails live, invokes `apply` sequentially per signal, and records the last-applied syncId itself after each `apply` returns. A subscriber cannot ack early, skip an ack, or apply out of order — the discipline is the broker's implementation, not caller convention. `apply` is infallible by contract; handle-or-log is the subscriber's job.
+
 `SyncSignal` has three arms:
 
-- `Snapshot { at }`: the local base cannot be trusted; run `listFn`, replace the synced store, then acknowledge `at`
+- `Snapshot { at }`: the local base cannot be trusted; run `listFn` and replace the synced store
 - `Upsert { syncId, modelId, data }`
 - `Delete { syncId, modelId }`
 
@@ -45,11 +42,9 @@ interface SyncBrokerShape {
 
 1. creates the persisted collection synchronously;
 2. forks a drain in that collection's registry child scope;
-3. subscribes to the broker by model and scope;
-4. sequentially applies every signal;
-5. calls `markApplied` only after application.
+3. attaches to the broker by model and scope, passing its `apply`.
 
-Sequential draining preserves order. A snapshot finishes before buffered tail events are applied.
+The broker applies signals sequentially, so order is preserved: a snapshot finishes before buffered tail events are applied.
 
 The broker is model-blind. The collection drain decodes `Upsert.data` with its schema and performs scope filtering after decode. Deletes carry no scope, so every mounted scope for that model receives them; deleting an absent key is harmless.
 
@@ -115,6 +110,6 @@ collectionHandle(scope)
     → create native persisted collection
     → fork broker subscription drain
       → Snapshot / Upsert / Delete
-        → synced-store write
-        → broker.markApplied
+        → apply: synced-store write
+        → broker acks last-applied
 ```

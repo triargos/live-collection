@@ -48,16 +48,13 @@ The broker deliberately does not know model schemas or mounted collections. It l
 
 ## Collection subscription
 
-Each collection drains:
+Each collection attaches its `apply` and lets the broker drive:
 
 ```ts
-Stream.runForEach(
-  broker.subscribe({ modelName, scope }),
-  applySignal,
-)
+broker.attachSubscriber({ modelName, scope, schemaVersion, apply: applySignal })
 ```
 
-`subscribe` hides the replay/live switchover. It subscribes to PubSub first, then examines:
+`attachSubscriber` hides the replay/live switchover and owns the ack discipline. It subscribes to PubSub first, then examines:
 
 - the collection's last-applied syncId;
 - the global last-ingested syncId;
@@ -86,13 +83,13 @@ The collection owns its write path:
 - `Upsert`: decode `data` with the model schema, scope-filter it, then `writeSynced(row)`.
 - `Delete`: call `deleteSynced(modelId)` for every subscriber of that model.
 
-After each signal is fully handled, the drain calls `markApplied({ through: syncId })`. Scope-mismatched and undecodable upserts are still acknowledged because they have been deliberately handled. Decode failure is logged and does not kill the drain.
+The broker acknowledges each signal itself, after `apply` returns — the drain never acks. Scope-mismatched and undecodable upserts are therefore acknowledged too: returning from `apply` means the signal was deliberately handled. Decode failure is logged inside `apply` and does not kill the drain; `apply` is infallible by contract.
 
 ## Last-applied syncIds
 
 A collection's last-applied syncId means: “this collection has handled every relevant signal through this sync id.”
 
-`markApplied` updates an in-memory monotonic map. The broker flushes pending values to `SyncJournal` about every 100 ms and once more when its scope closes. This avoids a durable write per event. A crash can only cause a small idempotent replay on the next mount.
+Each broker-side ack updates an in-memory monotonic map. The broker flushes pending values to `SyncJournal` about every 100 ms and once more when its scope closes. This avoids a durable write per event. A crash can only cause a small idempotent replay on the next mount.
 
 ## Deletes and scoping
 
