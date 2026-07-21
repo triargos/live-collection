@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "pi-demo frontend: React Router SPA over @triargos/live-collection \u2014 OPFS-persisted collections, live SSE sync, and joined live queries (todos \u22c8 projects).",
+  "description": "pi-demo frontend: React Router SPA over @triargos/live-collection — OPFS-persisted collections, live SSE sync, and joined live queries (todos ⋈ projects).",
   "scripts": {
     "dev": "vite",
     "preview": "vite preview",
