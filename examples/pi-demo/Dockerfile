@@ -6,6 +6,7 @@ RUN corepack enable
 # Copy workspace manifests first so dependency installation stays cached while source changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/server/package.json packages/server/package.json
 COPY packages/live-collection/package.json packages/live-collection/package.json
 COPY packages/react/package.json packages/react/package.json
 COPY examples/playground/package.json examples/playground/package.json
@@ -16,6 +17,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm --filter @triargos/live-collection-protocol build \
+  && pnpm --filter @triargos/live-collection-server build \
   && pnpm --filter @triargos/live-collection build \
   && pnpm --filter @triargos/live-collection-react build \
   && pnpm --filter @pi-demo/web exec vite build
