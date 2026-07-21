@@ -58,7 +58,27 @@ describe("SyncJournal (memory)", () => {
       assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("a1c9")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
-  it.effect("reset wipes the entire journal: events, last-applied marks, floors, lastResync, epoch", () =>
+  it.effect("cursor starts None, then returns what was set", () =>
+    Effect.gen(function* () {
+      const journal = yield* SyncJournal
+      assert.isTrue(Option.isNone(yield* journal.getCursor))
+      yield* journal.setCursor(sid("5"))
+      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("5")))
+    }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  // The cursor must never regress: a late-arriving older event can't pull it back. And the compare is
+  // numeric, not lexical — "12" beats "3" even though it sorts before it as a string.
+  it.effect("setCursor is monotonic by numeric magnitude — a smaller id does not regress the cursor", () =>
+    Effect.gen(function* () {
+      const journal = yield* SyncJournal
+      yield* journal.setCursor(sid("10"))
+      yield* journal.setCursor(sid("3"))
+      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("10")))
+      yield* journal.setCursor(sid("12"))
+      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("12")))
+    }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  it.effect("adoptEpoch wipes the entire journal and installs the new epoch + cursor atomically", () =>
     Effect.gen(function* () {
       const journal = yield* SyncJournal
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -69,14 +89,17 @@ describe("SyncJournal (memory)", () => {
       yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("3") })
       yield* journal.setLastResync(sid("2"))
       yield* journal.setEpoch(Epoch.make("old"))
+      yield* journal.setCursor(sid("500"))
 
-      yield* journal.reset
+      yield* journal.adoptEpoch({ epoch: Epoch.make("new"), at: sid("4") })
 
       assert.deepStrictEqual(yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") }), [])
       assert.deepStrictEqual(yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: version }), Option.none())
       assert.deepStrictEqual(yield* journal.floor(ModelName.make("Webhook")), Option.none())
       assert.deepStrictEqual(yield* journal.getLastResync, Option.none())
-      assert.deepStrictEqual(yield* journal.getEpoch, Option.none())
+      assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("new")))
+      // Not a monotonic set — the new-epoch cursor is *smaller* than the wiped one and must win.
+      assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("4")))
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
 
   it.effect("a last-applied write under a new schema version supersedes the old record", () =>

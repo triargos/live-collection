@@ -1,7 +1,6 @@
 import { Data, Effect, Option, Schedule, Stream } from "effect"
 import { type CatchupResponse, type Epoch, type HydratedSyncEventEnvelope, type SyncId, zeroSyncId } from "@triargos/live-collection-protocol"
 import type { CatchupClientShape } from "./catchup-client.js"
-import type { SyncCursorShape } from "./sync-cursor.js"
 import type { SyncJournalShape, JournalEvent } from "./sync-journal.js"
 import type { SyncTransportShape } from "./sync-transport.js"
 
@@ -46,25 +45,23 @@ const rowFromEvent = (event: EntityEvent): JournalEvent =>
  * stale is better than dead.
  *
  * Ordering invariants owned here:
- * - Live tail, per event: `append` → publish → cursor. The cursor only advances after
- *   the row is durable, so a crash mid-ingest re-fetches rather than skips.
- * - Catchup, per batch: full `append` (one tx) → ordered publishes → one cursor set.
+ * - Live tail, per event: `append` → publish → `setCursor`. The cursor only advances
+ *   after the row is durable, so a crash mid-ingest re-fetches rather than skips.
+ * - Catchup, per batch: full `append` (one tx) → ordered publishes → one `setCursor`.
  * - Epoch reset: `onEpochReset` (drop pending last-applied marks) strictly before
- *   `journal.reset`; `cursorStore.clear` before `set` (monotonic set would keep the
- *   old-epoch cursor); `EpochReset` fanout last.
+ *   `journal.adoptEpoch` (the atomic wipe + new epoch + cursor); `EpochReset` fanout last.
  */
 export const makeIngest = (deps: {
   readonly transport: SyncTransportShape
   readonly catchup: CatchupClientShape
   readonly journal: SyncJournalShape
-  readonly cursorStore: SyncCursorShape
   readonly publish: (item: PublishedItem) => Effect.Effect<void>
   readonly onEpochReset: Effect.Effect<void>
   /** Flush pending last-applied marks — run before each prune so stage-2 sees fresh marks. */
   readonly flushLastApplied: Effect.Effect<void>
   readonly retention: RetentionOptions
 }): Effect.Effect<void> => {
-  const { transport, catchup, journal, cursorStore, publish, onEpochReset, flushLastApplied, retention } = deps
+  const { transport, catchup, journal, publish, onEpochReset, flushLastApplied, retention } = deps
 
   // Amortized retention: prune once per `trimEveryEvents` ingested events.
   // Single-fiber by construction (only the ingest fiber touches it).
@@ -86,7 +83,7 @@ export const makeIngest = (deps: {
     const row = rowFromEvent(event)
     return journal.append([row]).pipe(
       Effect.andThen(publish(PublishedItem.Event({ row }))),
-      Effect.andThen(cursorStore.set(event.syncId)),
+      Effect.andThen(journal.setCursor(event.syncId)),
       Effect.andThen(trimIfNeeded(1)),
       Effect.asVoid,
     )
@@ -95,7 +92,7 @@ export const makeIngest = (deps: {
   const ingestLive = (event: HydratedSyncEventEnvelope): Effect.Effect<void> =>
     event._tag === "Resync"
       ? journal.setLastResync(event.syncId).pipe(
-          Effect.andThen(cursorStore.set(event.syncId)),
+          Effect.andThen(journal.setCursor(event.syncId)),
           Effect.andThen(publish(PublishedItem.Resync({ at: event.syncId }))),
           Effect.asVoid,
         )
@@ -106,7 +103,7 @@ export const makeIngest = (deps: {
     // Any resync in the batch ⇒ everyone snapshots anyway; journaling the entities would be wasted work.
     if (resyncs.length > 0) {
       return Effect.forEach(resyncs, (event) => journal.setLastResync(event.syncId), { discard: true }).pipe(
-        Effect.andThen(cursorStore.set(response.lastSyncId)),
+        Effect.andThen(journal.setCursor(response.lastSyncId)),
         Effect.andThen(publish(PublishedItem.Resync({ at: response.lastSyncId }))),
         Effect.asVoid,
       )
@@ -115,7 +112,7 @@ export const makeIngest = (deps: {
     const rows = response.events.filter((event): event is EntityEvent => event._tag !== "Resync").map(rowFromEvent)
     return journal.append(rows).pipe(
       Effect.andThen(Effect.forEach(rows, (row) => publish(PublishedItem.Event({ row })), { discard: true })),
-      Effect.andThen(cursorStore.set(response.lastSyncId)),
+      Effect.andThen(journal.setCursor(response.lastSyncId)),
       Effect.andThen(trimIfNeeded(rows.length)),
       Effect.asVoid,
     )
@@ -128,10 +125,7 @@ export const makeIngest = (deps: {
    */
   const resetForEpoch = (epoch: Epoch, at: SyncId): Effect.Effect<void> =>
     onEpochReset.pipe(
-      Effect.andThen(journal.reset),
-      Effect.andThen(journal.setEpoch(epoch)),
-      Effect.andThen(cursorStore.clear),
-      Effect.andThen(cursorStore.set(at)),
+      Effect.andThen(journal.adoptEpoch({ epoch, at })),
       Effect.andThen(publish(PublishedItem.EpochReset({ at }))),
       Effect.asVoid,
     )
@@ -154,7 +148,7 @@ export const makeIngest = (deps: {
     })
 
   const cycle = Effect.gen(function* () {
-    const from = Option.getOrElse(yield* cursorStore.get, () => zeroSyncId)
+    const from = Option.getOrElse(yield* journal.getCursor, () => zeroSyncId)
     const response = yield* catchup.fetch({ from }).pipe(
       Effect.map(Option.some),
       Effect.catchTag("CatchupFailed", (error) =>

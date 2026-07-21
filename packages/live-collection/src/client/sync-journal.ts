@@ -31,13 +31,15 @@ export type JournalEvent = typeof JournalEvent.Type
  * - **The log** — every received event for every model, mounted or not. `append` is fed
  *   by the broker's single ingest path; `read` serves a mounting collection's replay
  *   slice; `prune`/`floor` trim history and remember, per model, how much was destroyed.
- * - **Trust metadata** — per-collection last-applied syncIds ("the last event applied
+ * - **Trust metadata** — the global cursor ("the newest syncId ingested from any model";
+ *   it gates catchup), per-collection last-applied syncIds ("the last event applied
  *   to this collection's saved rows was N"), `lastResync` ("replay across this point is
  *   invalid"), and the epoch ("every stored syncId is a coordinate on server timeline E").
  *
  * The broker's on-mount decision (Skip / Replay / Snapshot) is computed from journal
- * reads alone. The halves share one service because `reset` must wipe both atomically,
- * and `prune` + `floor` are one operation split across both stores.
+ * reads alone. The halves share one service because an epoch reset (`adoptEpoch`) must
+ * wipe the log and move the cursor atomically, and `prune` + `floor` are one operation
+ * split across both stores.
  */
 export interface SyncJournalShape {
   /** Append received events; upsert by `syncId` so catchup/tail overlap dedupes for free. */
@@ -86,6 +88,13 @@ export interface SyncJournalShape {
   readonly getLastResync: Effect.Effect<Option.Option<SyncId>>
   readonly setLastResync: (at: SyncId) => Effect.Effect<void>
 
+  /** The durable global cursor — newest syncId ingested from any model; gates catchup
+   *  (`from = cursor ?? "0"`). `None` only on a truly cold start. */
+  readonly getCursor: Effect.Effect<Option.Option<SyncId>>
+  /** Monotonic — keeps the larger id by numeric magnitude; a late out-of-order event can
+   *  never pull the cursor backwards. */
+  readonly setCursor: (id: SyncId) => Effect.Effect<void>
+
   /**
    * The epoch of the server timeline this journal was built from — the identity every
    * stored syncId is relative to. `None` until a catchup response first carries one.
@@ -93,12 +102,14 @@ export interface SyncJournalShape {
   readonly getEpoch: Effect.Effect<Option.Option<Epoch>>
   readonly setEpoch: (epoch: Epoch) => Effect.Effect<void>
   /**
-   * Global reset — wipes the ENTIRE journal back to cold-start: every logged event and
-   * every meta record (all collection last-applied syncIds, all prune floors, lastResync, epoch).
-   * Nothing survives; the next mount necessarily decides Snapshot. A stale epoch means
-   * *no* local sync state is trustworthy, so partial retention has no correct form.
+   * Epoch reset in ONE transaction: wipe the ENTIRE journal (every logged event, all
+   * collection last-applied syncIds, all prune floors, lastResync), install the new
+   * epoch, and place the cursor at `at`. Nothing survives; the next mount necessarily
+   * decides Snapshot. A stale epoch means *no* local sync state is trustworthy, so
+   * partial retention has no correct form — and a cursor that outlived the wipe would
+   * be an old-timeline coordinate gating catchup on the new timeline.
    */
-  readonly reset: Effect.Effect<void>
+  readonly adoptEpoch: (args: { readonly epoch: Epoch; readonly at: SyncId }) => Effect.Effect<void>
 }
 
 /**
@@ -146,6 +157,7 @@ const makeMemory: Effect.Effect<SyncJournalShape> = Effect.gen(function* () {
   const floors = yield* Ref.make(new Map<string, SyncId>()) // modelName ⇒ prune boundary (highest deleted)
   const lastResync = yield* Ref.make(Option.none<SyncId>())
   const epoch = yield* Ref.make(Option.none<Epoch>())
+  const cursor = yield* Ref.make(Option.none<SyncId>())
 
   return {
     append: (incoming) =>
@@ -204,18 +216,22 @@ const makeMemory: Effect.Effect<SyncJournalShape> = Effect.gen(function* () {
       }),
     getLastResync: Ref.get(lastResync),
     setLastResync: (at) => Ref.update(lastResync, (c) => Option.some(advanceSyncId(c, at))),
+    getCursor: Ref.get(cursor),
+    setCursor: (id) => Ref.update(cursor, (c) => Option.some(advanceSyncId(c, id))),
     getEpoch: Ref.get(epoch),
     setEpoch: (value) => Ref.set(epoch, Option.some(value)),
-    reset: Effect.all(
-      [
-        Ref.set(rows, new Map<string, JournalEvent>()),
-        Ref.set(lastApplied, new Map<string, LastAppliedRecord>()),
-        Ref.set(floors, new Map<string, SyncId>()),
-        Ref.set(lastResync, Option.none<SyncId>()),
-        Ref.set(epoch, Option.none<Epoch>()),
-      ],
-      { discard: true },
-    ),
+    adoptEpoch: ({ epoch: next, at }) =>
+      Effect.all(
+        [
+          Ref.set(rows, new Map<string, JournalEvent>()),
+          Ref.set(lastApplied, new Map<string, LastAppliedRecord>()),
+          Ref.set(floors, new Map<string, SyncId>()),
+          Ref.set(lastResync, Option.none<SyncId>()),
+          Ref.set(epoch, Option.some(next)),
+          Ref.set(cursor, Option.some(at)),
+        ],
+        { discard: true },
+      ),
   }
 })
 
@@ -239,6 +255,7 @@ const lastAppliedKey = (key: CollectionKey<unknown>): string => `${LAST_APPLIED_
 const floorKey = (modelName: string): string => `floor:${modelName}`
 const RESYNC_KEY = "lastResync"
 const EPOCH_KEY = "epoch"
+const CURSOR_KEY = "cursor"
 
 interface SyncJournalDbSchema extends DBSchema {
   [EVENTS]: {
@@ -380,6 +397,8 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, ne
         ),
       getLastResync: getMetaSyncId(RESYNC_KEY),
       setLastResync: (at) => advanceMetaSyncId(RESYNC_KEY, at),
+      getCursor: getMetaSyncId(CURSOR_KEY),
+      setCursor: (id) => advanceMetaSyncId(CURSOR_KEY, id),
 
       getEpoch: Effect.promise(() => db.get(META, EPOCH_KEY)).pipe(
         Effect.flatMap((value) =>
@@ -388,12 +407,17 @@ const makeIndexedDb = (databaseName: string): Effect.Effect<SyncJournalShape, ne
         Effect.orDie,
       ),
       setEpoch: (epoch) => Effect.promise(() => db.put(META, epoch, EPOCH_KEY)).pipe(Effect.asVoid),
-      // One tx: events + every meta record go together — a partial wipe (events without
-      // their last-applied marks, or vice versa) would recreate exactly the inconsistency reset exists to end.
-      reset: Effect.promise(async () => {
-        const tx = db.transaction([EVENTS, META], "readwrite")
-        await Promise.all([tx.objectStore(EVENTS).clear(), tx.objectStore(META).clear(), tx.done])
-      }),
+      // One tx: wipe events + every meta record, then install the new epoch and cursor —
+      // a partial reset (events wiped but an old-epoch cursor surviving, or vice versa)
+      // would recreate exactly the inconsistency this method exists to end.
+      adoptEpoch: ({ epoch, at }) =>
+        Effect.promise(async () => {
+          const tx = db.transaction([EVENTS, META], "readwrite")
+          const meta = tx.objectStore(META)
+          await tx.objectStore(EVENTS).clear()
+          await meta.clear()
+          await Promise.all([meta.put(epoch, EPOCH_KEY), meta.put(at, CURSOR_KEY), tx.done])
+        }),
     }
   })
 

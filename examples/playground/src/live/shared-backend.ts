@@ -1,5 +1,5 @@
 import { Context, Duration, Effect, Layer, ManagedRuntime, Option, Queue, Schema } from "effect"
-import { CatchupClient, SyncCursor, SyncTransport } from "@triargos/live-collection"
+import { CatchupClient, SyncTransport } from "@triargos/live-collection"
 import {
   type CatchupResponse,
   compareSyncId,
@@ -58,7 +58,7 @@ export interface BackendControls {
 
 export interface SharedBackend {
   readonly services: ManagedRuntime.ManagedRuntime<WebhookApi, never>
-  readonly sync: Layer.Layer<SyncTransport | CatchupClient | SyncCursor>
+  readonly sync: Layer.Layer<SyncTransport | CatchupClient>
   readonly controls: BackendControls
   /** Close the BroadcastChannel (app teardown). */
   readonly dispose: () => void
@@ -251,7 +251,7 @@ export const makeSharedBackend = (config: {
     Effect.runSync(Queue.offer(queue, env))
   }
 
-  const sync = Layer.mergeAll(SyncCursor.layerMemory, catchup, SyncTransport.layerMemory(queue))
+  const sync = Layer.mergeAll(catchup, SyncTransport.layerMemory(queue))
 
   const controls: BackendControls = {
     tabId,

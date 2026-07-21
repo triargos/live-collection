@@ -9,9 +9,8 @@ Each collection key `(modelName, scope)` has one last-applied record: the newest
 The event log also stores:
 
 - a per-model prune floor: the highest deleted event id;
-- the latest resync id.
-
-The global cursor comes from `SyncCursor`.
+- the latest resync id;
+- the global cursor: the newest syncId ingested from any model.
 
 ## Subscription decision
 

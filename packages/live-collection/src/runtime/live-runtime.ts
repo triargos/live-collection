@@ -2,13 +2,12 @@ import { Effect, Exit, Fiber, Layer, ManagedRuntime, Scope } from "effect"
 import type { PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core"
 import { CatchupClient } from "../client/catchup-client.js"
 import { SyncJournal } from "../client/sync-journal.js"
-import { SyncCursor } from "../client/sync-cursor.js"
 import { SyncBroker, type SyncBrokerOptions } from "../client/sync-broker.js"
 import { SyncTransport } from "../client/sync-transport.js"
 import { type CollectionRegistryShape, makeRegistry } from "../registry/collection-registry.js"
 
 /** Services used by the shared broker ingest path. */
-export type SyncDeps = SyncTransport | CatchupClient | SyncCursor | SyncJournal
+export type SyncDeps = SyncTransport | CatchupClient | SyncJournal
 
 /** App-wide lifetime and sync runtime shared by every defined collection. */
 export interface LiveRuntime {

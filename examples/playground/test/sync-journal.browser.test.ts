@@ -203,7 +203,7 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
       assert.deepStrictEqual(stored, Option.some(Epoch.make("epoch-a")))
     }))
 
-  it.live("reset wipes events + every meta record in one pass — and the wipe survives a reload", () =>
+  it.live("adoptEpoch wipes events + every meta record and installs the new epoch + cursor — in one tx, surviving a reload", () =>
     Effect.gen(function* () {
       const databaseName = freshDb()
       const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
@@ -217,10 +217,11 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("3") })
           yield* journal.setLastResync(sid("2"))
           yield* journal.setEpoch(Epoch.make("old"))
-          yield* journal.reset
+          yield* journal.setCursor(sid("500"))
+          yield* journal.adoptEpoch({ epoch: Epoch.make("new"), at: sid("4") })
         }),
       )
-      // The "reload": a fresh scope over the same database must find cold-start state.
+      // The "reload": a fresh scope over the same database must find the post-reset state.
       yield* session(
         databaseName,
         Effect.gen(function* () {
@@ -229,7 +230,9 @@ describe("SyncJournal.layer (IndexedDB, browser)", () => {
           assert.deepStrictEqual(yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: version }), Option.none())
           assert.deepStrictEqual(yield* journal.floor(Webhook), Option.none())
           assert.deepStrictEqual(yield* journal.getLastResync, Option.none())
-          assert.deepStrictEqual(yield* journal.getEpoch, Option.none())
+          assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("new")))
+          // Not a monotonic set — the new-epoch cursor is *smaller* than the wiped one and must win.
+          assert.deepStrictEqual(yield* journal.getCursor, Option.some(sid("4")))
         }),
       )
     }))

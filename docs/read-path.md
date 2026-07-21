@@ -4,13 +4,12 @@ The read path combines one global network feed with self-owned collection drains
 
 ## Startup
 
-Build the runtime with the four sync services:
+Build the runtime with the three sync services:
 
 ```ts
 const sync = Layer.mergeAll(
   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
   CatchupClient.layer({ url: "/api/catchup" }),
-  SyncCursor.layer,
   SyncJournal.layer({ databaseName: "app-eventlog" }),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
@@ -41,7 +40,7 @@ For each entity event:
 ```text
 append opaque event to SyncJournal
 → publish it to active subscriptions
-→ advance SyncCursor
+→ advance the journal's cursor
 → occasionally prune the log (squash per entity, drop rows every collection applied, then count caps)
 ```
 

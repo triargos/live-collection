@@ -12,7 +12,6 @@ import {
 } from "@triargos/live-collection-protocol"
 import { CatchupClient, CatchupFailed } from "../src/client/catchup-client.js"
 import { SyncJournal, type SyncJournalShape, type JournalEvent } from "../src/client/sync-journal.js"
-import { SyncCursor, type SyncCursorShape } from "../src/client/sync-cursor.js"
 import {
   SyncBroker,
   type SyncBrokerOptions,
@@ -78,7 +77,6 @@ const run = <A, E>(options: {
   readonly body: (services: {
     readonly broker: SyncBrokerShape
     readonly journal: SyncJournalShape
-    readonly cursor: SyncCursorShape
     readonly events: Queue.Queue<HydratedSyncEventEnvelope>
   }) => Effect.Effect<A, E, Scope.Scope>
 }): Effect.Effect<A, E> =>
@@ -88,15 +86,13 @@ const run = <A, E>(options: {
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
         options.catchup ?? CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
-        SyncCursor.layerMemory,
         SyncJournal.layerMemory,
       )
       const brokerLayer = SyncBroker.layer(options.broker).pipe(Layer.provide(sync))
       return yield* Effect.gen(function* () {
         const broker = yield* SyncBroker
         const journal = yield* SyncJournal
-        const cursor = yield* SyncCursor
-        return yield* options.body({ broker, journal, cursor, events })
+        return yield* options.body({ broker, journal, events })
       }).pipe(Effect.provide(Layer.merge(sync, brokerLayer)))
     }),
   )
@@ -130,7 +126,7 @@ describe("SyncBroker", () => {
 
   it.effect("live ingest fans matching Upserts and Deletes out, journals them, and advances the cursor", () =>
     run({
-      body: ({ broker, events, journal, cursor }) =>
+      body: ({ broker, events, journal }) =>
         Effect.gen(function* () {
           yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("0") })
           yield* broker.markApplied({ modelName: Setting, scope: Option.none(), schemaVersion: version, through: sid("0") })
@@ -148,17 +144,17 @@ describe("SyncBroker", () => {
           assert.deepStrictEqual(tags(yield* Fiber.join(other)), ["Upsert"])
           assert.deepStrictEqual((yield* journal.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("1"), sid("2")])
           assert.deepStrictEqual((yield* journal.read({ modelName: Setting, since: sid("0") })).map((row) => row.syncId), [sid("3")])
-          yield* waitUntil(cursor.get.pipe(Effect.map(Option.contains(sid("3")))))
+          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("3")))))
           yield* Fiber.interrupt(start)
         }),
     }))
 
   it.effect("late subscribe replays a covered gap, tails live, and drops older buffered duplicates", () =>
     run({
-      body: ({ broker, events, journal, cursor }) =>
+      body: ({ broker, events, journal }) =>
         Effect.gen(function* () {
           yield* journal.append([logged("2")])
-          yield* cursor.set(sid("2"))
+          yield* journal.setCursor(sid("2"))
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("1") })
           const signals = yield* collect(broker, 2)
           const start = yield* Effect.forkScoped(broker.start)
@@ -176,7 +172,7 @@ describe("SyncBroker", () => {
   it.effect("the trim tick flushes pending last-applied marks first, so applied rows are pruned as dead weight", () =>
     run({
       broker: { retention: { maxEventsPerModel: 100, maxEventsTotal: 100, trimEveryEvents: 3 } },
-      body: ({ broker, events, journal, cursor }) =>
+      body: ({ broker, events, journal }) =>
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
           // Durable mark lags at 1; the fresher "applied through 2" exists only as a pending mark.
@@ -189,7 +185,7 @@ describe("SyncBroker", () => {
           // Ingest is done once the cursor reaches 3; the trim tick runs within that same chain,
           // so the journal now holds the pruned state. With the flush, min last-applied is 2 ⇒
           // rows 1 AND 2 are dead weight; a stale (durable-only) prune would keep row 2.
-          yield* waitUntil(cursor.get.pipe(Effect.map(Option.contains(sid("3")))))
+          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("3")))))
           const rows = yield* journal.read({ modelName: Webhook, since: sid("0") })
           assert.deepStrictEqual(rows.map((row) => row.syncId), [sid("3")])
           assert.deepStrictEqual(yield* journal.floor(Webhook), Option.none()) // dead weight is floor-neutral
@@ -199,13 +195,13 @@ describe("SyncBroker", () => {
 
   it.effect("a prune floor above the collection's last-applied syncId forces Snapshot", () =>
     run({
-      body: ({ broker, journal, cursor }) =>
+      body: ({ broker, journal }) =>
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
           yield* journal.append([logged("1"), logged("2")])
           yield* journal.setCollectionLastAppliedSyncId({ key, schemaVersion: version, at: sid("0") })
           yield* journal.prune({ maxEventsPerModel: 1, maxEventsTotal: 10 })
-          yield* cursor.set(sid("2"))
+          yield* journal.setCursor(sid("2"))
           const signals = yield* collect(broker, 1)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Snapshot"])
         }),
@@ -213,11 +209,11 @@ describe("SyncBroker", () => {
 
   it.effect("a resync newer than the collection's last-applied syncId forces Snapshot on remount", () =>
     run({
-      body: ({ broker, journal, cursor }) =>
+      body: ({ broker, journal }) =>
         Effect.gen(function* () {
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("2") })
           yield* journal.setLastResync(sid("3"))
-          yield* cursor.set(sid("3"))
+          yield* journal.setCursor(sid("3"))
           const signals = yield* collect(broker, 1)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Snapshot"])
         }),
@@ -286,7 +282,6 @@ describe("SyncBroker", () => {
       const sync = Layer.mergeAll(
         SyncTransport.layerMemory(events),
         CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
-        SyncCursor.layerMemory,
         Layer.succeed(SyncJournal, journal),
       )
       const scope = yield* Scope.make()
@@ -320,7 +315,7 @@ describe("SyncBroker", () => {
 
   it.effect("a schema-version change orphans the old last-applied mark: remount snapshots and catchup events are not dropped", () =>
     run({
-      body: ({ broker, journal, cursor, events }) =>
+      body: ({ broker, journal, events }) =>
         Effect.gen(function* () {
           // A previous app version applied everything through #10 under schema version 1…
           const oldVersion = SchemaVersion.make(1)
@@ -330,7 +325,7 @@ describe("SyncBroker", () => {
             schemaVersion: oldVersion,
             at: sid("10"),
           })
-          yield* cursor.set(sid("10"))
+          yield* journal.setCursor(sid("10"))
 
           // …then the schema changed: the saved rows were dumped, so the remount must
           // NOT trust the old last-applied mark. It snapshots at the cursor and keeps tailing.
@@ -361,12 +356,12 @@ describe("SyncBroker", () => {
   it.effect("a matching catchup epoch applies normally — no reset, state intact", () =>
     run({
       catchup: CatchupClient.layerMemory({ events: [insert("11")], lastSyncId: sid("11"), epoch: Option.some(Epoch.make("a")) }),
-      body: ({ broker, journal, cursor, events }) =>
+      body: ({ broker, journal, events }) =>
         Effect.gen(function* () {
           yield* journal.setEpoch(Epoch.make("a"))
           yield* journal.append([logged("10")])
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("10") })
-          yield* cursor.set(sid("10"))
+          yield* journal.setCursor(sid("10"))
           const signals = yield* collect(broker, 1)
           const start = yield* Effect.forkScoped(broker.start)
           assert.deepStrictEqual(tags(yield* Fiber.join(signals)), ["Upsert"]) // #11, replayed/tail — no Snapshot
@@ -380,12 +375,12 @@ describe("SyncBroker", () => {
     run({
       // The server timeline reset: its new head (3) is far below the client's durable state (500).
       catchup: CatchupClient.layerMemory({ events: [], lastSyncId: sid("3"), epoch: Option.some(Epoch.make("b")) }),
-      body: ({ broker, journal, cursor, events }) =>
+      body: ({ broker, journal, events }) =>
         Effect.gen(function* () {
           yield* journal.setEpoch(Epoch.make("a"))
           yield* journal.append([logged("500")])
           yield* journal.setCollectionLastAppliedSyncId({ key: scopedKey({ entity: "Webhook", scope: "org-1" }), schemaVersion: version, at: sid("500") })
-          yield* cursor.set(sid("500"))
+          yield* journal.setCursor(sid("500"))
 
           // Mounted BEFORE the reset: decision Skip, tail head = 500 — the poisoned guard.
           const signals = yield* collect(broker, 2)
@@ -398,7 +393,7 @@ describe("SyncBroker", () => {
 
           // Local sync state was wiped and rebuilt under the new timeline.
           assert.deepStrictEqual(yield* journal.getEpoch, Option.some(Epoch.make("b")))
-          yield* waitUntil(cursor.get.pipe(Effect.map(Option.contains(sid("4")))))
+          yield* waitUntil(journal.getCursor.pipe(Effect.map(Option.contains(sid("4")))))
           assert.deepStrictEqual((yield* journal.read({ modelName: Webhook, since: sid("0") })).map((row) => row.syncId), [sid("4")])
           yield* Fiber.interrupt(start)
         }),
@@ -407,11 +402,11 @@ describe("SyncBroker", () => {
   it.effect("after an epoch reset a fresh mount decides Snapshot and a pre-reset pending last-applied mark never resurfaces", () =>
     run({
       catchup: CatchupClient.layerMemory({ events: [], lastSyncId: sid("3"), epoch: Option.some(Epoch.make("b")) }),
-      body: ({ broker, journal, cursor }) =>
+      body: ({ broker, journal }) =>
         Effect.gen(function* () {
           const key = scopedKey({ entity: "Webhook", scope: "org-1" })
           yield* journal.setEpoch(Epoch.make("a"))
-          yield* cursor.set(sid("500"))
+          yield* journal.setCursor(sid("500"))
           // An applied-but-unflushed old-epoch last-applied mark — it must die with the reset,
           // not flush later and re-poison the wiped journal.
           yield* broker.markApplied({ modelName: Webhook, scope: Option.some("org-1"), schemaVersion: version, through: sid("500") })

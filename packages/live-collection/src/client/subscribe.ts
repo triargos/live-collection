@@ -3,7 +3,6 @@ import { maxSyncId, type ModelName } from "@triargos/live-collection-protocol"
 import type { SchemaVersion } from "../core/schema-version.js"
 import { type CollectionKey, globalKey, scopedKey } from "../core/collection-key.js"
 import type { SyncJournalShape } from "./sync-journal.js"
-import type { SyncCursorShape } from "./sync-cursor.js"
 import type { PublishedItem } from "./ingest.js"
 import type { LastAppliedTracker } from "./last-applied-tracker.js"
 import { MountDecision, concernsModel, dropStale, planMount, signalFromRow } from "./mount-plan.js"
@@ -27,7 +26,6 @@ export const keyFor = (modelName: ModelName, scope: Option.Option<string>): Coll
 export const makeSubscribe =
   (deps: {
     readonly journal: SyncJournalShape
-    readonly cursorStore: SyncCursorShape
     readonly published: PubSub.PubSub<PublishedItem>
     readonly current: LastAppliedTracker["current"]
   }) =>
@@ -43,7 +41,7 @@ export const makeSubscribe =
         const key = keyFor(modelName, scope)
         const plan = planMount({
           collectionLastApplied: yield* deps.current({ key, schemaVersion }),
-          cursor: yield* deps.cursorStore.get,
+          cursor: yield* deps.journal.getCursor,
           maxDeletedSyncId: yield* deps.journal.floor(modelName),
           lastResyncAt: yield* deps.journal.getLastResync,
         })

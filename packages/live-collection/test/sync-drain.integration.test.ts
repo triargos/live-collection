@@ -9,7 +9,6 @@ import {
 } from "@triargos/live-collection-protocol"
 import { CatchupClient } from "../src/client/catchup-client.js"
 import { SyncJournal } from "../src/client/sync-journal.js"
-import { SyncCursor } from "../src/client/sync-cursor.js"
 import { SyncTransport } from "../src/client/sync-transport.js"
 import { defineCollection } from "../src/define-collection.js"
 import { makeLiveRuntime } from "../src/runtime/live-runtime.js"
@@ -49,7 +48,6 @@ const withRuntime = <A>(
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
     const sync = Layer.mergeAll(
-      SyncCursor.layerMemory,
       CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
       SyncTransport.layerMemory(events),
       SyncJournal.layerMemory,

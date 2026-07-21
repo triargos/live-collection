@@ -4,7 +4,6 @@ import type { SchemaVersion } from "../core/schema-version.js";
 import { CatchupClient } from "./catchup-client.js";
 import { makeIngest, PublishedItem, type RetentionOptions } from "./ingest.js";
 import { makeLastAppliedTracker } from "./last-applied-tracker.js";
-import { SyncCursor } from "./sync-cursor.js";
 import type { SyncSignal } from "./sync-signal.js";
 import { keyFor, makeSubscribe } from "./subscribe.js";
 import { SyncJournal } from "./sync-journal.js";
@@ -62,12 +61,11 @@ const defaultOptions = {
 const make = (options: SyncBrokerOptions = {}): Effect.Effect<
   SyncBrokerShape,
   never,
-  SyncTransport | CatchupClient | SyncCursor | SyncJournal | Scope.Scope
+  SyncTransport | CatchupClient | SyncJournal | Scope.Scope
 > =>
   Effect.gen(function* () {
     const transport = yield* SyncTransport
     const catchup = yield* CatchupClient
-    const cursorStore = yield* SyncCursor
     const journal = yield* SyncJournal
     const published = yield* PubSub.unbounded<PublishedItem>()
 
@@ -76,13 +74,12 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
       flushEvery: options.pendingLastAppliedFlushInterval ?? defaultOptions.pendingLastAppliedFlushInterval,
     })
 
-    const subscribe = makeSubscribe({ journal, cursorStore, published, current: tracker.current })
+    const subscribe = makeSubscribe({ journal, published, current: tracker.current })
 
     const start = makeIngest({
       transport,
       catchup,
       journal,
-      cursorStore,
       publish: (item) => PubSub.publish(published, item).pipe(Effect.asVoid),
       onEpochReset: tracker.clear,
       flushLastApplied: tracker.flush,
@@ -99,6 +96,6 @@ export class SyncBroker extends Context.Service<SyncBroker, SyncBrokerShape>()("
   static readonly layer = (options?: SyncBrokerOptions): Layer.Layer<
     SyncBroker,
     never,
-    SyncTransport | CatchupClient | SyncCursor | SyncJournal
+    SyncTransport | CatchupClient | SyncJournal
   > => Layer.effect(SyncBroker, make(options))
 }

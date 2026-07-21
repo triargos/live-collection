@@ -25,7 +25,6 @@ export * from "./persistence/sync-write.js"
 
 // client/ — SSE transport, catchup, durable cursor/journal, and the subscription broker.
 // (ingest, subscribe, mount-plan, prune-plan are internal machines/policies.)
-export * from "./client/sync-cursor.js"
 export * from "./client/catchup-client.js"
 export * from "./client/sync-transport.js"
 export * from "./client/sync-journal.js"

@@ -10,12 +10,11 @@ One app-wide broker owns:
 
 - the SSE connection (`SyncTransport`)
 - catchup (`CatchupClient`)
-- the global durable cursor (`SyncCursor`)
-- the durable sync journal (`SyncJournal`)
+- the durable sync journal (`SyncJournal`), which carries the global durable cursor
 - pruning and resync handling
 - an in-memory `PubSub` for active subscribers
 
-Ingest is single-fibered. Each entity event is appended to the log, published, and advances the cursor. Connection loss retries the cycle, running catchup before reconnecting.
+Ingest is single-fibered. Each entity event is appended to the log, published, and advances the journal's cursor. Connection loss retries the cycle, running catchup before reconnecting.
 
 ```ts
 interface SyncBrokerShape {
@@ -80,7 +79,7 @@ runtime.registry.disposeScope(orgId)
 runtime.dispose()
 ```
 
-`sync` is a layer containing `SyncTransport`, `CatchupClient`, `SyncCursor`, and `SyncJournal`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
+`sync` is a layer containing `SyncTransport`, `CatchupClient`, and `SyncJournal`. Internally the runtime builds `SyncBroker.layer`, exposes synchronous collection mounting, and executes broker/drain fibers on a `ManagedRuntime`.
 
 React apps call `useLiveSync(runtime)` once near the root. No model array is needed: mounted collections subscribe themselves.
 
@@ -109,7 +108,7 @@ useLiveSync(runtime)
   → runtime.forkSync()
     → broker.start
       → catchup + SSE
-        → event log + cursor + PubSub
+        → journal (event log + cursor) + PubSub
 
 collectionHandle(scope)
   → registry.getOrCreate
