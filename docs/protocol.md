@@ -1,437 +1,145 @@
-# Protocol — the wire contract (`@triargos/live-collection-protocol`)
+# Protocol reference
 
-**What this is.** The shared, pure-`effect` contract kit between the frontend `live-collection`
-library and *your* backend. It owns the *shapes* that cross the wire — sync-event schemas, the
-sync-group routing grammar, the squasher, resync targets, branded ids, the model-registry types,
-and the `/catchup` request/response schemas — and **nothing about transport**. It depends only on
-`effect` (no HTTP/platform dependency, no I/O). The backend owns the HTTP surface (routes, methods,
-status codes, errors, auth) and wires these schemas into it; the frontend decodes the same schemas
-at its read-path boundary. Both ends run the **same squasher** code.
+`@triargos/live-collection-protocol` is the wire contract shared by the client and your backend: the sync-event schemas, the sync-group grammar, resync targets, branded ids, the squasher, the model-registry types, and the catchup schemas. It is pure — depends only on `effect`, no I/O, no HTTP. It defines the *shapes* that cross the wire; the transport (routes, methods, status codes, auth) is your backend's.
 
-**When you use it.** You import from here when you implement a backend (you fill the typed
-blanks — `ModelDescriptor` — and decode/encode the catchup + event
-schemas), or when you work on the client read path (decode SSE / catchup bodies, never cast them).
-Everything here is frontend-shareable and storage-agnostic — the protocol knows nothing of DB rows,
-`BIGSERIAL`, or `now()`.
-
-This package is **LOCKED + SHIPPED**. Every symbol below exists in `packages/protocol/src/` with a
-body and tests; cited as `file.ts:line`. For the client transport that consumes it see
-[`read-path.md`](./read-path.md); for the backend obligations see [`backend.md`](./backend.md).
-
----
+Decode everything that crosses the wire with these schemas; never cast.
 
 ## Branded ids
 
-All identity scalars are branded — minted only at boundaries (`SyncId.make(...)`, `ModelName.make(...)`)
-inside mappers/decoders, never cast inside the app.
-
-| Symbol | Schema | Notes |
+| Type | Underlying | Meaning |
 |---|---|---|
-| `SyncId` | `String` + pattern `/^(0\|[1-9][0-9]*)$/` + brand | a sync cursor: opaque, monotonic position in the global log, encoded as a **canonical decimal string** (no leading zeros) |
-| `ModelName` | `NonEmptyString` + brand | a synced model's name, e.g. `"Webhook"` — open string on the wire, closed union per app |
-| `ModelId` | `NonEmptyString` + brand | id of one entity within a model, typically a UUID |
+| `SyncId` | decimal string | A position in the server's event log. String, so it stays exact beyond `Number.MAX_SAFE_INTEGER`. |
+| `ModelName` | non-empty string | A synced model's wire name, e.g. `"Todo"`. Open on the wire, narrowed to a closed union per app. |
+| `ModelId` | non-empty string | One entity's id within a model, typically a UUID. |
+| `Epoch` | non-empty string | The identity of one log timeline. See [backend contract](./backend.md#invariants). |
 
-`packages/protocol/src/ids.ts:10` (`SyncId`), `:57` (`ModelName`), `:61` (`ModelId`).
+Brands are minted at boundaries (`SyncId.make(...)` inside a decoder or mapper), never cast mid-app.
 
-The protocol is auth-agnostic: who is syncing is a backend concern, and the protocol only sees
-the caller's **sync groups** (per-user visibility is expressible as a `user:<id>` group — see
-the sync-group grammar).
+**Ordering:** compare `SyncId`s with `compareSyncId` (an `Order<SyncId>` that compares as `bigint`) — never lexically, never via `Number(...)`. Cursors are gap-tolerant; consumers order by syncId and never assume contiguity.
 
-### `SyncId` ordering — `compareSyncId`
-
-A `SyncId` is a **string** so it stays exact well beyond `Number.MAX_SAFE_INTEGER` without bigints
-on the wire. **Never compare `SyncId`s lexicographically or via `Number(...)`.** Order them with
-`compareSyncId`, which parses each to `bigint` so magnitude comparison stays exact for very large
-cursors (`ids.ts:32`):
-
-```typescript
+```ts
 import { Order } from "effect"
 import { compareSyncId } from "@triargos/live-collection-protocol"
 
-// Advance a stored cursor past the next event (gap-tolerant — cursors need not be contiguous):
 const advanced = Order.max(compareSyncId)(previous, next)
 ```
 
-`compareSyncId: Order.Order<SyncId>` (`ids.ts:32`). This is the canonical way the client advances
-its durable cursor (`lastSyncId`).
+## Sync events
 
----
+Every event is one of four actions — `Insert` / `Update` / `Delete` / `Resync` — and appears in three forms across its lifecycle. All three are `Schema.TaggedUnion`s: construct arms with `cases` (e.g. `SyncEvent.cases.Delete.make({...})`) and branch with `match`/`guards`.
 
-## Sync events — three forms, one tag vocabulary
+| Form | Stage | Carries data? |
+|---|---|---|
+| `PendingSyncEvent` | handed to the log by a producer, before persistence | no — and no `syncId`/`createdAt` yet |
+| `SyncEvent` | at rest in the log | no — reference-only: `(modelName, modelId, syncGroups, syncId, createdAt)` |
+| `HydratedSyncEvent<T>` | delivered to subscribers | `Insert`/`Update` carry `data: T`; `Delete` carries none |
 
-Every sync event is one of four actions: `Insert` / `Update` / `Delete` / `Resync`. The same tag
-vocabulary appears at three lifecycle stages, and **data presence is structural, not optional** —
-`Insert`/`Update` carry `data`, `Delete` carries none, `Resync` carries a `target`. There is no
-`Option<data>` field; absence is unrepresentable, not modeled.
+Data presence is **structural**: a `Delete` has no `data` key at all, and a `Resync` carries a `target` instead. Events never store entity data at rest — data is attached at delivery time ("hydration"), so subscribers always see the entity's current state.
 
-Each form is a **`Schema.TaggedUnion`** — there are no per-arm exports. Construct arms through
-`cases` (e.g. `PendingSyncEvent.cases.Insert.make({...})`, `SyncEvent.cases.Delete.make({...})`)
-and branch with the union's `match` / `guards` utilities.
+`HydratedSyncEvent` is a function of the entity schema: pass your model's schema, get the typed union back. When decoding a frame whose model you don't know yet — an SSE frame, a catchup page — use the envelope, which leaves `data` as `unknown` for a later per-model decode:
 
-| Form | Schema | Who builds it | Data |
-|---|---|---|---|
-| `PendingSyncEvent` | `sync-event.ts:42` | a backend producer, before persistence | no `syncId`/`createdAt` yet |
-| `SyncEvent` (at rest) | `sync-event.ts:55` | persisted, reference-only | **no data on any arm** — the squasher's input |
-| `HydratedSyncEvent<T>` | `sync-event.ts:77` | delivered to subscribers | `Insert`/`Update` gain typed `data: T` |
+```ts
+import { Schema } from "effect"
+import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol"
 
-### At-rest `SyncEvent`
-
-The persisted union — what the squasher folds. Reference-only: `(modelName, modelId, syncGroups,
-syncId, createdAt)` plus the resync `target`, never entity data.
-
-- `Insert` / `Update` / `Delete` arms carry `entityFields` (`modelName`, `modelId`,
-  `syncGroups`) + `dbAssigned` (`syncId`, `createdAt`).
-- The `Resync` arm carries `target` + `syncGroups` (the groups the resync is delivered to) +
-  `dbAssigned`.
-- `PendingSyncEvent` is the same union minus `dbAssigned` — what a producer hands the event log
-  before persistence assigns `syncId`/`createdAt`.
-
-### Hydrated events (the wire / read path) — `data: T | null`, decode to `Option`
-
-`HydratedSyncEvent` is a **function of the entity schema** — you pass your model's `Schema.Schema<T, I, R>`
-and get back the full union for that model:
-
-```typescript
-export const HydratedSyncEvent = <T, I, R>(entity: Schema.Codec<T, I, R, R>) =>
-  Schema.TaggedUnion({
-    Insert: { ...entityFields, ...dbAssigned, data: entity },
-    Update: { ...entityFields, ...dbAssigned, data: entity },
-    Delete: { ...entityFields, ...dbAssigned },              // no data
-    Resync: { ...resyncFields, ...dbAssigned }               // target + syncGroups
-  })
+const decodeFrame = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
 ```
 
-`sync-event.ts:77`.
+A frame that fails to decode should be logged and dropped, never fatal — that's what keeps an older client compatible with a newer server.
 
-> **Wire `data` is `T | null` → decode to `Option<T>` at the boundary.** On the wire an
-> `Insert`/`Update` may carry an absent body (entity gone, or ACL lost at hydration time). Per
-> CLAUDE.md, decode that nullable wire field into `Option<T>` at the client boundary — never let
-> `null`/`undefined` flow inside the app, and never cast the wire shape. The structural arms here
-> mean a `Delete` simply has *no* `data` key (`assert(!("data" in del))` is meaningless — it never
-> had one); the `null`-to-`Option` conversion is the *value*-absence case at hydration.
+## Sync groups
 
-### Decoding without knowing `T` yet — `HydratedSyncEventEnvelope`
+A **sync group** is a routing key: a `:`-delimited path of non-empty segments — `"organization:abc"`, `"user:42"`. Groups are purely structural; what the segments mean is your app's business. Events carry concrete literal groups — no wildcards on the wire. Per-user visibility is just a `user:<id>` group.
 
-When you decode an SSE frame or a catchup page you don't yet know each event's model, so you can't
-pick a per-model schema. `HydratedSyncEventEnvelope` validates the common envelope and leaves `data`
-as opaque `unknown`, to be decoded later against the matching model schema at the dispatch seam:
-
-```typescript
-export const HydratedSyncEventEnvelope = HydratedSyncEvent(Schema.Unknown)
-export type HydratedSyncEventEnvelope = typeof HydratedSyncEventEnvelope.Type
+```ts
+deriveGroup(["organization", "abc"])  // SyncGroup "organization:abc"
+parseGroup(g)                         // { segments: ["organization", "abc"] }
 ```
 
-`sync-event.ts:91`. This is the schema the client read path and the playground fake backend decode
-against — see the worked example below.
+Two relations, deliberately separate:
 
----
+- **`intersects(a, b)`** — the delivery test. Do two group sets share a group, by **exact equality**? Never hierarchical, so a private sub-group can never leak to members of a broader one. This is the ACL-critical check.
+- **`isUnder(scope, group)`** — the containment test, by segment prefix including equality. `isUnder("org:a", "org:a:channel:x")` is true; `isUnder("org:a", "org:ab")` is false (segments, not substrings). Used to decide which groups a resync target clears.
 
-## Sync-group grammar
+Build groups with `deriveGroup`, not string concatenation.
 
-A **sync group** is a routing key: a `:`-delimited path of non-empty segments, e.g.
-`"organization:abc"` or `"organization:abc:channel:xyz"`. Groups are **purely structural** — what
-the segments *mean* (`organization`, `channel`, `user`, …) is the app's business, not the protocol's.
-Events always carry **concrete, literal groups; there are no wildcards on the wire.**
+## Resync targets
 
-`SyncGroup` is `NonEmptyString` + a `Schema.filter` that every `:`-split segment is non-empty + brand
-(`sync-group.ts:11`).
+A `Resync` event tells subscribers to discard local state and refetch — for changes deltas can't express (a permission change, a bulk correction). The blast radius is a typed value, never a sentinel string:
 
-### Building and parsing
-
-```typescript
-// segments → group (inverse of parseGroup):
-deriveGroup(["organization", "abc"])              // SyncGroup "organization:abc"
-// group → segments (inverse of deriveGroup):
-parseGroup(g)                                     // { segments: ["organization", "abc"] }
-```
-
-`deriveGroup: (segments: NonEmptyReadonlyArray<string>) => SyncGroup` (`sync-group.ts:23`);
-`parseGroup: (g: SyncGroup) => { readonly segments: NonEmptyReadonlyArray<string> }` (`sync-group.ts:28`).
-
-### The two relations — `intersects` and `isUnder`
-
-There is **no single `matches` function**; the protocol splits the two relations deliberately,
-because they have different semantics and one of them is ACL-critical.
-
-**`intersects(a, b)` — the delivery test (ACL-critical).** Whether two group sets share at least one
-group, by **exact equality, never hierarchical**. An event reaches a subscriber when the event's
-groups intersect the subscriber's. Because matching is exact, a private sub-group can never leak to
-members of a broader one.
-
-```typescript
-intersects(
-  a: ReadonlyArray<SyncGroup>,
-  b: ReadonlyArray<SyncGroup>,
-): boolean
-```
-
-`sync-group.ts:40`.
-
-**`isUnder(scope, group)` — the scope / resync-target relation.** Whether `group` lies within `scope`
-by **segment-prefix, including equality** (matched per segment, not by substring):
-
-```typescript
-isUnder("organization:abc", "organization:abc")             // true  (equality)
-isUnder("organization:abc", "organization:abc:channel:xyz") // true  (prefix)
-isUnder("organization:abc", "organization:abcd")            // false (segment-wise, not substring)
-```
-
-`sync-group.ts:58`. Used to test which groups a resync target should clear (see the squasher), and
-to expand a requested scope against a user's literal groups.
-
-> Subscriber-side brace/alternation sugar (`org:{a,b}:channel:x`) is **deferred** to a future
-> client-side builder that expands to literal scopes before transport. Regex as a
-> subscription grammar is **rejected permanently** (ReDoS, non-finite, non-indexable).
-
----
-
-## Resync targets — structural, no sentinel strings
-
-A `Resync` event tells subscribers to discard part of their local state and re-fetch it — used when
-deltas can't express a change (a permission change, a bulk correction). The blast radius is encoded
-**structurally** as a tagged union — there are **no `__all` / `__group:<id>` / `__model:<Name>`
-sentinel strings anywhere**; the action is the event `_tag`, the target is a typed
-value:
-
-```typescript
+```ts
 export const ResyncTarget = Schema.TaggedUnion({
   All: {},                      // reset everything
   Group: { group: SyncGroup },  // reset one sync group
-  Model: { model: ModelName }   // reset one model
+  Model: { model: ModelName },  // reset one model
 })
 ```
 
-`resync.ts:22`. Build one through `cases`, e.g.
-`ResyncTarget.cases.Group.make({ group })` → `{ _tag: "Group", group }`. The narrowest-to-widest
-ordering is `Model` ⊂ `Group` ⊂ `All`. The squasher consumes `ResyncTarget` to drop preceding
-events.
+Build one with `ResyncTarget.cases.Group.make({ group })`.
 
----
+## The squasher
 
-## The squasher (`squash`) — the pure fold
+`squash` collapses a `syncId`-ordered list of at-rest `SyncEvent`s into the smallest equivalent list, so a catching-up client receives one event per entity instead of its full history:
 
-`squash` collapses a `syncId`-ordered list of **at-rest** `SyncEvent`s into the smallest equivalent
-list, so a catching-up subscriber receives one event per entity instead of its full history. It
-folds purely on event references — `(modelName, modelId, _tag, syncGroups, syncId)` — and **never
-reads entity data** (there is none at rest). That data-independence is exactly why it lives in the
-pure protocol and is property-tested in isolation; **both ends rely on it** (the backend squashes a
-catchup page; the contract guarantees the same fold the client would compute).
-
-```typescript
-export const squash = (events: ReadonlyArray<SyncEvent>): ReadonlyArray<SyncEvent>
+```ts
+export const squash = (events: ReadonlyArray<SyncEvent>) => ReadonlyArray<SyncEvent>
 ```
 
-`squash.ts:78`. Input must be `syncId`-ordered; output is the minimal equivalent set, still
-`syncId`-ordered.
-
-**Per-`(modelName, modelId)` fold** (`squash.ts:22` `fold`; `:103` keying). Within one entity, a run
-of changes folds to a single terminal event:
+Per entity, a run of changes folds to a single terminal event:
 
 | prev \ next | `Insert` | `Update` | `Delete` |
 |---|---|---|---|
-| (none)   | `Insert` | `Update` | `Delete` |
-| `Insert` | —        | `Insert` | **drop both** |
-| `Update` | —        | `Update` | `Delete` |
-| `Delete` | `Update` | —        | — |
+| (none) | `Insert` | `Update` | `Delete` |
+| `Insert` | — | `Insert` | **drop both** |
+| `Update` | — | `Update` | `Delete` |
+| `Delete` | `Update` | — | — |
 
-An `Insert` then `Update` becomes one `Insert`; an `Insert` then `Delete` cancels out (the client
-never knew it existed — `"Drop"`, `squash.ts:105`). The `—` cells can't occur in a well-formed stream.
+An `Insert` followed by a `Delete` cancels entirely — the client never needed to know. A `Resync` drops the earlier events it supersedes (`All`: everything; `Group(g)`: events whose groups fall under `g`; `Model(n)`: that model's events) and survives into the output.
 
-**Resync overrides** (forward pass, `squash.ts:86-101`): a `Resync` drops the earlier events it
-supersedes, then survives into the output —
+Guarantees, property-tested: a folded event carries the **latest** syncId of its run (so cursors advance past everything absorbed); output stays ordered; the fold is idempotent (`squash(squash(xs)) === squash(xs)`) and gap-tolerant; and applying the squashed list from any starting cursor reaches the same state as applying the original events one by one.
 
-- `All` — drop everything before it (`entities.clear()`).
-- `Group(g)` — drop preceding entity events `e` where `e.syncGroups.some((sg) => isUnder(g, sg))`.
-- `Model(n)` — drop preceding entity events with `modelName === n`.
+Note that squashing never reads entity data — there is none at rest. The access-lost/entity-gone downgrade to `Delete` happens later, in hydration, which needs I/O.
 
-**Locked, property-tested semantics:**
+## Catchup schemas
 
-1. A folded entity event carries the **latest** `syncId` / `syncGroups` / `createdAt` of its run
-   (via `retag`, `squash.ts:41`), so the durable cursor advances past every absorbed event.
-2. `Insert→Delete` within a window drops both arms.
-3. Output is `syncId`-ordered and the fold is **idempotent**: `squash(squash(xs)) === squash(xs)`.
-4. **Gap-tolerant** — non-contiguous `syncId`s never break it.
-
-The contract property (tested with `FastCheck` in `packages/protocol/test/`): for any starting
-cursor `from`, applying `squash(events)` reaches the same per-entity terminal state as applying
-`events` one by one.
-
-> The `Option.none → synthetic Delete` downgrade (entity gone / ACL lost) happens in the backend's
-> **hydration** step, not in `squash` — that needs I/O. The squasher stays pure.
-
----
-
-## Model registry — types the backend fills
-
-Model names are an **open branded string on the wire** (a newer backend may emit a name an older
-client doesn't recognize) but a **closed union inside each app**, derived from the registry the app
-builds. The single open→closed hop is `narrowModelName`.
-
-`ModelDescriptor` is a **plain type with no runtime footprint** plus a builder and one narrowing
-function — the backend supplies the implementations.
-
-### `ModelDescriptor` — how one model is decoded and hydrated
-
-```typescript
-export interface ModelDescriptor<Name extends string, T, R> {
-  readonly modelName: Name                                  // the literal, not just branded
-  readonly schema: Schema.Codec<T, any, R, R>               // any = the Encoded slot (a held schema)
-  readonly hydrate: (id: ModelId, syncGroups: ReadonlyArray<SyncGroup>) =>
-    Effect.Effect<Option.Option<T>, never, R>              // Option.none ⇒ entity gone / ACL lost
-  readonly hydrateMany?: (ids: ReadonlyArray<ModelId>, syncGroups: ReadonlyArray<SyncGroup>) =>
-    Effect.Effect<ReadonlyMap<ModelId, T>, never, R>       // optional batch — avoid /catchup N+1
-}
-```
-
-`model-registry.ts:34`. The `any` in `schema` is the Encoded slot of a stored-but-not-yet-applied
-schema (Effect's own idiom for holding a heterogeneous schema in a map) — **not** an IO cast, so the
-"no `any`" rule (which targets IO results) doesn't apply. `hydrate` returns `Option<T>`: `none` is
-how the backend signals the entity is gone or no longer visible, which becomes a synthetic
-`Delete` downstream.
-
-`syncGroups` is the caller's **current visibility capability set** — hydration is the second,
-authoritative visibility check (the event-level filter uses the groups stamped at log time; access
-may have changed since). It is the only caller context the protocol passes; a backend that needs
-its principal inside hydration provides it through `R` as its own service (e.g. a
-`CurrentSession` tag).
-
-### `defineModelRegistry` — keys *are* the model-name union
-
-```typescript
-export const defineModelRegistry: <const R extends Record<string, ModelDescriptor<string, any, any>>>(
-  r: { [K in keyof R]: R[K] & ModelDescriptor<K & string, any, any> },
-) => R
-```
-
-`model-registry.ts:67`. Each descriptor's `modelName` literal **must equal its key** — a mistyped key
-or a mismatched `modelName` is a compile error. The result's keys form the app's model-name union:
-`type SyncedModelName = keyof typeof registry`.
-
-### `narrowModelName` — the one open→closed seam
-
-```typescript
-export const narrowModelName: <N extends string>(
-  known: ReadonlyArray<N>,
-  raw: ModelName,
-) => Result.Result<N, UnknownModelError>
-```
-
-`model-registry.ts:98`. Returns `Success(name)` with the narrowed literal when the wire name is
-registered, or `Failure(UnknownModelError)` when it isn't. The caller **logs a warning and drops the
-event** — it never fails the stream — so a client stays forward-compatible with a backend that knows
-more models than it does (healed by catchup/resync). `UnknownModelError` is a `Schema.TaggedErrorClass`
-carrying `modelName` (the unrecognized name) and `known` (the names this registry knows) —
-`model-registry.ts:74`.
-
----
-
-## The `/catchup` contract — schemas, not an HTTP API
-
-The protocol ships the catchup **request + response schemas, and nothing else**. It does **not**
-define the route, method, status codes, errors, headers, or auth — the implementing backend owns all
-of that and wires these schemas into its own router. The protocol depends only on `effect` and has
-no HTTP/platform dependency. `/sync` (SSE) is likewise a backend detail and absent
-from the contract.
-
-```typescript
+```ts
 export const CatchupRequest = Schema.Struct({ from: SyncId })
 
 export const CatchupResponse = Schema.Struct({
-  events: Schema.Array(HydratedSyncEventEnvelope),   // data opaque (unknown); per-model decode later
+  events: Schema.Array(HydratedSyncEventEnvelope),
   lastSyncId: SyncId,
-  epoch: Schema.OptionFromOptionalKey(Epoch),        // wire-optional timeline identity; see below
+  epoch: Schema.OptionFromOptionalKey(Epoch),
 })
 ```
 
-`catchup.ts` (`CatchupRequest`, `CatchupResponse`); `Epoch` in `ids.ts`.
+Schemas only — the route, method, errors, and auth are your backend's. There is deliberately no group parameter in the request: the server resolves the caller's visibility itself. See the [backend contract](./backend.md) for the semantics.
 
-**No `group` parameter.** A client cannot narrow scope from the wire. The server resolves
-the caller's full set of sync groups from their permissions and returns everything
-visible since `from`. This keeps ACL authority on the server and the request trivial.
+## Model registry types
 
-**The epoch invariant.** The protocol assumes `SyncId`s are **durable and monotonic within one
-epoch** — the identity of the server event log's timeline. A backend whose log lives continuously
-for its whole lifetime never needs to send `epoch` (absent key ⇒ the client does no checking, and
-nothing changes). But if the log's history can be destroyed or replaced — an in-memory store that
-resets on restart, a truncation, a backup restore, a database migration — the syncId sequence
-restarts and every cursor a client durably remembers points into a timeline that no longer exists.
-Without an epoch this freezes clients silently: each new event is minted *below* the client's stale
-head and the monotonic guards discard it. Such backends mint an opaque `Epoch` (a UUID at boot for
-memory stores; a stored-once value for durable ones) and return it on catchup. The client stores it
-next to its event log; on mismatch it self-heals — wipes its local sync state (event log,
-last-applied marks, prune boundaries, last-ingested syncId) and re-bootstraps every collection via
-`Snapshot`. It is **not** a
-software version: a redeploy over a durable log must not change it, and a backup restore under
-unchanged code must.
+Helpers for building a backend's hydration registry. Model names are open on the wire but a closed union inside each app; these types provide the one open→closed hop.
 
-On the client side, `CatchupClient` (in `live-collection`) decodes the body against `CatchupResponse`
-at the boundary — `packages/live-collection/src/client/catchup-client.ts:34` — and surfaces a modeled
-`CatchupFailed` (a `Schema.TaggedErrorClass`, `catchup-client.ts:11`) on a non-2xx / decode failure, which
-the sync loop logs and recovers from by tailing anyway. See [`read-path.md`](./read-path.md).
+**`ModelDescriptor`** — how one model is decoded and hydrated:
 
----
-
-## Worked example — constructing and decoding events against the contract
-
-The playground's cross-tab fake backend treats its localStorage event log and its `BroadcastChannel`
-messages as *the wire*, so it builds and decodes everything against the protocol envelope schema —
-never casting the wire shape. This is the same discipline a real backend and the real read path use.
-
-From `examples/playground/src/live/shared-backend.ts`:
-
-```typescript
-import { Schema } from "effect"
-import {
-  HydratedSyncEventEnvelope, ModelId, ModelName, SyncGroup, SyncId,
-} from "@triargos/live-collection-protocol"
-
-// Brands minted once, at the boundary:
-const GROUP = SyncGroup.make("playground")   // :67
-const MODEL = ModelName.make("Webhook")      // :68
-
-// Boundary codecs — the log and BroadcastChannel are the wire, so decode against the schema (:78-82):
-const decodeEnvelope = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
-const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
-
-// An Insert envelope carries typed data; a Delete carries none (structural, :84-101):
-const insertEnvelope = (syncId: SyncId, w: Webhook): HydratedSyncEventEnvelope => ({
-  _tag: "Insert", syncId, modelName: MODEL, modelId: ModelId.make(w.id),
-  syncGroups: [GROUP], createdAt: new Date(), data: w,
-})
-const deleteEnvelope = (syncId: SyncId, id: ModelId): HydratedSyncEventEnvelope => ({
-  _tag: "Delete", syncId, modelName: MODEL, modelId: id,
-  syncGroups: [GROUP], createdAt: new Date(),   // no data key
-})
-
-// A cross-tab message is decoded at the boundary; a bad message is logged and dropped, never fatal (:238-248):
-channel.onmessage = (event) => {
-  const decoded = Effect.runSync(Effect.result(decodeEnvelope(String(event.data))))
-  if (decoded._tag === "Failure") { /* drop undecodable message */ return }
-  const env = decoded.success
-  // env is now a typed HydratedSyncEventEnvelope — discriminate on env._tag
+```ts
+interface ModelDescriptor<Name extends string, T, R> {
+  readonly modelName: Name
+  readonly schema: Schema.Codec<T, any, R, R>
+  /** none ⇒ entity gone or caller lost access ⇒ delivered as Delete */
+  readonly hydrate: (id: ModelId, syncGroups: ReadonlyArray<SyncGroup>) =>
+    Effect.Effect<Option.Option<T>, never, R>
+  /** optional batch — one lookup per model instead of one per event */
+  readonly hydrateMany?: (ids: ReadonlyArray<ModelId>, syncGroups: ReadonlyArray<SyncGroup>) =>
+    Effect.Effect<ReadonlyMap<ModelId, T>, never, R>
 }
 ```
 
-The catchup endpoint in the same file builds a `CatchupResponse` directly from the schema's type —
-filtering the log to events newer than the cursor and pairing them with the latest `lastSyncId`
-(`shared-backend.ts:222-234`):
+`syncGroups` is the caller's *current* visibility set — hydration is the authoritative access check, since the event-level filter uses groups stamped at log time.
 
-```typescript
-const events = log.filter((e) => Number(e.syncId) > Number(from))
-const response: CatchupResponse = { events, lastSyncId: SyncId.make(String(rawSeq())) }
-```
+**`defineModelRegistry`** — builds the registry record; each descriptor's `modelName` must equal its key (compile-checked), and the keys form your app's model-name union.
 
-(Note: this fake backend compares with `Number(...)` because its sequence stays small; a real backend
-and the client must use `compareSyncId` for cursors that can exceed `Number.MAX_SAFE_INTEGER`.)
-
----
+**`narrowModelName(known, raw)`** — the open→closed seam: returns `Result.Success` with the narrowed literal for a registered name, `Result.Failure(UnknownModelError)` otherwise. Callers log and drop unknown models — never fail the stream — so a client stays forward-compatible with a backend that knows more models than it does.
 
 ## See also
 
-- [`read-path.md`](./read-path.md) — the client read path that consumes this contract: SSE tail,
-  `CatchupClient`, the `lastSyncId` cursor, and the resync handler.
-- [`backend.md`](./backend.md) — the contract your backend must satisfy: the `/catchup` and SSE
-  endpoints and the invariants the client depends on.
-- [`../packages/server/README.md`](../packages/server/README.md) — the optional
-  `@triargos/live-collection-server` kernel that enforces the backend contract as code for
-  Effect backends (SyncFeed, SyncDispatcher, and the SyncEventStore port).
+- [Backend contract](./backend.md) — the endpoints and invariants these schemas plug into.
+- [`@triargos/live-collection-server`](../packages/server/README.md) — the Effect kernel that consumes these types for you.

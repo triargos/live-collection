@@ -1,6 +1,6 @@
 # React
 
-The React package contains one lifecycle hook. Collections and reads stay native TanStack DB APIs.
+React integration is one hook. Collections are native TanStack DB collections, so reads use `@tanstack/react-db` directly.
 
 ## Start sync
 
@@ -13,52 +13,33 @@ export function App() {
 }
 ```
 
-`useLiveSync(runtime)` calls `runtime.forkSync()` on mount and interrupts that fiber on unmount. Mount it once near the app root.
+`useLiveSync(runtime)` forks the sync loop on mount and interrupts it on unmount. Mount it **once**, near the app root. There is no list of models to register — collections subscribe themselves when their handles mount.
 
-Interrupting ingest does not dispose collections. Their lifetime belongs to `runtime.registry`, so remounting the React root can reuse warm persisted collections. Calling `forkSync` again while a previous ingest fiber is active interrupts the previous one.
-
-There is no models argument. Every collection subscribes itself when its handle is mounted.
+Stopping sync does not dispose collections: their lifetime belongs to `runtime.registry`, so remounting the root reuses the warm local store.
 
 ## Read a collection
-
-`defineCollection` returns a native TanStack collection, so use `useLiveQuery` directly from `@tanstack/react-db`:
 
 ```tsx
 import { useLiveQuery } from "@tanstack/react-db"
 
-function WebhookList({ orgId }: { readonly orgId: string }) {
-  const collection = webhooks(orgId)
-  const { data } = useLiveQuery((query) =>
-    query.from({ webhook: collection }),
-  )
+function TodoList({ projectId }: { projectId: string }) {
+  const todos = todosCollection(projectId)
+  const { data } = useLiveQuery((q) => q.from({ todo: todos }), [projectId])
 
-  return <ul>{data.map((row) => <li key={row.id}>{row.url}</li>)}</ul>
+  return <ul>{data.map((todo) => <li key={todo.id}>{todo.title}</li>)}</ul>
 }
 ```
 
-Calling `webhooks(orgId)` during render is synchronous and cheap. The registry returns the same object for the same `(entity, scope)` key.
+Calling the handle during render is synchronous and cheap — the registry returns the same instance for the same `(entity, scope)`. Joins across collections, filters, and aggregations are plain `useLiveQuery` features.
 
-## Lifecycle
+Writes go straight through the collection: `todos.insert(...)`, `todos.update(...)`, `todos.delete(...)` — see [collections](./collections.md#optimistic-writes).
 
-Dispose workspace collections when the app no longer wants to retain them:
+## Dispose on navigation
 
-```ts
-Effect.runFork(runtime.registry.disposeScope(orgId))
-```
-
-That closes each matching collection's child scope, interrupts its broker drain, and runs TanStack cleanup. Globals remain mounted. Use `disposeAllScoped` for a workspace reset, `disposeAll` for logout, and `runtime.dispose()` for app teardown.
-
-## Runtime setup
+When the user leaves a workspace and you want its memory back:
 
 ```ts
-const runtime = makeLiveRuntime({
-  persistence,
-  sync: Layer.mergeAll(
-    SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
-    CatchupClient.layer({ url: "/api/catchup" }),
-    SyncJournal.layer(),
-  ).pipe(Layer.provide(FetchHttpClient.layer)),
-})
+Effect.runFork(runtime.registry.disposeScope(projectId))
 ```
 
-Resync refetches active collections in place. There is no `onResync` or window-reload API.
+The next visit remounts from local SQLite and replays missed events. Use `disposeAll()` on logout and `runtime.dispose()` on app teardown.

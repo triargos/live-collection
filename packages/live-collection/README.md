@@ -1,38 +1,44 @@
 # `@triargos/live-collection`
 
-A **frontend-only**, Effect-native live-sync engine built on [TanStack DB](https://tanstack.com/db). The hero type is `LiveCollection<T>` — a *native* TanStack collection that persists locally (SQLite/OPFS), hydrates from disk on reload, and stays live against your backend over SSE + catchup.
+Local-first live collections for [Effect](https://effect.website) + [TanStack DB](https://tanstack.com/db).
 
-**How you use it:** you define one collection per model, point it at your backend's read path (a `listFn`) and optionally its write path (optimistic `onInsert`/`onDelete`/`onUpdate` handlers), then start one shared broker near your app root. Each mounted collection subscribes itself. Reads are plain `useLiveQuery`; the engine owns persistence, catchup, the durable cursor, and replay-on-mount.
+A `LiveCollection<T>` is a **native** TanStack collection that persists locally (SQLite/OPFS), hydrates from disk on reload, and stays in sync with your backend over SSE + catchup. Define one collection per model, read it with `useLiveQuery`, and mutate it optimistically with `collection.insert/update/delete`. The library owns persistence, the durable sync cursor, catchup, and replay.
 
-> **The backend is yours.** This library ships no server. It speaks a wire contract — the SSE stream, the `/catchup` request/response, and the squasher fold — defined in [`@triargos/live-collection-protocol`](https://www.npmjs.com/package/@triargos/live-collection-protocol). You implement the routes, auth, and permission resolution; an optional Effect backend kernel is [`@triargos/live-collection-server`](https://www.npmjs.com/package/@triargos/live-collection-server).
+The backend is yours: the client speaks a small wire contract — one catchup endpoint and one SSE stream — defined in [`@triargos/live-collection-protocol`](https://www.npmjs.com/package/@triargos/live-collection-protocol). Implement it on any stack, or use the optional Effect kernel [`@triargos/live-collection-server`](https://www.npmjs.com/package/@triargos/live-collection-server).
 
 ## Install
 
 ```bash
 pnpm add @triargos/live-collection @triargos/live-collection-protocol
-pnpm add @triargos/live-collection-react   # React apps only
+pnpm add @triargos/live-collection-react   # React apps
 ```
 
-## The package family
+## At a glance
 
-The dependency DAG is acyclic: `protocol → live-collection → react`, plus `protocol → server`.
+```ts
+const runtime = makeLiveRuntime({ persistence, sync })
 
-| Package | What it is |
-|---|---|
-| [`@triargos/live-collection-protocol`](https://www.npmjs.com/package/@triargos/live-collection-protocol) | The shared contract kit — pure, no I/O. Wire schemas, sync-group grammar, squasher, `/catchup` schemas. |
-| **`@triargos/live-collection`** | The frontend engine. `defineCollection`, `makeLiveRuntime`, SSE transport, catchup, persistence, the durable `SyncJournal`. |
-| [`@triargos/live-collection-react`](https://www.npmjs.com/package/@triargos/live-collection-react) | One React-specific piece: `useLiveSync`. Reads use `@tanstack/react-db` directly. |
-| [`@triargos/live-collection-server`](https://www.npmjs.com/package/@triargos/live-collection-server) | Optional Effect backend kernel enforcing the contract's invariants. |
+const todosCollection = defineCollection({
+  runtime,
+  entity: "Todo",
+  schema: Todo,
+  getKey: (todo) => todo.id,
+  scopeOf: (todo) => todo.projectId,
+  listFn: (projectId) => api.todos.list(projectId),
+  onInsert: ({ transaction }) => api.todos.create(transaction.mutations[0]!.modified),
+})
+
+const todos = todosCollection(projectId)
+const { data } = useLiveQuery((q) => q.from({ todo: todos }))
+todos.insert({ id: crypto.randomUUID(), projectId, title })
+```
 
 ## Documentation
 
-Full quick start, worked examples, and in-depth guides live in the repository:
-
-- [Quick start](https://github.com/triargos/live-collection#quick-start)
-- [Collections](https://github.com/triargos/live-collection/blob/main/docs/collections.md) — `defineCollection`, global vs scoped, the `LiveCollection<T>` surface.
-- [Persistence](https://github.com/triargos/live-collection/blob/main/docs/persistence.md) — the local-SQLite durability base.
-- [Optimistic writes](https://github.com/triargos/live-collection/blob/main/docs/optimistic-writes.md) — Effect-returning write handlers and reconciliation.
-- [Architecture](https://github.com/triargos/live-collection/blob/main/docs/architecture.md) — package boundaries, `makeLiveRuntime`, the sync loop.
+- [Getting started](https://github.com/triargos/live-collection/blob/main/docs/getting-started.md) — the step-by-step implementer guide.
+- [Collections](https://github.com/triargos/live-collection/blob/main/docs/collections.md) — `defineCollection`, scoping, optimistic writes, lifecycle.
+- [Persistence](https://github.com/triargos/live-collection/blob/main/docs/persistence.md) — local SQLite setup and behavior.
+- [Architecture](https://github.com/triargos/live-collection/blob/main/docs/architecture.md) — how sync works underneath.
 - [Backend contract](https://github.com/triargos/live-collection/blob/main/docs/backend.md) — what your server must provide.
 
 ## License
