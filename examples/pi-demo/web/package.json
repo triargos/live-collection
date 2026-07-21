@@ -10,23 +10,23 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@journeyapps/wa-sqlite": "^1.4.1",
+    "@journeyapps/wa-sqlite": "^1.7.2",
     "@pi-demo/shared": "workspace:*",
-    "@tanstack/browser-db-sqlite-persistence": "0.1.11",
-    "@tanstack/db": "0.6.7",
-    "@tanstack/react-db": "^0.1.85",
+    "@tanstack/browser-db-sqlite-persistence": "0.2.8",
+    "@tanstack/db": "0.6.16",
+    "@tanstack/react-db": "^0.1.94",
     "@triargos/live-collection": "workspace:*",
     "@triargos/live-collection-protocol": "workspace:*",
     "@triargos/live-collection-react": "workspace:*",
-    "effect": "^4.0.0-beta.98",
+    "effect": "^4.0.0-beta.100",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "react-router-dom": "^7.1.0"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.0"
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.5"
   }
 }

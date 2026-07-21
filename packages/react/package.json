@@ -32,13 +32,13 @@
     "react": ">=18"
   },
   "dependencies": {
-    "@tanstack/react-db": "^0.1.85",
+    "@tanstack/react-db": "^0.1.94",
     "@triargos/live-collection": "workspace:*",
-    "effect": "^4.0.0-beta.98"
+    "effect": "^4.0.0-beta.100"
   },
   "devDependencies": {
     "@triargos/live-collection-protocol": "workspace:*",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.17",
     "react": "^19.2.7"
   }
 }

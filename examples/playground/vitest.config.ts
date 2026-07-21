@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config"
+import { playwright } from "@vitest/browser-playwright"
 
 // Browser mode: the OPFS gate can ONLY be proven in a real browser (node has no OPFS). Playwright drives
 // a headless Chromium; the same optimizeDeps exclusions as the app keep the wa-sqlite worker/wasm intact.
@@ -11,7 +12,7 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     browser: {
       enabled: true,
-      provider: "playwright",
+      provider: playwright(),
       headless: true,
       instances: [{ browser: "chromium" }],
     },
