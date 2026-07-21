@@ -1,6 +1,7 @@
 {
   "name": "@triargos/live-collection-protocol",
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Shared contract kit for the live-collection sync system: wire schemas, sync-group routing keys, the squasher, expected interface types, and the /catchup request/response schemas. Imported by both the frontend library and the backend.",
   "exports": {

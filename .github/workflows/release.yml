@@ -17,8 +17,6 @@ permissions:
 
 jobs:
   release:
-    # Temporarily disabled until pre-1.0 cleanup/verification is done.
-    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -29,7 +27,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       # Trusted publishing requires npm >= 11.5.1; the npm bundled with the
       # runner's Node may be older.

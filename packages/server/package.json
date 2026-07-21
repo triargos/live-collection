@@ -1,6 +1,7 @@
 {
   "name": "@triargos/live-collection-server",
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Optional backend kernel for the live-collection sync system: event store port, in-process event bus, dispatcher (persist-then-publish), and the SyncFeed read path (catchup + SSE frames) that enforces the client contract's invariants. Transport-, storage-, and auth-agnostic.",
   "exports": {
