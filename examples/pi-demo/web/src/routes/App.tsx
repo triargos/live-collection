@@ -10,9 +10,9 @@ import { consumeCreatedSession } from "../live/session.js"
 
 function Layout({ bundle }: { readonly bundle: AppBundle }) {
   return (
-    <div className="app-shell">
+    <div className="min-h-screen lg:grid lg:grid-cols-[19rem_minmax(0,1fr)]">
       <Sidebar bundle={bundle} />
-      <main className="content"><Outlet /></main>
+      <main className="min-w-0"><Outlet /></main>
     </div>
   )
 }
@@ -22,7 +22,11 @@ function ProjectTodos({ bundle }: { readonly bundle: AppBundle }) {
   const decoded = Schema.decodeUnknownOption(ProjectId)(projectId)
 
   if (Option.isNone(decoded)) {
-    return <div className="empty-state"><strong>Unknown project.</strong><span>Choose one from the sidebar.</span></div>
+    return (
+      <div className="grid min-h-[60vh] place-items-center p-6 text-center">
+        <div><div className="mb-3 text-5xl">🗺️</div><strong className="text-xl font-black">Unknown quest.</strong><p className="font-semibold text-muted-foreground">Choose one from the quest board.</p></div>
+      </div>
+    )
   }
 
   return <TodoList bundle={bundle} projectId={decoded} />
@@ -42,7 +46,7 @@ export function App({ bundle }: { readonly bundle: AppBundle }) {
     projects.insert({
       id: projectId,
       sessionId: bundle.session,
-      name: "Getting started",
+      name: "First adventure",
       color: "#8b5cf6",
       createdAt,
     })
@@ -50,7 +54,7 @@ export function App({ bundle }: { readonly bundle: AppBundle }) {
       id: TodoId.make(crypto.randomUUID()),
       sessionId: bundle.session,
       projectId,
-      title: "Share this session code with another device",
+      title: "Invite a teammate with the party code",
       completed: false,
       createdAt,
     })
@@ -58,7 +62,7 @@ export function App({ bundle }: { readonly bundle: AppBundle }) {
       id: TodoId.make(crypto.randomUUID()),
       sessionId: bundle.session,
       projectId,
-      title: "Watch updates arrive live",
+      title: "Complete a quest and watch every screen update",
       completed: false,
       createdAt,
     })

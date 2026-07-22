@@ -1,7 +1,15 @@
-import { useLiveQuery } from "@tanstack/react-db"
 import { ProjectId, projectKey } from "@pi-demo/shared"
+import { useLiveQuery } from "@tanstack/react-db"
+import { Copy, ListTodo, LogOut, Plus, Trash2 } from "lucide-react"
 import { type FormEvent, useMemo, useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
+import { Badge } from "@/components/ui/badge.js"
+import { Button } from "@/components/ui/button.js"
+import { Input } from "@/components/ui/input.js"
+import { Progress } from "@/components/ui/progress.js"
+import { Separator } from "@/components/ui/separator.js"
+import { useGameStats } from "@/game/useGameStats.js"
+import { useLevelUpConfetti } from "@/game/useLevelUpConfetti.js"
 import type { AppBundle } from "../live/collections.js"
 import { clearSession } from "../live/session.js"
 
@@ -19,6 +27,8 @@ export function Sidebar({ bundle }: { readonly bundle: AppBundle }) {
     q.from({ project: projects }).orderBy(({ project }) => project.createdAt),
   )
   const { data: todoRows } = useLiveQuery((q) => q.from({ todo: todos }))
+  const stats = useGameStats(bundle)
+  useLevelUpConfetti(stats.level.level)
 
   const todoCounts = useMemo(() => {
     const counts = new Map<ProjectId, number>()
@@ -50,66 +60,102 @@ export function Sidebar({ bundle }: { readonly bundle: AppBundle }) {
   }
 
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <span className="brand-mark">π</span>
-        <div><strong>live todos</strong><small>Effect × TanStack DB</small></div>
+    <aside className="relative z-10 border-b-2 border-border bg-card/90 p-4 shadow-sm backdrop-blur-xl lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r-2 lg:p-5">
+      <div className="flex items-center gap-3 px-1 py-2">
+        <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-3xl font-black text-white shadow-[0_4px_0_oklch(0.47_0.22_292)]">π</span>
+        <div className="min-w-0">
+          <strong className="block text-lg font-black leading-tight">Quest Party</strong>
+          <small className="font-bold text-muted-foreground">live todo adventure</small>
+        </div>
+        <span aria-label="Live" className="ml-auto size-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_oklch(0.9_0.12_155)]" />
       </div>
 
-      <div className="session-chip">
-        <span>Session</span>
-        <strong>{bundle.session}</strong>
-        <button
-          aria-label="Copy session code"
-          onClick={() => void navigator.clipboard.writeText(bundle.session)}
-          type="button"
-        >Copy</button>
-        <button className="session-leave" onClick={clearSession} type="button">Leave</button>
+      <div className="mt-5 rounded-xl border-2 border-primary/15 bg-secondary/55 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[0.65rem] font-black uppercase tracking-[0.16em] text-muted-foreground">Party code</span>
+          <Badge className="bg-emerald-100 text-emerald-700" variant="secondary">● Live</Badge>
+        </div>
+        <strong className="block text-center font-mono text-2xl font-black tracking-[0.22em] text-primary">{bundle.session}</strong>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Button aria-label="Copy session code" onClick={() => void navigator.clipboard.writeText(bundle.session)} size="sm" type="button" variant="outline">
+            <Copy /> Copy
+          </Button>
+          <Button onClick={clearSession} size="sm" type="button" variant="ghost">
+            <LogOut /> Leave
+          </Button>
+        </div>
       </div>
 
-      <nav className="project-nav" aria-label="Projects">
-        <NavLink className={({ isActive }) => isActive ? "nav-row active" : "nav-row"} end to="/">
-          <span className="all-projects-icon">⌁</span>
-          <span>All todos</span>
-          <b>{todoRows.length}</b>
+      <div className="mt-4 rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-fuchsia-50 p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl" aria-hidden>{stats.level.emoji}</span>
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-wider text-amber-700">Level {stats.level.level}</p>
+            <p className="truncate font-black">{stats.level.title}</p>
+          </div>
+          <Badge className="ml-auto border-amber-200 bg-white text-amber-700" variant="outline">⭐ {stats.xp} XP</Badge>
+        </div>
+        <Progress className="mt-3" value={stats.level.progress * 100} />
+        <p className="mt-2 text-right text-[0.68rem] font-extrabold text-muted-foreground">
+          {stats.level.xpForNextLevel === 0
+            ? "MAX LEVEL!"
+            : `${stats.level.xpIntoLevel} / ${stats.level.xpForNextLevel} XP`}
+        </p>
+      </div>
+
+      <Separator className="my-5" />
+
+      <nav className="grid gap-1" aria-label="Quests">
+        <p className="mb-1 px-2 text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">Quests</p>
+        <NavLink
+          className={({ isActive }) => `flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-extrabold transition-colors ${isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground hover:bg-secondary"}`}
+          end
+          to="/"
+        >
+          <ListTodo className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">All quests</span>
+          <Badge className="border-0 bg-card/80 text-foreground" variant="outline">{todoRows.length}</Badge>
         </NavLink>
-        <p className="nav-heading">Projects</p>
         {projectRows.map((project) => (
-          <div className="project-nav-row" key={project.id}>
+          <div className="group relative" key={project.id}>
             <NavLink
-              className={({ isActive }) => isActive ? "nav-row active" : "nav-row"}
+              className={({ isActive }) => `flex min-w-0 items-center gap-3 rounded-lg py-2.5 pl-3 pr-16 text-sm font-extrabold transition-colors ${isActive ? "bg-secondary text-secondary-foreground" : "hover:bg-muted"}`}
               to={`/p/${project.id}`}
             >
-              <i style={{ backgroundColor: project.color }} />
-              <span>{project.name}</span>
-              <b>{todoCounts.get(project.id) ?? 0}</b>
+              <i className="size-3 shrink-0 rounded-full shadow-sm ring-2 ring-white" style={{ backgroundColor: project.color }} />
+              <span className="min-w-0 flex-1 truncate">{project.name}</span>
             </NavLink>
-            <button
+            <Badge className="pointer-events-none absolute right-9 top-1/2 -translate-y-1/2" variant="secondary">{todoCounts.get(project.id) ?? 0}</Badge>
+            <Button
               aria-label={`Delete ${project.name}`}
-              className="project-delete"
+              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-60 hover:text-destructive group-hover:opacity-100"
               onClick={() => removeProject(project)}
+              size="icon-sm"
               type="button"
-            >×</button>
+              variant="ghost"
+            ><Trash2 /></Button>
           </div>
         ))}
       </nav>
 
-      <form className="project-form" onSubmit={addProject}>
-        <label htmlFor="new-project">New project</label>
-        <div className="project-input-row">
-          <input
+      <form className="mt-5 rounded-xl border-2 border-dashed border-primary/25 bg-primary/[0.03] p-3 lg:mt-auto" onSubmit={addProject}>
+        <label className="mb-2 block text-xs font-black uppercase tracking-wider text-muted-foreground" htmlFor="new-project">New quest line</label>
+        <div className="flex gap-2">
+          <Input
+            className="h-9 min-w-0"
             id="new-project"
             onChange={(event) => setName(event.target.value)}
-            placeholder="Project name"
+            placeholder="Quest name"
             value={name}
           />
-          <button aria-label="Add project" type="submit">+</button>
+          <Button aria-label="Add project" className="shrink-0" size="icon-sm" type="submit"><Plus /></Button>
         </div>
-        <div className="color-picker" aria-label="Project color">
+        <div className="mt-3 flex gap-2" aria-label="Project color">
           {COLORS.map((preset) => (
             <button
               aria-label={`Use ${preset}`}
               aria-pressed={color === preset}
+              className="size-6 rounded-full border-2 border-white shadow-sm transition-transform hover:scale-110 aria-pressed:scale-110 aria-pressed:ring-2 aria-pressed:ring-primary aria-pressed:ring-offset-2"
               key={preset}
               onClick={() => setColor(preset)}
               style={{ backgroundColor: preset }}
@@ -119,7 +165,7 @@ export function Sidebar({ bundle }: { readonly bundle: AppBundle }) {
         </div>
       </form>
 
-      <div className="sync-hint"><span /> Session {bundle.session} · live</div>
+      <p className="mt-4 text-center text-[0.65rem] font-bold text-muted-foreground">⚡ SSE + catchup · local first</p>
     </aside>
   )
 }
