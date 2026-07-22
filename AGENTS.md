@@ -52,7 +52,6 @@ packages/
                     Optional React lifecycle bindings; reads use TanStack useLiveQuery directly.
 
 examples/
-  playground/       Browser lab with real OPFS persistence and cross-tab fake backend.
   pi-demo/          Shared HttpApi contract, reference Effect backend (consumes
                     @triargos/live-collection-server), and React web app.
 ```
@@ -134,8 +133,7 @@ as one unit. `protocol` is separate because backend consumers need it without fr
   `vi.stubGlobal`, or `vi.spyOn` when dependency injection can drive the behavior.
 - The protocol squasher is pure and must remain property-tested for convergence from arbitrary cursors
   and gap-tolerant sync IDs.
-- Run package scripts. A bare Vitest invocation can pick up the wrong root/browser configuration;
-  playground tests require Playwright Chromium and real browser OPFS.
+- Run package scripts. A bare Vitest invocation can pick up the wrong root configuration.
 
 ## Effect v4 notes
 
@@ -162,7 +160,6 @@ Do not recreate these old-repository patterns:
 pnpm -r typecheck
 pnpm -r test
 pnpm -r build
-pnpm playground
 pnpm changeset
 ```
 

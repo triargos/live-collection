@@ -9,7 +9,6 @@ COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/live-collection/package.json packages/live-collection/package.json
 COPY packages/react/package.json packages/react/package.json
-COPY examples/playground/package.json examples/playground/package.json
 COPY examples/pi-demo/shared/package.json examples/pi-demo/shared/package.json
 COPY examples/pi-demo/server/package.json examples/pi-demo/server/package.json
 COPY examples/pi-demo/web/package.json examples/pi-demo/web/package.json

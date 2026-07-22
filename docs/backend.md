@@ -44,7 +44,6 @@ For Effect backends, [`@triargos/live-collection-server`](../packages/server/REA
 ## Reference implementations
 
 - [`examples/pi-demo/server`](../examples/pi-demo/server) — a complete Effect HTTP backend consuming the kernel: repos, a model registry, session auth, and `/catchup` + SSE routes.
-- [`examples/playground/src/live/shared-backend.ts`](../examples/playground/src/live/shared-backend.ts) — the same contract as a browser-local fake (localStorage log + `BroadcastChannel`), useful for seeing the contract with zero HTTP.
 
 ## See also
 

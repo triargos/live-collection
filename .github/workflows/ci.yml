@@ -31,30 +31,5 @@ jobs:
       - name: Build
         run: pnpm -r build
 
-      # The playground's browser tests (OPFS + IndexedDB) run in real Chromium via
-      # @vitest/browser's Playwright provider, so the runner needs the browser binary + its system deps.
-      - name: Resolve Playwright version
-        id: playwright
-        run: |
-          version=$(pnpm --filter @triargos/live-collection-playground exec playwright --version | tail -n1 | awk '{print $NF}')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-
-      # Cache miss: download the browser AND install its OS deps. Cache hit: the binary is restored, but
-      # apt deps aren't cached — install just those (fast).
-      - name: Install Playwright Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter @triargos/live-collection-playground exec playwright install --with-deps chromium
-
-      - name: Install Playwright system deps
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter @triargos/live-collection-playground exec playwright install-deps chromium
-
       - name: Test
         run: pnpm -r test

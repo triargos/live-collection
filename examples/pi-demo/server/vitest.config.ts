@@ -1,7 +1,6 @@
 import { defineConfig } from "vitest/config"
 
-// Own config so a run from this package never falls back to a workspace-level config
-// (the playground's suites are browser-mode and would fail in node).
+// Own config so a run from this package never falls back to a workspace-level config.
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
