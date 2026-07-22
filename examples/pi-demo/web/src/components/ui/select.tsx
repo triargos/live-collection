@@ -15,7 +15,7 @@ function SelectTrigger({ className, children, ...props }: React.ComponentProps<t
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
-      className={cn("flex h-11 min-w-40 items-center justify-between gap-2 rounded-lg border-2 border-input bg-card px-3 py-2 text-sm font-bold shadow-sm outline-none focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/15 disabled:pointer-events-none disabled:opacity-50 data-[placeholder]:text-muted-foreground [&>span]:line-clamp-1", className)}
+      className={cn("flex h-11 min-w-40 items-center justify-between gap-2 rounded-lg border-2 border-input bg-card px-3 py-2 text-sm font-medium shadow-sm outline-none focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/15 disabled:pointer-events-none disabled:opacity-50 data-[placeholder]:text-muted-foreground [&>span]:line-clamp-1", className)}
       {...props}
     >
       {children}
@@ -47,7 +47,7 @@ function SelectItem({ className, children, ...props }: React.ComponentProps<type
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
-      className={cn("relative flex w-full cursor-default items-center gap-2 rounded-md py-2 pr-8 pl-2 text-sm font-bold outline-none select-none focus:bg-secondary focus:text-secondary-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50", className)}
+      className={cn("relative flex w-full cursor-default items-center gap-2 rounded-md py-2 pr-8 pl-2 text-sm font-medium outline-none select-none focus:bg-secondary focus:text-secondary-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50", className)}
       {...props}
     >
       <span className="absolute right-2 flex size-4 items-center justify-center"><SelectPrimitive.ItemIndicator><Check className="size-4" /></SelectPrimitive.ItemIndicator></span>

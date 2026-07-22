@@ -24,7 +24,7 @@ function ProjectTodos({ bundle }: { readonly bundle: AppBundle }) {
   if (Option.isNone(decoded)) {
     return (
       <div className="grid min-h-[60vh] place-items-center p-6 text-center">
-        <div><div className="mb-3 text-5xl">🗺️</div><strong className="text-xl font-black">Unknown quest.</strong><p className="font-semibold text-muted-foreground">Choose one from the quest board.</p></div>
+        <div><div className="mb-3 text-5xl">🗺️</div><strong className="text-xl font-bold">Unknown quest.</strong><p className="font-normal text-muted-foreground">Choose one from the quest board.</p></div>
       </div>
     )
   }

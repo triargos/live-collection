@@ -10,11 +10,11 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-title" className={cn("text-xl leading-none font-black", className)} {...props} />
+  return <div data-slot="card-title" className={cn("text-xl leading-none font-bold", className)} {...props} />
 }
 
 function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-description" className={cn("text-sm font-medium text-muted-foreground", className)} {...props} />
+  return <div data-slot="card-description" className={cn("text-sm font-normal text-muted-foreground", className)} {...props} />
 }
 
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {

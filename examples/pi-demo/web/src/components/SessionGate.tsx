@@ -31,11 +31,11 @@ export function SessionGate() {
           <div className="mx-auto mb-5 grid size-20 animate-float place-items-center rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-5xl font-black text-white shadow-[0_8px_0_oklch(0.47_0.22_292),0_16px_40px_oklch(0.58_0.24_292/0.3)]">
             π
           </div>
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border-2 border-primary/15 bg-card/80 px-4 py-1.5 text-sm font-extrabold text-primary shadow-sm backdrop-blur">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border-2 border-primary/15 bg-card/80 px-4 py-1.5 text-sm font-medium text-primary shadow-sm backdrop-blur">
             <Sparkles className="size-4" /> Effect × TanStack DB
           </div>
-          <h1 className="text-balance text-4xl font-black tracking-tight sm:text-6xl">Live quests, better together.</h1>
-          <p className="mx-auto mt-4 max-w-xl text-balance text-base font-semibold text-muted-foreground sm:text-lg">
+          <h1 className="text-balance text-4xl font-extrabold tracking-tight sm:text-6xl">Live quests, better together.</h1>
+          <p className="mx-auto mt-4 max-w-xl text-balance text-base font-normal leading-relaxed text-muted-foreground sm:text-lg">
             Start a party, share the six-character invite code, and race through your quests in real time.
           </p>
         </header>
@@ -70,7 +70,7 @@ export function SessionGate() {
                   aria-label="Session code"
                   autoCapitalize="characters"
                   autoComplete="off"
-                  className="h-14 text-center font-mono text-2xl font-black uppercase tracking-[0.3em] placeholder:tracking-[0.3em]"
+                  className="h-14 text-center font-mono text-2xl font-bold uppercase tracking-[0.3em] placeholder:tracking-[0.3em]"
                   maxLength={6}
                   onChange={(event) => {
                     setInput(normalizeSessionCode(event.target.value))
@@ -82,7 +82,7 @@ export function SessionGate() {
                 />
                 <Button size="lg" type="submit"><LogIn /> Join party</Button>
                 {invalid && (
-                  <p className="animate-in fade-in slide-in-from-top-1 text-center text-sm font-bold text-destructive" id="session-error">
+                  <p className="animate-in fade-in slide-in-from-top-1 text-center text-sm font-medium text-destructive" id="session-error">
                     That code doesn't look right — try six letters or numbers.
                   </p>
                 )}
@@ -91,7 +91,7 @@ export function SessionGate() {
           </Card>
         </div>
 
-        <p className="mt-9 text-center text-xs font-bold text-muted-foreground">Local-first magic · live sync · no signup</p>
+        <p className="mt-9 text-center text-xs font-medium text-muted-foreground">Local-first magic · live sync · no signup</p>
       </div>
     </main>
   )

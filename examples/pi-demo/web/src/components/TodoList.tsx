@@ -93,16 +93,16 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
           <Badge className="mb-3 gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">
             <Radio className="size-3 animate-pulse" /> Live quest log
           </Badge>
-          <h1 className="text-balance text-3xl font-black tracking-tight sm:text-4xl">
+          <h1 className="text-balance text-3xl font-extrabold tracking-tight sm:text-4xl">
             {activeProject === undefined ? "All quests" : activeProject.name}
           </h1>
-          <p className="mt-2 font-semibold text-muted-foreground">
+          <p className="mt-2 font-normal text-muted-foreground">
             {stats.level.emoji} Level {stats.level.level} · {stats.level.title}. Keep the streak alive!
           </p>
         </div>
         <div className="shrink-0 rounded-2xl border-2 border-primary/15 bg-card px-4 py-2 text-center shadow-sm">
-          <p className="text-xs font-black uppercase tracking-wider text-muted-foreground">Party score</p>
-          <p className="text-xl font-black text-primary">⭐ {stats.xp} XP</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Party score</p>
+          <p className="text-xl font-bold text-primary">⭐ {stats.xp} XP</p>
         </div>
       </header>
 
@@ -110,22 +110,22 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
         <Card className="gap-0 border-violet-200 bg-violet-50/80 py-3 shadow-[0_4px_0_oklch(0.84_0.06_292)] sm:py-4">
           <CardContent className="px-2 text-center sm:px-4">
             <span className="text-xl sm:text-2xl">⚡</span>
-            <strong className="mt-1 block text-lg font-black sm:text-2xl">{stats.xp}</strong>
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-wider text-muted-foreground sm:text-xs">XP earned</span>
+            <strong className="mt-1 block text-lg font-bold sm:text-2xl">{stats.xp}</strong>
+            <span className="text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground sm:text-xs">XP earned</span>
           </CardContent>
         </Card>
         <Card className="gap-0 border-emerald-200 bg-emerald-50/80 py-3 shadow-[0_4px_0_oklch(0.86_0.07_155)] sm:py-4">
           <CardContent className="px-2 text-center sm:px-4">
             <span className="text-xl sm:text-2xl">✅</span>
-            <strong className="mt-1 block text-lg font-black sm:text-2xl">{stats.completedCount}/{stats.totalCount}</strong>
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-wider text-muted-foreground sm:text-xs">Quests done</span>
+            <strong className="mt-1 block text-lg font-bold sm:text-2xl">{stats.completedCount}/{stats.totalCount}</strong>
+            <span className="text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground sm:text-xs">Quests done</span>
           </CardContent>
         </Card>
         <Card className="gap-0 border-amber-200 bg-amber-50/80 py-3 shadow-[0_4px_0_oklch(0.86_0.07_85)] sm:py-4">
           <CardContent className="px-2 text-center sm:px-4">
             <span className="text-xl sm:text-2xl">🏆</span>
-            <strong className="mt-1 block text-lg font-black sm:text-2xl">{stats.completionPercent}%</strong>
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-wider text-muted-foreground sm:text-xs">Complete</span>
+            <strong className="mt-1 block text-lg font-bold sm:text-2xl">{stats.completionPercent}%</strong>
+            <span className="text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground sm:text-xs">Complete</span>
           </CardContent>
         </Card>
       </div>
@@ -159,14 +159,14 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
 
       {isLoading ? (
         <Card className="animate-pulse border-dashed py-12 text-center shadow-none">
-          <CardContent><div className="mb-3 text-4xl">🌀</div><p className="font-black">Opening your local quest book…</p></CardContent>
+          <CardContent><div className="mb-3 text-4xl">🌀</div><p className="font-semibold">Opening your local quest book…</p></CardContent>
         </Card>
       ) : joinedTodos.length === 0 ? (
         <Card className="border-dashed bg-card/70 py-12 text-center shadow-none">
           <CardContent>
             <div className="mb-3 text-5xl">🗺️</div>
-            <strong className="text-xl font-black">No quests here yet.</strong>
-            <p className="mx-auto mt-2 max-w-sm font-semibold text-muted-foreground">Add one above — it will pop up instantly on every device in the party.</p>
+            <strong className="text-xl font-bold">No quests here yet.</strong>
+            <p className="mx-auto mt-2 max-w-sm font-normal text-muted-foreground">Add one above — it will pop up instantly on every device in the party.</p>
           </CardContent>
         </Card>
       ) : (
@@ -185,8 +185,8 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
                 <Check className="size-5 stroke-[3]" />
               </button>
               <div className="min-w-0 flex-1">
-                <span className={`block font-extrabold transition-all ${todo.completed ? "text-muted-foreground line-through decoration-2" : "text-foreground"}`}>{todo.title}</span>
-                <span className="mt-1 inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
+                <span className={`block font-semibold transition-all ${todo.completed ? "text-muted-foreground line-through decoration-2" : "text-foreground"}`}>{todo.title}</span>
+                <span className="mt-1 inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
                   <i className="size-2.5 rounded-full" style={{ backgroundColor: todo.projectColor }} /> {todo.projectName}
                 </span>
               </div>
@@ -205,7 +205,7 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
         </ul>
       )}
 
-      <p className="mt-8 text-center text-xs font-bold text-muted-foreground">Every move is local first, then confirmed over Effect HTTP ⚡</p>
+      <p className="mt-8 text-center text-xs font-normal text-muted-foreground">Every move is local first, then confirmed over Effect HTTP ⚡</p>
     </section>
   )
 }
