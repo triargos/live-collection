@@ -29,6 +29,10 @@ export const drainCollection = <T extends object>(args: {
     const { meta, collection, scope, schemaVersion } = args
     const modelName = ModelName.make(meta.entity)
     const broker = yield* SyncBroker
+    // Mirror of the server registry's encode edge: decode through the canonical
+    // JSON codec so entity fields whose plain encoded form isn't JSON-native
+    // (Date, Uint8Array, ...) round-trip instead of failing on their stringified form.
+    const decodeEntity = Schema.decodeUnknownEffect(Schema.toCodecJson(meta.schema))
 
     const outOfScope = (row: T): boolean =>
       Option.match(meta.scopeOf, {
@@ -48,7 +52,7 @@ export const drainCollection = <T extends object>(args: {
         Snapshot: () =>
           meta.listFn(scope).pipe(Effect.flatMap((rows) => collection.utils.replaceSynced(rows))),
         Upsert: ({ syncId, data }) =>
-          Schema.decodeUnknownEffect(meta.schema)(data).pipe(
+          decodeEntity(data).pipe(
             Effect.flatMap((row) => (outOfScope(row) ? Effect.void : collection.utils.writeSynced(row))),
             Effect.catchTag("SchemaError", (error) =>
               Effect.logWarning(

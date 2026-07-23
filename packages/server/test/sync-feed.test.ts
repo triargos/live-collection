@@ -1,7 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import {
   compareSyncId,
+  defineModelRegistry,
   deriveGroup,
   HydratedSyncEventEnvelope,
   ModelId,
@@ -33,6 +34,20 @@ const noteEvent = (
     modelId: ModelId.make(id),
     syncGroups: [groups[0]!, ...groups.slice(1)]
   })
+
+// A model whose schema carries a field that is not JSON-native in its plain
+// encoded form — the regression surface for the canonical-JSON encode edge.
+const Stamped = Schema.Struct({ id: Schema.String, createdAt: Schema.Date })
+const stampedRow = { id: "s1", createdAt: new Date("2026-07-23T12:12:08.434Z") }
+const stampedRegistry = Effect.succeed(
+  defineModelRegistry({
+    Stamped: {
+      modelName: "Stamped",
+      schema: Stamped,
+      hydrate: (id: ModelId) => Effect.succeed(id === "s1" ? Option.some(stampedRow) : Option.none())
+    }
+  })
+)
 
 /** Write to the repo and dispatch the matching event — an app's write handler in miniature. */
 const upsertNote = (row: Note, kind: "Insert" | "Update" = "Insert") =>
@@ -118,6 +133,34 @@ describe("SyncFeed.catchup", () => {
         ["known"]
       )
     }).pipe(Effect.provide(makeKernelLayer())))
+
+  it.effect("encodes non-JSON-native fields to canonical JSON — a Date hydrates onto the wire as an ISO string", () =>
+    Effect.gen(function* () {
+      const feed = yield* SyncFeed
+      yield* Effect.flatMap(SyncDispatcher, (d) =>
+        d.dispatch(
+          PendingSyncEvent.cases.Insert.make({
+            modelName: ModelName.make("Stamped"),
+            modelId: ModelId.make("s1"),
+            syncGroups: [alice]
+          })
+        )
+      )
+
+      const response = yield* feed.catchup({ fromSyncId: zero, syncGroups: [alice] })
+
+      assert.strictEqual(response.events.length, 1)
+      const event = response.events[0]!
+      assert.strictEqual(event._tag, "Insert")
+      if (event._tag === "Insert") {
+        // Schema.Date's plain encoded form is still a Date instance; the registry's
+        // canonical JSON codec must turn it into an ISO string — not leave a Date
+        // for JSON.stringify to improvise over.
+        const data = event.data as { readonly createdAt: unknown }
+        assert.strictEqual(typeof data.createdAt, "string")
+        assert.strictEqual(data.createdAt, "2026-07-23T12:12:08.434Z")
+      }
+    }).pipe(Effect.provide(makeKernelLayer(stampedRegistry))))
 
   it.effect("hydrateMany batches lookups — one pass per model, not one per event", () =>
     Effect.gen(function* () {

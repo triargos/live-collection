@@ -55,7 +55,10 @@ export interface ModelRegistryShape {
 const resolve = (registry: Record<string, ModelDescriptor<string, any, never>>): ModelRegistryShape => {
   const models = new Map<string, ResolvedModel>()
   for (const [name, descriptor] of Object.entries(registry)) {
-    const encodeEntity = Schema.encodeEffect(descriptor.schema)
+    // Canonical JSON codec: the entity's wire form is guaranteed Json, so types
+    // whose plain encoded form isn't JSON-native (Date, Uint8Array, ...) get an
+    // explicit serialization instead of whatever JSON.stringify improvises.
+    const encodeEntity = Schema.encodeEffect(Schema.toCodecJson(descriptor.schema))
     models.set(name, {
       hydrate: descriptor.hydrate,
       encode: (value) => encodeEntity(value),

@@ -110,6 +110,36 @@ describe("defineCollection broker drain", () => {
       }),
     ))
 
+  it.live("decodes non-JSON-native fields through the canonical JSON codec — Date arrives as an ISO string", () =>
+    withRuntime(({ runtime, events }) =>
+      Effect.gen(function* () {
+        // Schema.Date's plain encoded form is still a Date instance; on the wire it is
+        // an ISO string (canonical JSON). The drain must decode that string, not skip
+        // the event as undecodable.
+        const Stamped = Schema.Struct({ id: Schema.String, orgId: Schema.String, createdAt: Schema.Date })
+        const stamps = defineCollection({
+          runtime,
+          entity: "Webhook",
+          schema: Stamped,
+          getKey: (row) => key(row.id),
+          scopeOf: (row) => row.orgId,
+          listFn: (scope) => Effect.succeed([{ id: "seed", orgId: scope, createdAt: new Date(0) }]),
+        })
+        const collection = stamps("org-1")
+        yield* Effect.promise(() => collection.preload())
+        yield* waitUntil(() => collection.has(key("seed")))
+
+        yield* Queue.offer(
+          events,
+          event("1", { id: "dated", orgId: "org-1", createdAt: "2026-07-23T12:12:08.434Z" }, "dated"),
+        )
+        yield* waitUntil(() => collection.has(key("dated")))
+        const row = collection.get(key("dated"))!
+        assert.instanceOf(row.createdAt, Date)
+        assert.strictEqual(row.createdAt.toISOString(), "2026-07-23T12:12:08.434Z")
+      }),
+    ))
+
   it.live("disposeScope interrupts a drain blocked in listFn", () =>
     withRuntime(({ runtime }) =>
       Effect.gen(function* () {
