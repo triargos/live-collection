@@ -1,5 +1,11 @@
 # @triargos/live-collection
 
+## 0.0.2
+
+### Patch Changes
+
+- f64a352: fixed serialization of non-encodable types like dates and maps. use a schema codec to properly encode / decode them at the wire edges instead of letting the http client encode them
+
 ## 0.0.1
 
 ### Patch Changes
