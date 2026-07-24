@@ -1,6 +1,6 @@
 {
   "name": "@triargos/live-collection",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "type": "module",
   "description": "Frontend live-sync engine: collection registry + scoping, persistence factory (TanStack DB), SSE/catchup client, sync broker, and bootstrap orchestration. Hero type: LiveCollection<T>.",

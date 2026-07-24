@@ -1,5 +1,11 @@
 # @triargos/live-collection
 
+## 0.0.3
+
+### Patch Changes
+
+- f9d4506: fix(types): use different error generics for collection handlers to prevent type errors when mutation methods return different errors
+
 ## 0.0.2
 
 ### Patch Changes

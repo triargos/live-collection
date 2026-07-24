@@ -1,5 +1,12 @@
 # @triargos/live-collection-react
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [f9d4506]
+  - @triargos/live-collection@0.0.3
+
 ## 0.0.2
 
 ### Patch Changes
