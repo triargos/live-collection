@@ -66,23 +66,29 @@ export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
  * temp-id swap needed). One mutation per transaction: a batched transaction dies with
  * {@link BatchedMutationsUnsupported} before any server call.
  */
-interface MutationHandlers<T extends object, E, R> {
+interface MutationHandlers<T extends object, InsertE, UpdateE, DeleteE, R> {
   /**
    * Runs when an optimistic `collection.insert(...)` commits: send the row to your
    * backend and return the **server-confirmed row** (required — without it the library
    * can't reconcile and the optimistic row would flicker).
    */
-  readonly onInsert?: (params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, E, R>
+  readonly onInsert?: (
+    params: InsertMutationFnParams<T, ModelId, SyncWrite<T>>,
+  ) => Effect.Effect<T, InsertE, R>
   /**
    * Runs when an optimistic `collection.update(...)` commits: persist the change on
    * your backend and return the **server-confirmed row**.
    */
-  readonly onUpdate?: (params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<T, E, R>
+  readonly onUpdate?: (
+    params: UpdateMutationFnParams<T, ModelId, SyncWrite<T>>,
+  ) => Effect.Effect<T, UpdateE, R>
   /**
    * Runs when an optimistic `collection.delete(...)` commits: delete on your backend.
    * On success the library removes the row from the synced baseline by its key.
    */
-  readonly onDelete?: (params: DeleteMutationFnParams<T, ModelId, SyncWrite<T>>) => Effect.Effect<void, E, R>
+  readonly onDelete?: (
+    params: DeleteMutationFnParams<T, ModelId, SyncWrite<T>>,
+  ) => Effect.Effect<void, DeleteE, R>
 }
 
 /**
@@ -167,8 +173,12 @@ interface ScopedBase<T extends object, R> extends ConfigBase<T> {
   /** Fetches one scope's current server truth — run on cold starts and resyncs to (re)build that instance's base. */
   readonly listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>, never, R>
 }
-type GlobalConfig<T extends object, E, R> = GlobalBase<T, R> & MutationHandlers<T, E, R> & ServicesOf<R>
-type ScopedConfig<T extends object, E, R> = ScopedBase<T, R> & MutationHandlers<T, E, R> & ServicesOf<R>
+type GlobalConfig<T extends object, InsertE, UpdateE, DeleteE, R> = GlobalBase<T, R> &
+  MutationHandlers<T, InsertE, UpdateE, DeleteE, R> &
+  ServicesOf<R>
+type ScopedConfig<T extends object, InsertE, UpdateE, DeleteE, R> = ScopedBase<T, R> &
+  MutationHandlers<T, InsertE, UpdateE, DeleteE, R> &
+  ServicesOf<R>
 
 /**
  * Define one synced model and get back its collection handle. Calling the handle mounts
@@ -206,10 +216,30 @@ type ScopedConfig<T extends object, E, R> = ScopedBase<T, R> & MutationHandlers<
  * webhooks.insert({ id: crypto.randomUUID(), orgId, url }) // optimistic, reconciled on confirm
  * ```
  */
-export function defineCollection<T extends object, E = never, R = never>(config: GlobalConfig<T, E, R>): GlobalHandle<T>
-export function defineCollection<T extends object, E = never, R = never>(config: ScopedConfig<T, E, R>): ScopedHandle<T>
-export function defineCollection<T extends object, E = never, R = never>(
-  config: GlobalConfig<T, E, R> | ScopedConfig<T, E, R>,
+export function defineCollection<
+  T extends object,
+  InsertE = never,
+  UpdateE = never,
+  DeleteE = never,
+  R = never,
+>(config: GlobalConfig<T, InsertE, UpdateE, DeleteE, R>): GlobalHandle<T>
+export function defineCollection<
+  T extends object,
+  InsertE = never,
+  UpdateE = never,
+  DeleteE = never,
+  R = never,
+>(config: ScopedConfig<T, InsertE, UpdateE, DeleteE, R>): ScopedHandle<T>
+export function defineCollection<
+  T extends object,
+  InsertE = never,
+  UpdateE = never,
+  DeleteE = never,
+  R = never,
+>(
+  config:
+    | GlobalConfig<T, InsertE, UpdateE, DeleteE, R>
+    | ScopedConfig<T, InsertE, UpdateE, DeleteE, R>,
 ): Handle<T> {
   const { runtime, entity, schema, getKey } = config
   const scopeOf = "scopeOf" in config ? config.scopeOf : undefined
@@ -259,7 +289,7 @@ export function defineCollection<T extends object, E = never, R = never>(
   // the reconcile never runs and the rejection rolls the optimistic mutation back. A batched transaction
   // dies before the handler runs — only `mutations[0]` would be reconciled.
   const bridge =
-    <P extends { readonly transaction: { readonly mutations: ReadonlyArray<unknown> } }, A>(
+    <P extends { readonly transaction: { readonly mutations: ReadonlyArray<unknown> } }, A, E>(
       handler: (params: P) => Effect.Effect<A, E, R>,
       reconcile: (params: P, result: A) => Effect.Effect<void>,
     ) =>

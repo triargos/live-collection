@@ -52,6 +52,21 @@ describe("defineCollection — runtime-bound handle", () => {
     assert.deepStrictEqual(keys[0], scopedKey({ entity: "Webhook", scope: "org-1" })) // derives the scoped key
   })
 
+  it("accepts mutation handlers with different typed error channels", () => {
+    const { runtime } = fakeRuntime()
+    const collection = defineCollection({
+      runtime,
+      entity: "Webhook",
+      schema: Webhook,
+      getKey: (webhook) => k(webhook.id),
+      listFn: Effect.succeed([]),
+      onInsert: () => Effect.fail("insert failed" as const),
+      onDelete: () => Effect.fail(123 as const),
+    })
+
+    assert.strictEqual(collection._meta.entity, "Webhook")
+  })
+
   it("a global handle mounts under the global key (one instance app-wide)", () => {
     const { runtime, keys } = fakeRuntime()
     const user = defineCollection({
