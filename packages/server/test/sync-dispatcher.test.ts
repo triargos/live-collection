@@ -28,8 +28,10 @@ describe("SyncDispatcher", () => {
       const bus = yield* SyncEventBus
       const dispatcher = yield* SyncDispatcher
       const store = yield* SyncEventStore
-      const subscription = yield* bus.subscribe
-      const receive = yield* Stream.runHead(Stream.fromSubscription(subscription)).pipe(Effect.forkChild)
+      const receive = yield* Stream.runHead(bus.events).pipe(Effect.forkChild)
+      // Let the forked stream attach its bus subscription (it runs synchronously
+      // up to its first await once this fiber yields).
+      yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow)
 
       const persisted = yield* dispatcher.dispatch(pending)
       const delivered = yield* Fiber.join(receive)
@@ -45,7 +47,7 @@ describe("SyncDispatcher", () => {
       const store = yield* SyncEventStore
       const failingBus: SyncEventBusShape = {
         publish: () => Effect.die(new Error("bus down")),
-        subscribe: Effect.die(new Error("bus down"))
+        events: Stream.die(new Error("bus down"))
       }
       const dispatcher = yield* Effect.provide(
         Effect.flatMap(SyncDispatcher, Effect.succeed),
