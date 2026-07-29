@@ -45,6 +45,34 @@ Guidance for agents working in this repository.
 - **Release only through `changeset publish`** (it spawns `pnpm publish`). Bare `npm publish` ships the
   literal `catalog:`/`workspace:` specifiers and every consumer install fails.
 
+### Release lines: this branch is the Effect v3 twin
+
+`feat/effect-v3` is a permanent divergent branch that **is never merged into `main`**. Its purpose is
+to build the same four packages against Effect v3 for consumers who have not migrated yet, while
+`main` builds them against v4 — same package names, same public API, differing only in Effect major.
+
+**Status: the port has not been done yet.** The tree currently still targets Effect v4 and is
+identical to `main`. Until the port lands, the rules below describe the intended release shape, not
+the current one; the code-level rules in the rest of this file still describe v4 and must be revised
+as part of the port.
+
+- **The major number *is* the Effect major the build targets.** This branch publishes `3.x`; `main`
+  publishes `4.x` and grows upward from there. The v3 twin is feature-frozen, so it never climbs out
+  of `3.x`, and `main` never descends into it — the two lines cannot meet, so no consumer range can
+  ever resolve across majors.
+- **Publish this branch with `--tag effect3`.** A bare `changeset publish` here pushes `3.x` to
+  `latest` and every `pnpm add @triargos/live-collection` in the world silently downgrades to the v3
+  build. The tag is an install convenience (`pnpm add @triargos/live-collection@effect3`); the major
+  is what actually keeps the lines apart. Do not rely on the tag for isolation.
+- **Do not express the v3 line as a prerelease** (`4.0.0-effect3.0` or similar). Effect itself does
+  this for v4 (`latest: 3.22.0`, `beta: 4.0.0-beta.102`) and it works *there* because the prerelease
+  sits on a higher major. A prerelease on a shared major is worse than nothing: `^3.1.0-effect3.0`
+  expands to `>=3.1.0-effect3.0 <4.0.0` and matches later stable releases on that major.
+- **Changesets cannot drive both lines from one config** — it derives the next version from the
+  current one. This branch owns its own versions and release script; do not sync them from `main`.
+- Peer ranges are the machine-checked half: this branch declares `effect: ^3.x`, `main` declares
+  `effect: ^4.x`, so installing the wrong twin fails peer resolution instead of failing at runtime.
+
 ### Packages and dependency DAG
 
 The npm DAG is acyclic: `protocol → live-collection → react`, plus `protocol → server`
