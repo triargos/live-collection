@@ -1,5 +1,24 @@
 # @triargos/live-collection
 
+## 1.0.0
+
+### Minor Changes
+
+- 530b9e9: Move shared runtime deps to peerDependencies.
+
+  `effect`, `@tanstack/db`, `@tanstack/db-sqlite-persistence-core`,
+  `@triargos/live-collection-protocol`, `@triargos/live-collection`, and `react` all appear
+  in the public type surface, so duplicate installs broke `Context` tag identity and
+  collection identity. They are now peers with caret ranges; install them alongside the
+  library. `idb` stays an internal dependency, and `@tanstack/react-db` is no longer a
+  runtime dependency of the React package (it was only used by a type test).
+
+### Patch Changes
+
+- Updated dependencies [dde4c65]
+- Updated dependencies [530b9e9]
+  - @triargos/live-collection-protocol@0.1.0
+
 ## 0.0.3
 
 ### Patch Changes

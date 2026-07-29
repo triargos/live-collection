@@ -1,5 +1,66 @@
 # @triargos/live-collection-server
 
+## 1.0.0
+
+### Minor Changes
+
+- dde4c65: feat!: the event bus exposes a stream instead of a subscription handle
+
+  `SyncEventBusShape.subscribe: Effect<PubSub.Subscription<SyncEvent>, never, Scope>`
+  becomes `SyncEventBusShape.events: Stream.Stream<SyncEvent>`. The port no longer
+  leaks PubSub into the interface an app implements, and the subscription lifetime
+  moves inside the stream — so a Redis or Postgres-`LISTEN` adapter needs no scope
+  story of its own. The sole consumer already unwrapped the handle into a stream on
+  the next line.
+
+  `SyncFeed.streamEvents` consequently returns `Stream.Stream<string>` with no
+  `Scope` requirement, so SSE routes can drop `Stream.provideContext(requestScope)`:
+
+  ```diff
+  -const requestScope = yield* Effect.context<Scope.Scope>()
+   return HttpServerResponse.stream(
+  -  feed.streamEvents({ syncGroups }).pipe(Stream.provideContext(requestScope), Stream.encodeText),
+  +  feed.streamEvents({ syncGroups }).pipe(Stream.encodeText),
+     { contentType: "text/event-stream" },
+   )
+  ```
+
+  Custom bus adapters must return a stream that subscribes per run and releases on
+  termination, not a shared already-subscribed stream.
+
+- dde4c65: feat!: `narrowModelName` returns `Option`, and `UnknownModelError` is removed
+
+  An unregistered model name is the routine outcome of talking to a newer backend,
+  not a failure — every caller already discarded the error and dropped the event.
+  Modelling it as `Option.Option<N>` says that directly, and drops a tagged error
+  whose `known` payload nothing ever read.
+
+  ```diff
+  -Result.match(narrowModelName(knownNames, event.modelName), {
+  -  onFailure: () => Effect.logDebug(`skipping ${event.modelName}`),
+  -  onSuccess: (name) => dispatch(registry[name], event),
+  -})
+  +Option.match(narrowModelName(knownNames, event.modelName), {
+  +  onNone: () => Effect.logDebug(`skipping ${event.modelName}`),
+  +  onSome: (name) => dispatch(registry[name], event),
+  +})
+  ```
+
+- 530b9e9: Move shared runtime deps to peerDependencies.
+
+  `effect`, `@tanstack/db`, `@tanstack/db-sqlite-persistence-core`,
+  `@triargos/live-collection-protocol`, `@triargos/live-collection`, and `react` all appear
+  in the public type surface, so duplicate installs broke `Context` tag identity and
+  collection identity. They are now peers with caret ranges; install them alongside the
+  library. `idb` stays an internal dependency, and `@tanstack/react-db` is no longer a
+  runtime dependency of the React package (it was only used by a type test).
+
+### Patch Changes
+
+- Updated dependencies [dde4c65]
+- Updated dependencies [530b9e9]
+  - @triargos/live-collection-protocol@0.1.0
+
 ## 0.0.2
 
 ### Patch Changes
