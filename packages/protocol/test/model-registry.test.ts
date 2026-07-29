@@ -1,4 +1,4 @@
-import { Effect, Option, Result, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelName } from "../src/ids.js"
 import { defineModelRegistry, narrowModelName } from "../src/model-registry.js"
@@ -9,23 +9,16 @@ const name = (s: string): ModelName => ModelName.make(s)
 describe("narrowModelName", () => {
   const known = ["Webhook", "Channel"] as const
 
-  it("returns Success(name) for a registered name", () => {
+  it("returns the narrowed name for a registered name", () => {
     const result = narrowModelName(known, name("Webhook"))
-    assert.isTrue(Result.isSuccess(result))
-    if (Result.isSuccess(result)) assert.strictEqual(result.success, "Webhook")
+    assert.deepStrictEqual(result, Option.some("Webhook"))
   })
 
-  it("returns Failure(UnknownModelError) carrying context for an unknown name", () => {
-    const result = narrowModelName(known, name("Ghost"))
-    assert.isTrue(Result.isFailure(result))
-    if (Result.isFailure(result)) {
-      assert.strictEqual(result.failure._tag, "UnknownModelError")
-      assert.strictEqual(result.failure.modelName, "Ghost")
-      assert.deepStrictEqual([...result.failure.known], ["Webhook", "Channel"])
-    }
+  it("returns None for an unknown name", () => {
+    assert.deepStrictEqual(narrowModelName(known, name("Ghost")), Option.none())
   })
 
-  it("never throws on an unknown name — failure is data, not an exception", () => {
+  it("never throws on an unknown name — absence is data, not an exception", () => {
     assert.doesNotThrow(() => narrowModelName(known, name("Nope")))
   })
 })

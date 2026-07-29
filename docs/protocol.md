@@ -137,7 +137,7 @@ interface ModelDescriptor<Name extends string, T, R> {
 
 **`defineModelRegistry`** — builds the registry record; each descriptor's `modelName` must equal its key (compile-checked), and the keys form your app's model-name union.
 
-**`narrowModelName(known, raw)`** — the open→closed seam: returns `Result.Success` with the narrowed literal for a registered name, `Result.Failure(UnknownModelError)` otherwise. Callers log and drop unknown models — never fail the stream — so a client stays forward-compatible with a backend that knows more models than it does.
+**`narrowModelName(known, raw)`** — the open→closed seam: returns `Option.some` with the narrowed literal for a registered name, `Option.none` otherwise. An unregistered name is a routine outcome of talking to a newer backend, not an error: callers log and drop unknown models — never fail the stream — so a client stays forward-compatible with a backend that knows more models than it does.
 
 ## See also
 

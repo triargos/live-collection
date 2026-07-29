@@ -1,4 +1,4 @@
-import { Effect, Option, Result, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { ModelId, ModelName } from "./ids.js"
 import { SyncGroup } from "./sync-group.js"
 
@@ -70,42 +70,29 @@ export const defineModelRegistry = <
   r: { [K in keyof R]: R[K] & ModelDescriptor<K & string, any, any> }
 ): R => r
 
-/** Raised when a wire model name isn't in the registry. */
-export class UnknownModelError extends Schema.TaggedErrorClass<UnknownModelError>()(
-  "UnknownModelError",
-  {
-    modelName: ModelName, // the unrecognized wire name
-    known: Schema.Array(ModelName) // the names this registry knows
-  }
-) {}
-
 /**
- * Resolves a wire model name against the app's known names. Returns `Success(name)`
- * with the narrowed literal when it's registered, or `Failure(UnknownModelError)` when
- * it isn't — letting the caller skip the event instead of failing the stream, so a
- * client stays forward-compatible with a backend that knows more models than it does.
+ * Resolves a wire model name against the app's known names. Returns the narrowed
+ * literal when it's registered and `None` when it isn't — letting the caller skip the
+ * event instead of failing the stream, so a client stays forward-compatible with a
+ * backend that knows more models than it does.
+ *
+ * Absence is not an error here: an unregistered name is an expected, routine outcome
+ * of talking to a newer backend, and every caller drops the event either way.
  *
  * @example
  * ```ts
  * const knownNames = Object.keys(registry) as Array<keyof typeof registry>
  *
- * Result.match(narrowModelName(knownNames, event.modelName), {
- *   onFailure: () => Effect.logDebug(`skipping unknown model ${event.modelName}`),
- *   onSuccess: (name) => dispatch(registry[name], event), // name: "Webhook" | …
+ * Option.match(narrowModelName(knownNames, event.modelName), {
+ *   onNone: () => Effect.logDebug(`skipping unknown model ${event.modelName}`),
+ *   onSome: (name) => dispatch(registry[name], event), // name: "Webhook" | …
  * })
  * ```
  */
 export const narrowModelName = <N extends string>(
   known: ReadonlyArray<N>,
   raw: ModelName
-): Result.Result<N, UnknownModelError> => {
+): Option.Option<N> => {
   const match = known.find((name) => name === String(raw))
-  return match !== undefined
-    ? Result.succeed(match)
-    : Result.fail(
-        new UnknownModelError({
-          modelName: raw,
-          known: known.map((name) => ModelName.make(name))
-        })
-      )
+  return match === undefined ? Option.none() : Option.some(match)
 }

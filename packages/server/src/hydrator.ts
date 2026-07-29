@@ -1,4 +1,4 @@
-import { Effect, Option, Result } from "effect"
+import { Effect, Option } from "effect"
 import {
   entityKey,
   HydratedSyncEventEnvelope,
@@ -87,10 +87,10 @@ export const makeHydrator = (registry: ModelRegistryShape): Hydrator => {
       for (const event of args.events) {
         if (event._tag !== "Insert" && event._tag !== "Update") continue
         const known = narrowModelName(knownNames, event.modelName)
-        if (Result.isFailure(known)) continue
-        const ids = wanted.get(known.success) ?? new Set<ModelId>()
+        if (Option.isNone(known)) continue
+        const ids = wanted.get(known.value) ?? new Set<ModelId>()
         ids.add(event.modelId)
-        wanted.set(known.success, ids)
+        wanted.set(known.value, ids)
       }
 
       // 2. Resolve each model's ids in one batch.
@@ -112,7 +112,7 @@ export const makeHydrator = (registry: ModelRegistryShape): Hydrator => {
           continue
         }
         const known = narrowModelName(knownNames, event.modelName)
-        if (Result.isFailure(known)) {
+        if (Option.isNone(known)) {
           yield* Effect.logDebug(`Skipping event for unknown model ${event.modelName}`)
           continue
         }
