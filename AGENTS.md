@@ -45,6 +45,28 @@ Guidance for agents working in this repository.
 - **Release only through `changeset publish`** (it spawns `pnpm publish`). Bare `npm publish` ships the
   literal `catalog:`/`workspace:` specifiers and every consumer install fails.
 
+### Release lines: the major encodes the Effect major
+
+These packages ship as two twins with the same names and the same public API, differing only in the
+Effect major they build against. **The major version number *is* that Effect major.**
+
+| line | branch | versions | dist-tag | peer |
+| ---- | ------ | -------- | -------- | ---- |
+| Effect v4 | `main` | `4.x` and upward | `latest` | `effect: ^4.x` |
+| Effect v3 | `feat/effect-v3` (never merged) | `3.x`, frozen | `effect3` | `effect: ^3.x` |
+
+- **Never release a `3.x` from `main`.** `main` jumped `1.0.0` → `4.0.0` precisely so it starts above
+  the v3 line and only ever grows away from it. Had it kept climbing normally it would have reached
+  `3.0.0` and collided with the frozen twin, and a consumer range could then resolve across Effect
+  majors. Breaking changes here go `4.x → 5.x → 6.x`; the v3 twin stays at `3.x` forever.
+- Versions `0.0.1`–`1.0.0` predate this scheme. They are Effect v4 builds whose numbers say nothing
+  about that, and they are deprecated on npm pointing at `4.x`. They are **not** unpublished: registry
+  data is immutable, `@triargos/live-collection` exceeds npm's 300-downloads-per-week unpublish
+  threshold, and an unpublished version number can never be reused.
+- Peer ranges are the machine-checked half: installing the wrong twin fails peer resolution at install
+  time rather than breaking at runtime. Consumer caret ranges cannot cross majors on their own, so the
+  only way into the wrong twin is an explicit `@3`/`@effect3` install *and* ignoring a peer error.
+
 ### Packages and dependency DAG
 
 The npm DAG is acyclic: `protocol → live-collection → react`, plus `protocol → server`
