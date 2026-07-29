@@ -28,8 +28,12 @@
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
+  "peerDependencies": {
+    "@triargos/live-collection-protocol": "workspace:^",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.100"
+    "effect": "catalog:"
   }
 }

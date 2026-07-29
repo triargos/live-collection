@@ -12,6 +12,6 @@
   },
   "dependencies": {
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.100"
+    "effect": "catalog:"
   }
 }

@@ -28,14 +28,20 @@
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests"
   },
+  "peerDependencies": {
+    "@tanstack/db": "catalog:",
+    "@tanstack/db-sqlite-persistence-core": "catalog:",
+    "@triargos/live-collection-protocol": "workspace:^",
+    "effect": "catalog:"
+  },
   "dependencies": {
-    "@tanstack/db": "0.6.16",
-    "@tanstack/db-sqlite-persistence-core": "0.2.8",
-    "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.100",
-    "idb": "^8.0.3"
+    "idb": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "^26.0.0"
+    "@tanstack/db": "catalog:",
+    "@tanstack/db-sqlite-persistence-core": "catalog:",
+    "@triargos/live-collection-protocol": "workspace:*",
+    "@types/node": "catalog:",
+    "effect": "catalog:"
   }
 }

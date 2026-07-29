@@ -11,17 +11,17 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@effect/platform-node": "^4.0.0-beta.100",
+    "@effect/platform-node": "catalog:",
     "@pi-demo/shared": "workspace:*",
     "@triargos/live-collection-protocol": "workspace:*",
-    "effect": "^4.0.0-beta.100",
+    "effect": "catalog:",
     "@triargos/live-collection-server": "workspace:*"
   },
   "devDependencies": {
-    "@effect/vitest": "^4.0.0-beta.100",
+    "@effect/vitest": "catalog:",
     "@triargos/live-collection": "workspace:*",
-    "@types/node": "^26.0.0",
+    "@types/node": "catalog:",
     "tsx": "^4.23.1",
-    "vitest": "^4.1.10"
+    "vitest": "catalog:"
   }
 }
