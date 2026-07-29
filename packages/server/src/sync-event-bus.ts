@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, PubSub, type Scope } from "effect"
+import { Context, Effect, Layer, PubSub, Stream } from "effect"
 import type { SyncEvent } from "@triargos/live-collection-protocol"
 
 /**
@@ -11,14 +11,24 @@ import type { SyncEvent } from "@triargos/live-collection-protocol"
  */
 export interface SyncEventBusShape {
   readonly publish: (event: SyncEvent) => Effect.Effect<void>
-  readonly subscribe: Effect.Effect<PubSub.Subscription<SyncEvent>, never, Scope.Scope>
+  /**
+   * The live tail. Each run is one independent subscriber: it registers on first
+   * pull and unregisters when the stream ends or is interrupted, so an adapter must
+   * not hand out a shared, already-subscribed stream — a dropped SSE connection has
+   * to release its subscriber, or the bus keeps feeding a queue nobody drains.
+   *
+   * Events published before a run's first pull are not delivered to it. That is safe
+   * because catchup, not the bus, is the source of truth: the client's durable cursor
+   * recovers anything the tail missed.
+   */
+  readonly events: Stream.Stream<SyncEvent>
 }
 
 const makeMemory: Effect.Effect<SyncEventBusShape> = Effect.gen(function* () {
   const pubSub = yield* PubSub.unbounded<SyncEvent>()
   return {
     publish: (event) => PubSub.publish(pubSub, event).pipe(Effect.asVoid),
-    subscribe: PubSub.subscribe(pubSub)
+    events: Stream.fromPubSub(pubSub)
   }
 })
 

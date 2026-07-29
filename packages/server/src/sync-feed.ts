@@ -7,7 +7,7 @@ import {
     type SyncGroup,
     type SyncId
 } from "@triargos/live-collection-protocol";
-import { Context, DateTime, Duration, Effect, Layer, Schema, type Scope, Stream } from "effect";
+import { Context, DateTime, Duration, Effect, Layer, Schema, Stream } from "effect";
 import * as Arr from "effect/Array";
 import { makeHydrator } from "./hydrator.js";
 import { ModelRegistry } from "./model-registry.js";
@@ -34,16 +34,19 @@ export interface SyncFeedShape {
   }) => Effect.Effect<CatchupResponse>
 
   /**
-   * Ready-to-send SSE frame strings: bus subscription → `intersects` filter →
-   * hydrate → `data: <json>\n\n`, merged with `:ka\n\n` keepalive comments.
-   * A hydration or encode failure is logged and skipped, never fatal. The
-   * default 15s keepalive must undercut the client transport's configured
-   * silence window.
+   * Ready-to-send SSE frame strings: bus tail → `intersects` filter → hydrate →
+   * `data: <json>\n\n`, merged with `:ka\n\n` keepalive comments. A hydration or
+   * encode failure is logged and skipped, never fatal. The default 15s keepalive
+   * must undercut the client transport's configured silence window.
+   *
+   * One stream per connection: the bus subscriber is registered on first pull and
+   * released when the response stream ends or the client disconnects, so the route
+   * needs no scope of its own.
    */
   readonly streamEvents: (args: {
     readonly syncGroups: ReadonlyArray<SyncGroup>
     readonly keepAlive?: Duration.Input
-  }) => Stream.Stream<string, never, Scope.Scope>
+  }) => Stream.Stream<string>
 }
 
 const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
@@ -98,25 +101,21 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
     })
 
     const streamEvents: SyncFeedShape["streamEvents"] = ({ keepAlive = Duration.seconds(15), syncGroups }) => {
-      const frames = Stream.unwrap(
-        Effect.map(bus.subscribe, (subscription) =>
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter((event) => intersects(event.syncGroups, syncGroups)),
-            Stream.mapEffect((event) => hydrator.hydrateEvents({ events: [event], syncGroups })),
-            Stream.flatMap(Stream.fromIterable),
-            Stream.mapEffect((envelope) =>
-              encodeEnvelope(envelope).pipe(
-                Effect.map((json) => [`data: ${json}\n\n`]),
-                Effect.catch((error) =>
-                  Effect.logWarning("Skipping SSE frame: envelope failed to encode", error).pipe(
-                    Effect.as<ReadonlyArray<string>>([])
-                  )
-                )
+      const frames = bus.events.pipe(
+        Stream.filter((event) => intersects(event.syncGroups, syncGroups)),
+        Stream.mapEffect((event) => hydrator.hydrateEvents({ events: [event], syncGroups })),
+        Stream.flatMap(Stream.fromIterable),
+        Stream.mapEffect((envelope) =>
+          encodeEnvelope(envelope).pipe(
+            Effect.map((json) => [`data: ${json}\n\n`]),
+            Effect.catch((error) =>
+              Effect.logWarning("Skipping SSE frame: envelope failed to encode", error).pipe(
+                Effect.as<ReadonlyArray<string>>([])
               )
-            ),
-            Stream.flatMap(Stream.fromIterable)
+            )
           )
-        )
+        ),
+        Stream.flatMap(Stream.fromIterable)
       )
       const keepAliveFrames = Stream.tick(keepAlive).pipe(Stream.map(() => ":ka\n\n"))
       return Stream.merge(frames, keepAliveFrames).pipe(Stream.withSpan("SyncFeed.streamEvents"))
