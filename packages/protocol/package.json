@@ -28,7 +28,10 @@
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
-    "effect": "^4.0.0-beta.100"
+  "peerDependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "effect": "catalog:"
   }
 }

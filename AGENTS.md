@@ -23,13 +23,27 @@ Guidance for agents working in this repository.
 
 - **Effect v4** — runtime, services, layers, schemas, streams, and HTTP.
 - **TanStack DB `persistedCollectionOptions`** from
-  `@tanstack/db-sqlite-persistence-core` — client persistence. `@tanstack/db` is pinned exactly at
-  `0.6.7`; bump deliberately because the persistence integration is alpha.
+  `@tanstack/db-sqlite-persistence-core` — client persistence. The persistence integration is alpha:
+  the catalog range is `^0.6.16` and `pnpm-lock.yaml` holds the exact build, so bumping means a
+  deliberate `pnpm update`, not a passive install.
 - **`effect/unstable/http`** — HTTP client/response APIs. Keep these unstable imports confined to
   `packages/live-collection/src/client/sync-transport.ts`,
   `packages/live-collection/src/client/catchup-client.ts`, and application-edge wiring.
 - **React** is optional and lives in `@triargos/live-collection-react`; core stays framework-neutral.
 - **Tooling:** pnpm workspaces, TypeScript project references, Vitest/`@effect/vitest`, and Changesets.
+
+### Dependency policy
+
+- **Shared versions live in the `catalog:` block of `pnpm-workspace.yaml`.** Every package references
+  them as `"catalog:"`. Catalog values are caret ranges because they become the peer ranges consumers
+  must satisfy; the lockfile is what pins the exact build.
+- **Anything in a published package's public type surface is a `peerDependency`, not a dependency**
+  — `effect`, `@tanstack/db`, `@tanstack/db-sqlite-persistence-core`, `@triargos/live-collection-protocol`,
+  `react`. Two copies of these break `Context` tag identity, collection identity, or hook state.
+  Private implementation deps (`idb`, used only by `client/journal-store.ts`) stay plain dependencies.
+  Every peer needs a matching devDependency so the workspace still resolves it.
+- **Release only through `changeset publish`** (it spawns `pnpm publish`). Bare `npm publish` ships the
+  literal `catalog:`/`workspace:` specifiers and every consumer install fails.
 
 ### Packages and dependency DAG
 
@@ -137,9 +151,9 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 
 ## Effect v4 notes
 
-- Workspace Effect packages are intentionally pinned with `^4.0.0-beta.98`. The caret may float to a
-  newer beta or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all
-  packages together.
+- Workspace Effect packages sit at `^4.0.0-beta.100` in the catalog. The caret may float to a newer beta
+  or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all packages
+  together.
 - The workspace cannot mix Effect v3 and v4 in one type graph.
 - `@effect/platform` is not a dependency. HTTP client APIs come from `effect/unstable/http`, HttpApi APIs
   from `effect/unstable/httpapi`, and Node integrations from matching `@effect/platform-node` v4 versions.

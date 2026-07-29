@@ -2,3 +2,29 @@ packages:
   - "packages/*"
   - "examples/*"
   - "examples/pi-demo/*"
+
+# Single source of truth for shared versions. Published packages reference these as
+# "catalog:"; pnpm rewrites them to the concrete range at pack/publish time, so releases
+# MUST go through `pnpm publish` (changeset publish does) — `npm publish` would ship the
+# literal "catalog:" specifier.
+#
+# Ranges are carets because these values become the peerDependency ranges consumers must
+# satisfy. The exact versions the workspace builds and tests against live in pnpm-lock.yaml.
+catalog:
+  effect: ^4.0.0-beta.100
+  "@effect/platform-node": ^4.0.0-beta.100
+  "@effect/vitest": ^4.0.0-beta.100
+  "@effect/language-service": ^0.87.0
+  "@effect/tsgo": 0.24.2
+  "@tanstack/db": ^0.6.16
+  "@tanstack/db-sqlite-persistence-core": ^0.2.8
+  "@tanstack/react-db": ^0.1.94
+  "@tanstack/browser-db-sqlite-persistence": ^0.2.8
+  idb: ^8.0.3
+  react: ^19.2.7
+  react-dom: ^19.2.7
+  "@types/react": ^19.2.17
+  "@types/react-dom": ^19.2.3
+  "@types/node": ^26.0.0
+  typescript: ^7.0.2
+  vitest: ^4.1.10
