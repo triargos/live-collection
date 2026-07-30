@@ -51,10 +51,11 @@ Guidance for agents working in this repository.
 to build the same four packages against Effect v3 for consumers who have not migrated yet, while
 `main` builds them against v4 — same package names, same public API, differing only in Effect major.
 
-**Status: the port has not been done yet.** The tree currently still targets Effect v4 and is
-identical to `main`. Until the port lands, the rules below describe the intended release shape, not
-the current one; the code-level rules in the rest of this file still describe v4 and must be revised
-as part of the port.
+**Status: the port has not been done yet.** The package versions are already pinned to the `3.x` line
+so that no accidental publish from here can land on a version the v4 line owns, but the code still
+targets Effect v4 — the catalog says `effect: ^4.x` and every `src/` file is the v4 build. Until the
+port lands, the code-level rules in the rest of this file describe v4 and must be revised as part of
+it. **Do not publish from this branch before the port.**
 
 - **The major number *is* the Effect major the build targets.** This branch publishes `3.x`; `main`
   publishes `4.x` and grows upward from there. The v3 twin is feature-frozen, so it never climbs out
