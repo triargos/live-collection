@@ -1,8 +1,11 @@
 name: Release
 
+# The v3 twin releases from its own branch. The filename must stay release.yml: npm
+# allows one trusted publisher per package and binds it to repo + workflow filename
+# (not the branch), so renaming this file here would break the OIDC exchange.
 on:
   push:
-    branches: [main]
+    branches: [feat/effect-v3]
 
 concurrency:
   group: release-${{ github.ref }}

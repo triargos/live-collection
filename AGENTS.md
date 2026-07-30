@@ -74,6 +74,26 @@ that already landed on `main`.
 - Peer ranges are the machine-checked half: this branch declares `effect: ^3.x`, `main` declares
   `effect: ^4.x`, so installing the wrong twin fails peer resolution instead of failing at runtime.
 
+#### Releasing from this branch
+
+The flow mirrors `main`: push here, `changesets/action` opens a `chore: version packages` PR
+(`changeset-release/feat/effect-v3` → `feat/effect-v3`) when changesets are pending, and once that
+merges the next push runs `pnpm release` — `changeset publish --tag effect3`. Every push attempts a
+publish and no-ops for versions the registry already has.
+
+- **Only `patch` and `minor` changesets are allowed here.** A `major` changeset versions `3.x` to
+  `4.0.0`, colliding with the line `main` owns. Nothing in changesets enforces this; the reviewer of
+  the version PR is the check.
+- **`release.yml` must keep its filename.** npm allows one trusted publisher per package and binds it
+  to repo + workflow filename, not to a branch — a renamed or added workflow gets no OIDC credentials.
+  The corollary: any branch running `release.yml` can publish, so branch control lives in the `on:`
+  trigger and GitHub branch protection, not on npm's side.
+- **The dist-tag lives in the root `release` script**, not in `.changeset/config.json` — changesets has
+  no dist-tag setting (`privatePackages.tag` is about git tags). `baseBranch` here is
+  `feat/effect-v3`, so `changeset status`/`add` diff against this line instead of the v4 one.
+- The `ci.yml` and `release.yml` triggers on this branch name it explicitly. That divergence is
+  intentional and is one more reason the branch must never be merged.
+
 ### Packages and dependency DAG
 
 The npm DAG is acyclic: `protocol → live-collection → react`, plus `protocol → server`

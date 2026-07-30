@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [feat/effect-v3]
   pull_request:
 
 # Cancel superseded runs on the same ref to save CI minutes.
