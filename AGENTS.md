@@ -11,7 +11,7 @@ Guidance for agents working in this repository.
 
 - Design and lock interfaces before implementing non-trivial features or refactors.
 - Reuse existing seams and adapters before introducing a second pattern.
-- Verify framework APIs against the installed source; Effect v4 and TanStack DB are moving targets.
+- Verify framework APIs against the installed source; `@effect/platform` and TanStack DB are moving targets.
 - Keep typed errors in Effect error channels. Infrastructure failures may be defects at explicit boundaries.
 - Decode unknown wire/storage input at boundaries; never cast HTTP JSON or persisted rows into domain types.
 - Report validation as **PASS** only after directly observing exit code 0, **FAIL** after a non-zero exit, and
@@ -21,12 +21,13 @@ Guidance for agents working in this repository.
 
 ### Stack
 
-- **Effect v4** — runtime, services, layers, schemas, streams, and HTTP.
+- **Effect v3** — runtime, services, layers, schemas, and streams.
 - **TanStack DB `persistedCollectionOptions`** from
   `@tanstack/db-sqlite-persistence-core` — client persistence. The persistence integration is alpha:
   the catalog range is `^0.6.16` and `pnpm-lock.yaml` holds the exact build, so bumping means a
   deliberate `pnpm update`, not a passive install.
-- **`effect/unstable/http`** — HTTP client/response APIs. Keep these unstable imports confined to
+- **`@effect/platform`** — HTTP client/response and HttpApi APIs, a peer dependency of
+  `@triargos/live-collection`. Keep those imports confined to
   `packages/live-collection/src/client/sync-transport.ts`,
   `packages/live-collection/src/client/catchup-client.ts`, and application-edge wiring.
 - **React** is optional and lives in `@triargos/live-collection-react`; core stays framework-neutral.
@@ -38,8 +39,8 @@ Guidance for agents working in this repository.
   them as `"catalog:"`. Catalog values are caret ranges because they become the peer ranges consumers
   must satisfy; the lockfile is what pins the exact build.
 - **Anything in a published package's public type surface is a `peerDependency`, not a dependency**
-  — `effect`, `@tanstack/db`, `@tanstack/db-sqlite-persistence-core`, `@triargos/live-collection-protocol`,
-  `react`. Two copies of these break `Context` tag identity, collection identity, or hook state.
+  — `effect`, `@effect/platform`, `@tanstack/db`, `@tanstack/db-sqlite-persistence-core`,
+  `@triargos/live-collection-protocol`, `react`. Two copies of these break `Context` tag identity, collection identity, or hook state.
   Private implementation deps (`idb`, used only by `client/journal-store.ts`) stay plain dependencies.
   Every peer needs a matching devDependency so the workspace still resolves it.
 - **Release only through `changeset publish`** (it spawns `pnpm publish`). Bare `npm publish` ships the
@@ -51,11 +52,10 @@ Guidance for agents working in this repository.
 to build the same four packages against Effect v3 for consumers who have not migrated yet, while
 `main` builds them against v4 — same package names, same public API, differing only in Effect major.
 
-**Status: the port has not been done yet.** The package versions are already pinned to the `3.x` line
-so that no accidental publish from here can land on a version the v4 line owns, but the code still
-targets Effect v4 — the catalog says `effect: ^4.x` and every `src/` file is the v4 build. Until the
-port lands, the code-level rules in the rest of this file describe v4 and must be revised as part of
-it. **Do not publish from this branch before the port.**
+**Status: ported.** All four packages and the pi-demo example build, typecheck, and test against
+Effect v3; the code-level rules in the rest of this file describe the v3 build. The branch is
+feature-frozen: work here is limited to fixing v3-specific breakage and re-porting contract changes
+that already landed on `main`.
 
 - **The major number *is* the Effect major the build targets.** This branch publishes `3.x`; `main`
   publishes `4.x` and grows upward from there. The v3 twin is feature-frozen, so it never climbs out
@@ -115,7 +115,7 @@ as one unit. `protocol` is separate because backend consumers need it without fr
    persistence backend does not make in-memory collections unboundedly cheap.
 5. **Freshness metadata is ours.** The durable global `lastSyncId`, not framework `staleTime`, gates
    catchup. Catchup writes use the synced-store path, never optimistic mutation hooks.
-6. **Services use a separate shape, constructor, and layers.** Keep this exact v4 form:
+6. **Services use a separate shape, constructor, and layers.** Keep this exact form:
 
    ```ts
    export interface ServiceNameShape {
@@ -126,7 +126,7 @@ as one unit. `protocol` is separate because backend consumers need it without fr
      // adapter implementation
    })
 
-   export class ServiceName extends Context.Service<ServiceName, ServiceNameShape>()("ServiceName") {
+   export class ServiceName extends Context.Tag("ServiceName")<ServiceName, ServiceNameShape>() {
      static readonly layer = Layer.effect(ServiceName, make)
      static readonly layerMemory = Layer.succeed(ServiceName, memoryImplementation)
    }
@@ -152,9 +152,10 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 
 - Decode SSE and `/catchup` payloads with schemas exported by
   `@triargos/live-collection-protocol`.
-- `narrowModelName` is pure and returns `Result.Result<N, UnknownModelError>`; Effect v4 has no `Either`.
+- `narrowModelName` is pure and returns `Option.Option<N>` — the same signature both twins expose.
 - Wire event data presence is structural: Insert/Update carry `data`; Delete does not.
-- ISO dates on the wire use `Schema.DateFromString`, not v4's Date-instance-only `Schema.Date`.
+- ISO dates on the wire use `Schema.DateFromString`, which states the string encoding outright and
+  keeps the schema identical to the v4 twin's.
 - The `SyncJournal` is the explicit `Option ⇄ null` seam for at-rest rows. Keep `Option` inside service
   and domain APIs.
 - Provider/network work stays outside authoritative persistence transactions.
@@ -166,10 +167,10 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 - Effect tests import `assert`, `describe`, and `it` from `@effect/vitest`; use `it.effect` or `it.live`.
   Use `assert`, not `expect`, in Effect tests.
 - Pure tests may use regular Vitest.
-- Property tests import FastCheck from `effect/testing/FastCheck`:
+- Property tests import FastCheck from `effect/FastCheck`:
 
   ```ts
-  import * as fc from "effect/testing/FastCheck"
+  import * as fc from "effect/FastCheck"
   ```
 
 - Test behavior through public service seams and real `layerMemory` adapters; do not use `vi.mock`,
@@ -178,16 +179,36 @@ as one unit. `protocol` is separate because backend consumers need it without fr
   and gap-tolerant sync IDs.
 - Run package scripts. A bare Vitest invocation can pick up the wrong root configuration.
 
-## Effect v4 notes
+## Effect v3 notes
 
-- Workspace Effect packages sit at `^4.0.0-beta.100` in the catalog. The caret may float to a newer beta
-  or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all packages
-  together.
+- The catalog holds `effect: ^3.22.0`, `@effect/platform: ^0.97.0`, `@effect/platform-node: ^0.108.0`,
+  and `@effect/vitest: ^0.30.0`. `@effect/platform` still breaks on minor bumps, so treat lockfile
+  updates as deliberate compatibility events and typecheck all packages together.
 - The workspace cannot mix Effect v3 and v4 in one type graph.
-- `@effect/platform` is not a dependency. HTTP client APIs come from `effect/unstable/http`, HttpApi APIs
-  from `effect/unstable/httpapi`, and Node integrations from matching `@effect/platform-node` v4 versions.
-- Unstable HTTP/HttpApi imports may break between releases; containment at existing adapters and app edges
-  is the chosen mitigation, not another wrapper abstraction.
+- TypeScript 7 (`@effect/tsgo`) is deliberate here too: its patched `tsc` typechecks the v3 graph and
+  bundles the Effect language service.
+
+### Porting map (v4 on `main` → v3 here)
+
+Work on this branch usually starts from `git diff main...feat/effect-v3`. The recurring translations:
+
+| v4 (`main`) | v3 (here) |
+| --- | --- |
+| `effect/unstable/http`, `effect/unstable/httpapi` | `@effect/platform` |
+| `HttpRouter.add` / `HttpRouter.serve` (layer-based) | `HttpLayerRouter.add` / `.addHttpApi` / `.serve` |
+| `HttpApiEndpoint.get(name, path, { success, payload, params, query })` | `.get(name, path)` plus `.addSuccess` / `.setPayload` / `.setPath` / `.setUrlParams` / `.addError` |
+| handler args `{ params, query }`, client `{ params }` | `{ path, urlParams }` on both sides |
+| `HttpApiMiddleware.Service` wrapping the handler effect | `HttpApiMiddleware.Tag` whose service *is* an `Effect` producing the provided value |
+| `Context.Service<Self, Shape>()(id)` | `Context.Tag(id)<Self, Shape>()` |
+| `Schema.TaggedErrorClass`, `HttpApiSchema.status(n)` | `Schema.TaggedError`, `HttpApiSchema.annotations({ status: n })` |
+| `Schema.check(Schema.isPattern(re))` | `Schema.pattern(re)` |
+| `Schema.decodeUnknownEffect`, `Schema.encodeEffect` | `Schema.decodeUnknown`, `Schema.encode` |
+| `Result` + `Effect.result` | `Either` + `Effect.either` |
+| `Option.fromNullishOr` | `Option.fromNullable` |
+| `Effect.forkChild`, `Effect.timeoutOrElse` | `Effect.fork`, `Effect.timeoutFail` |
+| `Layer.unwrap` | `Layer.unwrapEffect` |
+| `Stream.runCollect` yields an array | yields a `Chunk` — convert with `Chunk.toReadonlyArray` |
+| `Duration.Input` | `Duration.DurationInput` |
 
 ## Anti-references
 
