@@ -1,4 +1,4 @@
-import { DateTime, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from "effect"
+import { Cause, DateTime, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -20,7 +20,7 @@ const modelName = ModelName.make("Webhook")
 const group = deriveGroup(["organization", "org-1"])
 const sid = (value: string) => SyncId.make(value)
 const key = (value: string) => ModelId.make(value)
-const epoch = DateTime.makeUnsafe(0).pipe(DateTime.toDateUtc)
+const epoch = DateTime.unsafeMake(0).pipe(DateTime.toDateUtc)
 
 const event = (syncId: string, data: unknown, id = `w-${syncId}`): HydratedSyncEventEnvelope => ({
   _tag: "Insert",
@@ -36,7 +36,7 @@ const waitUntil = (condition: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() =>
     condition() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(condition))),
   ).pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
+    Effect.timeoutFailCause({ duration: Duration.seconds(2), onTimeout: () => Cause.die("condition not met") }),
   )
 
 const waitUntilEffect = (condition: Effect.Effect<boolean>): Effect.Effect<void> =>
@@ -44,7 +44,7 @@ const waitUntilEffect = (condition: Effect.Effect<boolean>): Effect.Effect<void>
     Effect.flatMap((ready) =>
       ready ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntilEffect(condition))),
     ),
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
+    Effect.timeoutFailCause({ duration: Duration.seconds(2), onTimeout: () => Cause.die("condition not met") }),
   )
 
 const withRuntime = <A>(
@@ -110,12 +110,12 @@ describe("defineCollection broker drain", () => {
       }),
     ))
 
-  it.live("decodes non-JSON-native fields through the canonical JSON codec — Date arrives as an ISO string", () =>
+  it.live("decodes wire date fields — Schema.Date's encoded form is the ISO string the server emits", () =>
     withRuntime(({ runtime, events }) =>
       Effect.gen(function* () {
-        // Schema.Date's plain encoded form is still a Date instance; on the wire it is
-        // an ISO string (canonical JSON). The drain must decode that string, not skip
-        // the event as undecodable.
+        // The drain decodes the wire `data` with the model schema itself, so the schema's
+        // encoded side must be JSON-native. Schema.Date already is (string ⇄ Date), which
+        // is why the event decodes instead of being skipped as undecodable.
         const Stamped = Schema.Struct({ id: Schema.String, orgId: Schema.String, createdAt: Schema.Date })
         const stamps = defineCollection({
           runtime,
@@ -155,9 +155,9 @@ describe("defineCollection broker drain", () => {
         webhooks("org-1")
         yield* waitUntilEffect(Ref.get(entered))
         yield* runtime.registry.disposeScope("org-1").pipe(
-          Effect.timeoutOrElse({
+          Effect.timeoutFailCause({
             duration: Duration.seconds(1),
-            orElse: () => Effect.die("drain was not interrupted"),
+            onTimeout: () => Cause.die("drain was not interrupted"),
           }),
         )
       }),

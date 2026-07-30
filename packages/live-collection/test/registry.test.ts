@@ -81,7 +81,7 @@ describe("CollectionRegistry", () => {
     Effect.gen(function* () {
       const log: Array<string> = []
       const scope = yield* Scope.make()
-      const context = yield* Layer.build(CollectionRegistry.layer).pipe(Scope.provide(scope))
+      const context = yield* Layer.build(CollectionRegistry.layer).pipe(Scope.extend(scope))
       const registry = Context.get(context, CollectionRegistry)
       yield* registry.getOrCreate({ key: globalKey("user"), make: tracked("user", log).make })
       yield* registry.getOrCreate({ key: scopedKey({ entity: "webhook", scope: "org-1" }), make: tracked("wh1", log).make })

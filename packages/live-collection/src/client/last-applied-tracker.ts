@@ -49,7 +49,7 @@ const pendingId = (key: CollectionKey<unknown>, schemaVersion: SchemaVersion): s
 
 export const makeLastAppliedTracker = (deps: {
   readonly journal: SyncJournalShape
-  readonly flushEvery: Duration.Input
+  readonly flushEvery: Duration.DurationInput
 }): Effect.Effect<LastAppliedTracker, never, Scope.Scope> =>
   Effect.gen(function* () {
     const pending = yield* Ref.make(new Map<string, PendingLastApplied>())
@@ -87,7 +87,7 @@ export const makeLastAppliedTracker = (deps: {
         Effect.gen(function* () {
           const durable = yield* deps.journal.getCollectionLastAppliedSyncId({ key, schemaVersion })
           const inFlight = yield* Ref.get(pending).pipe(
-            Effect.map((marks) => Option.fromNullishOr(marks.get(pendingId(key, schemaVersion))?.at)),
+            Effect.map((marks) => Option.fromNullable(marks.get(pendingId(key, schemaVersion))?.at)),
           )
           return Option.match(inFlight, {
             onNone: () => durable,

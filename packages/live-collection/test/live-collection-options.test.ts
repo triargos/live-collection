@@ -1,4 +1,4 @@
-import { Duration, Effect, Schema } from "effect"
+import { Cause, Duration, Effect, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { createCollection } from "@tanstack/db"
 import { persistedCollectionOptions, type PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core"
@@ -17,7 +17,7 @@ const k = (s: string) => ModelId.make(s)
 
 interface Opts<T extends object> {
   readonly id: string
-  readonly schema: Schema.Codec<T, any>
+  readonly schema: Schema.Schema<T, any>
   readonly getKey: (r: T) => ModelId
 }
 const rowOpts: Opts<Row> = { id: "gate-row", schema: Row, getKey: (r) => k(r.id) }
@@ -65,9 +65,9 @@ const reloadUntil = <T extends object, A>(
       ),
     )
   return attempt().pipe(
-    Effect.timeoutOrElse({
+    Effect.timeoutFailCause({
       duration: Duration.seconds(2),
-      orElse: () => Effect.die("persisted state did not settle within 2s"),
+      onTimeout: () => Cause.die("persisted state did not settle within 2s"),
     }),
   )
 }

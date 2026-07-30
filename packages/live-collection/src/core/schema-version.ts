@@ -1,4 +1,4 @@
-import { Schema, SchemaRepresentation } from "effect";
+import { Schema } from "effect";
 
 /**
  * The derived persisted-schema version — a branded FNV-1a hash of the schema's
@@ -15,7 +15,7 @@ export type SchemaVersion = typeof SchemaVersion.Type
  * to bump or forget. `defineCollection` calls this for you; use it directly only when
  * assembling a persisted collection by hand.
  *
- * The hash input is the JSON representation derived from `schema.ast` — the schema's
+ * The hash input is the JSON representation of `schema.ast` — the schema's
  * full structural shape, including fields, checks, and brands. It
  * folds in **types and brands**, not just field names, so changing `name: string` to
  * `name: number` still changes the version. That matters because the library trusts the
@@ -34,8 +34,8 @@ export type SchemaVersion = typeof SchemaVersion.Type
  *
  * FNV-1a 32-bit → `uint32`, the same family TanStack itself uses for table names.
  */
-export const deriveSchemaVersion = (schema: Schema.Top): SchemaVersion => {
-  const signature = JSON.stringify(SchemaRepresentation.fromAST(schema.ast))
+export const deriveSchemaVersion = (schema: Schema.Schema.Any): SchemaVersion => {
+  const signature = JSON.stringify(schema.ast.toJSON())
   let hash = 2166136261
   for (let i = 0; i < signature.length; i++) {
     hash ^= signature.charCodeAt(i)

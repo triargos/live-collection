@@ -29,10 +29,10 @@ export const drainCollection = <T extends object>(args: {
     const { meta, collection, scope, schemaVersion } = args
     const modelName = ModelName.make(meta.entity)
     const broker = yield* SyncBroker
-    // Mirror of the server registry's encode edge: decode through the canonical
-    // JSON codec so entity fields whose plain encoded form isn't JSON-native
-    // (Date, Uint8Array, ...) round-trip instead of failing on their stringified form.
-    const decodeEntity = Schema.decodeUnknownEffect(Schema.toCodecJson(meta.schema))
+    // Mirror of the server registry's encode edge: the model schema decodes the wire
+    // `data` directly, so the app must declare a schema whose encoded side is
+    // JSON-native (v3 `Schema.Date` already is — it encodes to an ISO string).
+    const decodeEntity = Schema.decodeUnknown(meta.schema)
 
     const outOfScope = (row: T): boolean =>
       Option.match(meta.scopeOf, {
@@ -54,7 +54,7 @@ export const drainCollection = <T extends object>(args: {
         Upsert: ({ syncId, data }) =>
           decodeEntity(data).pipe(
             Effect.flatMap((row) => (outOfScope(row) ? Effect.void : collection.utils.writeSynced(row))),
-            Effect.catchTag("SchemaError", (error) =>
+            Effect.catchTag("ParseError", (error) =>
               Effect.logWarning(
                 `[defineCollection] skipping undecodable ${meta.entity} event #${syncId}: ${error.message}`,
               ),

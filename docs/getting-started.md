@@ -51,7 +51,7 @@ import {
   openBrowserWASQLiteOPFSDatabase,
 } from "@tanstack/browser-db-sqlite-persistence"
 import { Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "@effect/platform"
 
 const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "myapp" })
 const persistence = createBrowserWASQLitePersistence({ database })

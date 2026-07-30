@@ -1,5 +1,5 @@
 import { Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref, Scope } from "effect"
-import { TestClock } from "effect/testing"
+import { TestClock } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
@@ -28,7 +28,7 @@ const modelId = (value: string) => ModelId.make(value)
 const Webhook = ModelName.make("Webhook")
 const Setting = ModelName.make("Setting")
 const group = deriveGroup(["organization", "org-1"])
-const epoch = DateTime.makeUnsafe(0).pipe(DateTime.toDateUtc)
+const epoch = DateTime.unsafeMake(0).pipe(DateTime.toDateUtc)
 
 const insert = (syncId: string, modelName = Webhook, id = `w-${syncId}`): HydratedSyncEventEnvelope => ({
   _tag: "Insert",
@@ -132,7 +132,7 @@ const tags = (signals: ReadonlyArray<SyncSignal>) => signals.map((signal) => sig
 
 const waitUntil = (effect: Effect.Effect<boolean>): Effect.Effect<void> =>
   effect.pipe(
-    Effect.flatMap((done) => (done ? Effect.void : Effect.yieldNow.pipe(Effect.andThen(waitUntil(effect))))),
+    Effect.flatMap((done) => (done ? Effect.void : Effect.yieldNow().pipe(Effect.andThen(waitUntil(effect))))),
   )
 
 describe("SyncBroker", () => {
@@ -320,14 +320,14 @@ describe("SyncBroker", () => {
       const scope = yield* Scope.make()
       const context = yield* Layer.build(
         SyncBroker.layer({ pendingLastAppliedFlushInterval: "1 hour" }).pipe(Layer.provide(sync)),
-      ).pipe(Scope.provide(scope))
+      ).pipe(Scope.extend(scope))
       const broker = Context.get(context, SyncBroker)
       const key = scopedKey({ entity: "Webhook", scope: "org-1" })
       // The only way to a pending mark is through the broker's own ack: attach and
       // let the subscriber apply the cold Snapshot at the seeded position.
       yield* journal.setLastIngestedSyncId(sid("7"))
       const seen = yield* Queue.unbounded<SyncSignal>()
-      const attached = yield* Effect.forkChild(
+      const attached = yield* Effect.fork(
         broker.attachSubscriber({
           modelName: Webhook,
           scope: Option.some("org-1"),

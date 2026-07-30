@@ -34,7 +34,7 @@ export const makeSubscribe =
     readonly scope: Option.Option<string>
     readonly schemaVersion: SchemaVersion
   }): Stream.Stream<SyncSignal> =>
-    Stream.unwrap(
+    Stream.unwrapScoped(
       Effect.gen(function* () {
         const { modelName, scope, schemaVersion } = args
         const queue = yield* PubSub.subscribe(deps.published)
@@ -55,9 +55,10 @@ export const makeSubscribe =
           }),
           ...rows.map(signalFromRow),
         ]
-        const tail = Stream.fromSubscription(queue).pipe(
+        const tail = Stream.fromQueue(queue).pipe(
           Stream.filter(concernsModel(modelName)),
-          Stream.mapAccum(() => tailGuard, dropStale),
+          Stream.mapAccum(tailGuard, dropStale),
+          Stream.flattenIterables,
         )
         return Stream.concat(Stream.fromIterable(replay), tail)
       }),

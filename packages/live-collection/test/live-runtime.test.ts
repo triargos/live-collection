@@ -20,7 +20,7 @@ describe("makeLiveRuntime", () => {
       const first = runtime.forkSync()
       const second = runtime.forkSync()
       const exit = yield* Fiber.await(first)
-      assert.isTrue(Exit.hasInterrupts(exit))
+      assert.isTrue(Exit.isInterrupted(exit))
       yield* Fiber.interrupt(second)
       runtime.dispose()
     }))

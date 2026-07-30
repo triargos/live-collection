@@ -1,6 +1,6 @@
 import { Cause, Effect, Layer, Option, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientResponse } from "@effect/platform"
 import { CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
 import { CatchupClient, CatchupFailed } from "../src/client/catchup-client.js"
 
@@ -29,7 +29,7 @@ describe("CatchupClient", () => {
   it.effect("layer GETs /catchup?from=<cursor> and decodes the body at the boundary", () =>
     Effect.gen(function* () {
       const urls: Array<string> = []
-      const body = yield* Schema.encodeEffect(Schema.fromJsonString(CatchupResponse))({
+      const body = yield* Schema.encode(Schema.parseJson(CatchupResponse))({
         events: [],
         lastSyncId: sid("99"),
         epoch: Option.none(),
@@ -51,7 +51,7 @@ describe("CatchupClient", () => {
         CatchupClient.layer({ url: "https://api.test/catchup" }).pipe(Layer.provide(http)),
       ).pipe(Effect.exit)
       assert.isTrue(exit._tag === "Failure")
-      const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none()
+      const error = exit._tag === "Failure" ? Cause.failureOption(exit.cause) : Option.none()
       if (Option.isSome(error)) {
         assert.instanceOf(error.value, CatchupFailed)
         assert.strictEqual(error.value.from, sid("3"))

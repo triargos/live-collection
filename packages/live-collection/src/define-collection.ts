@@ -27,7 +27,7 @@ import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./core/c
  */
 export interface ModelMeta<T extends object> {
   readonly entity: string
-  readonly schema: Schema.Codec<T, any>
+  readonly schema: Schema.Schema<T, any>
   readonly getKey: (entity: T) => ModelId
   readonly scopeOf: Option.Option<(entity: T) => string>
   readonly listFn: (scope: Option.Option<string>) => Effect.Effect<ReadonlyArray<T>>
@@ -98,7 +98,7 @@ interface MutationHandlers<T extends object, InsertE, UpdateE, DeleteE, R> {
  * transaction drops — instead the whole transaction fails loudly, before any server
  * call. Split the writes into one mutation per transaction.
  */
-export class BatchedMutationsUnsupported extends Schema.TaggedErrorClass<BatchedMutationsUnsupported>()(
+export class BatchedMutationsUnsupported extends Schema.TaggedError<BatchedMutationsUnsupported>()(
   "BatchedMutationsUnsupported",
   { entity: Schema.String, mutationCount: Schema.Finite },
 ) {}
@@ -136,7 +136,7 @@ const managedExecutor = <R>(
   runtime: ManagedRuntime.ManagedRuntime<R, never>,
 ): CollectionEffectExecutor<R> => ({
   provide: (effect) =>
-    runtime.contextEffect.pipe(Effect.flatMap((context) => effect.pipe(Effect.provide(context)))),
+    runtime.runtimeEffect.pipe(Effect.flatMap(({ context }) => effect.pipe(Effect.provide(context)))),
   runPromise: (effect) => runtime.runPromise(effect),
 })
 
@@ -154,7 +154,7 @@ interface ConfigBase<T extends object> {
    * schema change also changes the derived persisted-schema version, which dumps and
    * rebuilds the local table on next start.
    */
-  readonly schema: Schema.Codec<T, any>
+  readonly schema: Schema.Schema<T, any>
   /** Extracts the entity's primary key. */
   readonly getKey: (entity: T) => ModelId
 }
@@ -272,7 +272,7 @@ export function defineCollection<
     entity,
     schema,
     getKey,
-    scopeOf: Option.fromNullishOr(scopeOf),
+    scopeOf: Option.fromNullable(scopeOf),
     listFn:
       scopeOf === undefined
         ? () => provideServices((config as GlobalBase<T, R>).listFn)

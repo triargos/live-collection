@@ -37,7 +37,7 @@ export interface SyncBrokerShape {
 
 export interface SyncBrokerOptions {
   readonly retention?: RetentionOptions
-  readonly pendingLastAppliedFlushInterval?: Duration.Input
+  readonly pendingLastAppliedFlushInterval?: Duration.DurationInput
 }
 
 const defaultOptions = {
@@ -104,10 +104,10 @@ const make = (options: SyncBrokerOptions = {}): Effect.Effect<
     return { attachSubscriber, start }
   })
 
-export class SyncBroker extends Context.Service<SyncBroker, SyncBrokerShape>()("SyncBroker") {
+export class SyncBroker extends Context.Tag("SyncBroker")<SyncBroker, SyncBrokerShape>() {
   static readonly layer = (options?: SyncBrokerOptions): Layer.Layer<
     SyncBroker,
     never,
     SyncTransport | CatchupClient | SyncJournal
-  > => Layer.effect(SyncBroker, make(options))
+  > => Layer.scoped(SyncBroker, make(options))
 }

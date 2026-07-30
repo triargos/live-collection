@@ -34,7 +34,7 @@ export const makeSyncWrite = <T>(): Effect.Effect<{
       replaceSynced: (rows) => Deferred.await(session).pipe(Effect.map((s) => s.replace(rows))),
     }
     const provide = (s: SyncSession<T>): void => {
-      Deferred.doneUnsafe(session, Exit.succeed(s))
+      Deferred.unsafeDone(session, Exit.succeed(s))
     }
     return { syncWrite, provide }
   })

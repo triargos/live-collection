@@ -20,7 +20,7 @@ import { prunePlan } from "./prune-plan.js"
 export const JournalEvent = Schema.Struct({
   syncId: SyncId,
   modelName: ModelName,
-  tag: Schema.Literals(["Insert", "Update", "Delete"]),
+  tag: Schema.Literal("Insert", "Update", "Delete"),
   modelId: ModelId,
   data: Schema.OptionFromNullOr(Schema.Unknown),
 })
@@ -210,14 +210,14 @@ const DEFAULT_DATABASE_NAME = "live-collection-eventlog"
  */
 const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
   const decodeRows = (raw: ReadonlyArray<unknown>): Effect.Effect<ReadonlyArray<JournalEvent>> =>
-    Schema.decodeUnknownEffect(StoredEvents)(raw).pipe(Effect.orDie)
+    Schema.decodeUnknown(StoredEvents)(raw).pipe(Effect.orDie)
 
   const recordSyncId = (key: string): Effect.Effect<Option.Option<SyncId>> =>
     store.record(key).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeedNone,
-          onSome: (value) => Schema.decodeUnknownEffect(SyncId)(value).pipe(Effect.asSome),
+          onSome: (value) => Schema.decodeUnknown(SyncId)(value).pipe(Effect.asSome),
         }),
       ),
       Effect.orDie,
@@ -230,7 +230,7 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
     )
 
   const readLastAppliedRecords: Effect.Effect<ReadonlyArray<LastAppliedRecord>> = store.lastAppliedRecords.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(LastAppliedRecord))),
+    Effect.flatMap(Schema.decodeUnknown(Schema.Array(LastAppliedRecord))),
     Effect.orDie,
   )
 
@@ -239,7 +239,7 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeedNone,
-          onSome: (value) => Schema.decodeUnknownEffect(LastAppliedRecord)(value).pipe(Effect.asSome),
+          onSome: (value) => Schema.decodeUnknown(LastAppliedRecord)(value).pipe(Effect.asSome),
         }),
       ),
       Effect.orDie,
@@ -247,7 +247,7 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
 
   return {
     append: (incoming) =>
-      Schema.encodeEffect(StoredEvents)(incoming).pipe(
+      Schema.encode(StoredEvents)(incoming).pipe(
         Effect.orDie,
         Effect.flatMap((stored) =>
           store.commit(
@@ -329,7 +329,7 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeedNone,
-          onSome: (value) => Schema.decodeUnknownEffect(Epoch)(value).pipe(Effect.asSome),
+          onSome: (value) => Schema.decodeUnknown(Epoch)(value).pipe(Effect.asSome),
         }),
       ),
       Effect.orDie,
@@ -359,7 +359,7 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
  * SyncJournal.layerMemory                               // tests/SSR, non-durable
  * ```
  */
-export class SyncJournal extends Context.Service<SyncJournal, SyncJournalShape>()("SyncJournal") {
+export class SyncJournal extends Context.Tag("SyncJournal")<SyncJournal, SyncJournalShape>() {
   /** In-memory (`Ref`-backed), non-durable — for tests and SSR. Same policy layer as production. */
   static readonly layerMemory: Layer.Layer<SyncJournal> = Layer.effect(
     SyncJournal,
@@ -367,7 +367,7 @@ export class SyncJournal extends Context.Service<SyncJournal, SyncJournalShape>(
   )
   /** Browser default: durable IndexedDB. Opens (and closes on scope-out) `databaseName` ?? `"live-collection-eventlog"`. */
   static readonly layer = (options?: { readonly databaseName?: string }): Layer.Layer<SyncJournal> =>
-    Layer.effect(
+    Layer.scoped(
       SyncJournal,
       Effect.map(makeIdbStore(options?.databaseName ?? DEFAULT_DATABASE_NAME), makeSyncJournal),
     )

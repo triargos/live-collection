@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import type { PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core"
 import { ModelId } from "@triargos/live-collection-protocol"
@@ -25,7 +25,7 @@ interface FakeApiShape {
   readonly deleteWebhook: (id: ModelId) => Effect.Effect<void>
   readonly list: Effect.Effect<ReadonlyArray<Webhook>>
 }
-class FakeApi extends Context.Service<FakeApi, FakeApiShape>()("FakeApi") {}
+class FakeApi extends Context.Tag("FakeApi")<FakeApi, FakeApiShape>() {}
 
 const fakeApiLayer = (log: Array<string>, rows: ReadonlyArray<Webhook> = []): Layer.Layer<FakeApi> =>
   Layer.succeed(FakeApi, {
@@ -36,7 +36,7 @@ const fakeApiLayer = (log: Array<string>, rows: ReadonlyArray<Webhook> = []): La
 
 const waitUntil = (cond: () => boolean): Effect.Effect<void> =>
   Effect.suspend(() => (cond() ? Effect.void : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(waitUntil(cond))))).pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: () => Effect.die("condition not met") }),
+    Effect.timeoutFailCause({ duration: Duration.seconds(2), onTimeout: () => Cause.die("condition not met") }),
   )
 
 /** Shared, reload-surviving persistence + a `services` runtime over {@link fakeApiLayer}. */
@@ -85,7 +85,7 @@ const makeWebhooks = (runtime: LiveRuntime, services: Services): ScopedHandle<We
 const onReload = <A>(persistence: PersistedCollectionPersistence, services: Services, use: (webhooks: ScopedHandle<Webhook>) => Effect.Effect<A>): Effect.Effect<A> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
-    const registry = yield* Scope.provide(makeRegistry, scope)
+    const registry = yield* Scope.extend(makeRegistry, scope)
     const runtime = inertRuntime(registry, persistence)
     const result = yield* use(makeWebhooks(runtime, services))
     yield* Scope.close(scope, Exit.void)
@@ -109,9 +109,9 @@ const reloadUntilHas = (persistence: PersistedCollectionPersistence, services: S
       }),
     ).pipe(Effect.flatMap((has) => (has === want ? Effect.succeed(has) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())))))
   return attempt().pipe(
-    Effect.timeoutOrElse({
+    Effect.timeoutFailCause({
       duration: Duration.seconds(2),
-      orElse: () => Effect.die(`reload has(${key}) never settled to ${want}`),
+      onTimeout: () => Cause.die(`reload has(${key}) never settled to ${want}`),
     }),
   )
 }
@@ -142,7 +142,7 @@ describe("write path — optimistic mutations", () => {
     Effect.gen(function* () {
       const { persistence, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
-      const registry = yield* Scope.provide(makeRegistry, scope)
+      const registry = yield* Scope.extend(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,
@@ -200,7 +200,7 @@ describe("write path — optimistic mutations", () => {
     Effect.gen(function* () {
       const { persistence, log, services, teardown } = yield* setup()
       const scope = yield* Scope.make()
-      const registry = yield* Scope.provide(makeRegistry, scope)
+      const registry = yield* Scope.extend(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = makeWebhooks(runtime, services)
 
@@ -243,7 +243,7 @@ describe("write path — optimistic mutations", () => {
         ),
       )
       const scope = yield* Scope.make()
-      const registry = yield* Scope.provide(makeRegistry, scope)
+      const registry = yield* Scope.extend(makeRegistry, scope)
       const runtime = inertRuntime(registry, persistence)
       const webhooks = defineCollection({
         runtime,

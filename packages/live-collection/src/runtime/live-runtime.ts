@@ -26,15 +26,15 @@ export const makeLiveRuntime = (config: {
   readonly broker?: SyncBrokerOptions
 }): LiveRuntime => {
   const scope = Effect.runSync(Scope.make())
-  const registry = Effect.runSync(Scope.provide(makeRegistry, scope))
+  const registry = Effect.runSync(Scope.extend(makeRegistry, scope))
   const runtime = ManagedRuntime.make(SyncBroker.layer(config.broker).pipe(Layer.provide(config.sync)))
-  let syncFiber: Fiber.Fiber<void> | undefined
+  let syncFiber: Fiber.RuntimeFiber<void> | undefined
 
   return {
     registry,
     persistence: config.persistence,
     forkSync: () => {
-      if (syncFiber !== undefined && syncFiber.pollUnsafe() === undefined) {
+      if (syncFiber !== undefined && syncFiber.unsafePoll() === null) {
         Effect.runFork(
           Effect.logWarning("[liveRuntime] forkSync while sync is already running — interrupting the previous fiber").pipe(
             Effect.andThen(Fiber.interrupt(syncFiber)),

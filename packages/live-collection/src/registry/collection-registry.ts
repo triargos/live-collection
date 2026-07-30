@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Context, Effect, ExecutionStrategy, Exit, Layer, Option, Scope } from "effect"
 import { type CollectionKey, serializeKey } from "../core/collection-key.js"
 
 /**
@@ -24,7 +24,7 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
     string,
     {
       readonly collection: unknown
-      readonly childScope: Scope.Closeable
+      readonly childScope: Scope.CloseableScope
       readonly key: CollectionKey<unknown>
     }
   >()
@@ -40,15 +40,15 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
       const id = serializeKey(key)
       const existing = entries.get(id)
       if (existing !== undefined) return existing.collection as A
-      const childScope = yield* Scope.fork(registryScope, "sequential")
-      const collection = yield* Scope.provide(make, childScope)
+      const childScope = yield* Scope.fork(registryScope, ExecutionStrategy.sequential)
+      const collection = yield* Scope.extend(make, childScope)
       entries.set(id, { collection, childScope, key })
       return collection
     })
 
   const evict = (args: {
     readonly id: string
-    readonly entry: { readonly childScope: Scope.Closeable }
+    readonly entry: { readonly childScope: Scope.CloseableScope }
   }): Effect.Effect<void> =>
     Effect.suspend(() => {
       entries.delete(args.id)
@@ -84,9 +84,9 @@ export const makeRegistry: Effect.Effect<CollectionRegistryShape, never, Scope.S
   return CollectionRegistry.of({ getOrCreate, dispose, disposeScope, disposeAllScoped, disposeAll })
 })
 
-export class CollectionRegistry extends Context.Service<
+export class CollectionRegistry extends Context.Tag("CollectionRegistry")<
   CollectionRegistry,
   CollectionRegistryShape
->()("CollectionRegistry") {
-  static readonly layer = Layer.effect(CollectionRegistry, makeRegistry)
+>() {
+  static readonly layer = Layer.scoped(CollectionRegistry, makeRegistry)
 }
