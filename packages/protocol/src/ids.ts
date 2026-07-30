@@ -8,7 +8,7 @@ import { Option, Order, Schema } from "effect"
  * them lexicographically or via `Number(...)`.
  */
 export const SyncId = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^(0|[1-9][0-9]*)$/)), // "0", or a non-zero digit followed by any digits
+  Schema.pattern(/^(0|[1-9][0-9]*)$/), // "0", or a non-zero digit followed by any digits
   Schema.brand("SyncId")
 )
 export type SyncId = typeof SyncId.Type
@@ -29,7 +29,7 @@ export type SyncId = typeof SyncId.Type
  * const next = Order.max(compareSyncId)(current, incoming)
  * ```
  */
-export const compareSyncId: Order.Order<SyncId> = Order.mapInput(Order.BigInt, BigInt)
+export const compareSyncId: Order.Order<SyncId> = Order.mapInput(Order.bigint, BigInt)
 
 /** The cold-start cursor — "before every event": catchup from it returns the whole visible log. */
 export const zeroSyncId: SyncId = SyncId.make("0")

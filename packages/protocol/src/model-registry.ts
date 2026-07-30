@@ -35,7 +35,7 @@ export interface ModelDescriptor<Name extends string, T, R> {
   readonly modelName: Name
   // `any` is the schema's Encoded slot — it accepts a schema with any wire shape that
   // decodes to `T`.
-  readonly schema: Schema.Codec<T, any, R, R>
+  readonly schema: Schema.Schema<T, any, R>
   readonly hydrate: (
     id: ModelId,
     syncGroups: ReadonlyArray<SyncGroup>

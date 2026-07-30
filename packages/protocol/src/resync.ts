@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { ModelName } from "./ids.js"
 import { SyncGroup } from "./sync-group.js"
+import { taggedUnion } from "./tagged-union.js"
 
 /**
  * Tells subscribers to discard part of their local state and re-fetch it — emitted by
@@ -19,9 +20,9 @@ import { SyncGroup } from "./sync-group.js"
  *   ResyncTarget.cases.Group.make({ group: deriveGroup(["organization", orgId]) })
  * ```
  */
-export const ResyncTarget = Schema.TaggedUnion({
-  All: {},
-  Group: { group: SyncGroup },
-  Model: { model: ModelName }
-})
+export const ResyncTarget = taggedUnion(
+  Schema.TaggedStruct("All", {}),
+  Schema.TaggedStruct("Group", { group: SyncGroup }),
+  Schema.TaggedStruct("Model", { model: ModelName })
+)
 export type ResyncTarget = typeof ResyncTarget.Type

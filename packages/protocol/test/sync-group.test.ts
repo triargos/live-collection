@@ -1,9 +1,9 @@
 import { Schema } from "effect"
-import * as fc from "effect/testing/FastCheck"
+import * as fc from "effect/FastCheck"
 import { assert, describe, it } from "@effect/vitest"
 import { deriveGroup, intersects, SyncGroup } from "../src/sync-group.js"
 
-const decode = Schema.decodeUnknownResult(SyncGroup)
+const decode = Schema.decodeUnknownEither(SyncGroup)
 const g = (s: string): SyncGroup => Schema.decodeUnknownSync(SyncGroup)(s)
 
 const groupArb: fc.Arbitrary<SyncGroup> = fc
@@ -13,12 +13,12 @@ const groupArb: fc.Arbitrary<SyncGroup> = fc
 describe("SyncGroup schema", () => {
   it("accepts any non-empty string — structure is an app convention, not grammar", () => {
     for (const raw of ["user:bob", "organization:abc:channel:xyz", "a", "playground", "a::b"]) {
-      assert.strictEqual(decode(raw)._tag, "Success", `expected ${raw} to decode`)
+      assert.strictEqual(decode(raw)._tag, "Right", `expected ${raw} to decode`)
     }
   })
 
   it("rejects the empty string", () => {
-    assert.strictEqual(decode("")._tag, "Failure")
+    assert.strictEqual(decode("")._tag, "Left")
   })
 })
 

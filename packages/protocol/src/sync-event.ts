@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { ModelId, ModelName, SyncId } from "./ids.js"
 import { SyncGroup } from "./sync-group.js"
 import { ResyncTarget } from "./resync.js"
+import { taggedUnion } from "./tagged-union.js"
 
 /**
  * Sync events come in three forms that share one tag vocabulary —
@@ -14,8 +15,8 @@ import { ResyncTarget } from "./resync.js"
  * Data presence is structural rather than optional: `Insert`/`Update` carry `data`,
  * `Delete` carries none, and `Resync` carries a `target`.
  *
- * Each form is a `Schema.TaggedUnion`; construct arms through `cases`
- * (`SyncEvent.cases.Insert.make(...)`) and branch with `match`/`guards`.
+ * Each form is a union of tagged structs; construct arms through `cases`
+ * (`SyncEvent.cases.Insert.make(...)`) and branch on `_tag`.
  */
 
 // Fields a producer provides for an entity event. `syncId` and `createdAt` are
@@ -39,12 +40,12 @@ const dbAssigned = { syncId: SyncId, createdAt: Schema.DateFromString } as const
  * (`Insert`/`Update`/`Delete`) or a `Resync`, without the database-assigned
  * `syncId`/`createdAt`. The persisted form is {@link SyncEvent}.
  */
-export const PendingSyncEvent = Schema.TaggedUnion({
-  Insert: entityFields,
-  Update: entityFields,
-  Delete: entityFields,
-  Resync: resyncFields
-})
+export const PendingSyncEvent = taggedUnion(
+  Schema.TaggedStruct("Insert", entityFields),
+  Schema.TaggedStruct("Update", entityFields),
+  Schema.TaggedStruct("Delete", entityFields),
+  Schema.TaggedStruct("Resync", resyncFields)
+)
 export type PendingSyncEvent = typeof PendingSyncEvent.Type
 
 /**
@@ -52,12 +53,15 @@ export type PendingSyncEvent = typeof PendingSyncEvent.Type
  * id, never entity data), ordered by `syncId`. This is what `squash` folds and what a
  * backend hydrates into a {@link HydratedSyncEvent} before delivering it.
  */
-export const SyncEvent = Schema.TaggedUnion({
-  Insert: { ...entityFields, ...dbAssigned },
-  Update: { ...entityFields, ...dbAssigned },
-  Delete: { ...entityFields, ...dbAssigned },
-  Resync: { ...resyncFields, ...dbAssigned }
-})
+const restDelete = Schema.TaggedStruct("Delete", { ...entityFields, ...dbAssigned })
+const restResync = Schema.TaggedStruct("Resync", { ...resyncFields, ...dbAssigned })
+
+export const SyncEvent = taggedUnion(
+  Schema.TaggedStruct("Insert", { ...entityFields, ...dbAssigned }),
+  Schema.TaggedStruct("Update", { ...entityFields, ...dbAssigned }),
+  restDelete,
+  restResync
+)
 export type SyncEvent = typeof SyncEvent.Type
 
 /**
@@ -69,18 +73,18 @@ export type SyncEvent = typeof SyncEvent.Type
  * @example
  * ```ts
  * const WebhookEvent = HydratedSyncEvent(Webhook)
- * const event = yield* Schema.decodeUnknownEffect(WebhookEvent)(payload)
+ * const event = yield* Schema.decodeUnknown(WebhookEvent)(payload)
  * // event._tag: "Insert" | "Update" | "Delete" | "Resync"
  * // event.data is a decoded Webhook on the Insert/Update arms
  * ```
  */
-export const HydratedSyncEvent = <T, I, R>(entity: Schema.Codec<T, I, R, R>) =>
-  Schema.TaggedUnion({
-    Insert: { ...entityFields, ...dbAssigned, data: entity },
-    Update: { ...entityFields, ...dbAssigned, data: entity },
-    Delete: { ...entityFields, ...dbAssigned },
-    Resync: { ...resyncFields, ...dbAssigned }
-  })
+export const HydratedSyncEvent = <T, I, R>(entity: Schema.Schema<T, I, R>) =>
+  taggedUnion(
+    Schema.TaggedStruct("Insert", { ...entityFields, ...dbAssigned, data: entity }),
+    Schema.TaggedStruct("Update", { ...entityFields, ...dbAssigned, data: entity }),
+    restDelete,
+    restResync
+  )
 
 /**
  * Decodes a sync event without yet knowing its entity type: it validates the common
