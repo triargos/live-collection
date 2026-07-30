@@ -39,13 +39,13 @@ const makeNoteRepo: Effect.Effect<NoteRepoShape> = Effect.gen(function* () {
     find: (id) =>
       Ref.update(lookups, (n) => n + 1).pipe(
         Effect.andThen(Ref.get(rows)),
-        Effect.map((map) => Option.fromNullishOr(map.get(id)))
+        Effect.map((map) => Option.fromNullable(map.get(id)))
       ),
     lookupCount: Ref.get(lookups)
   }
 })
 
-export class NoteRepo extends Context.Service<NoteRepo, NoteRepoShape>()("test/NoteRepo") {
+export class NoteRepo extends Context.Tag("test/NoteRepo")<NoteRepo, NoteRepoShape>() {
   static readonly layerMemory: Layer.Layer<NoteRepo> = Layer.effect(NoteRepo, makeNoteRepo)
 }
 

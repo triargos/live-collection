@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, type Option, Schema, type SchemaError } from "effect"
+import { Context, Effect, Layer, type Option, type ParseResult, Schema } from "effect"
 import type { ModelDescriptor, ModelId, SyncGroup } from "@triargos/live-collection-protocol"
 
 /**
@@ -45,7 +45,7 @@ export interface ResolvedModel {
     syncGroups: ReadonlyArray<SyncGroup>
   ) => Effect.Effect<ReadonlyMap<ModelId, unknown>>
   /** Encode a hydrated entity to its wire form via the descriptor's schema. */
-  readonly encode: (value: unknown) => Effect.Effect<unknown, SchemaError.SchemaError>
+  readonly encode: (value: unknown) => Effect.Effect<unknown, ParseResult.ParseError>
 }
 
 export interface ModelRegistryShape {
@@ -55,10 +55,13 @@ export interface ModelRegistryShape {
 const resolve = (registry: Record<string, ModelDescriptor<string, any, never>>): ModelRegistryShape => {
   const models = new Map<string, ResolvedModel>()
   for (const [name, descriptor] of Object.entries(registry)) {
-    // Canonical JSON codec: the entity's wire form is guaranteed Json, so types
-    // whose plain encoded form isn't JSON-native (Date, Uint8Array, ...) get an
-    // explicit serialization instead of whatever JSON.stringify improvises.
-    const encodeEntity = Schema.encodeEffect(Schema.toCodecJson(descriptor.schema))
+    // Encodes to the schema's own Encoded form, which v3 keeps JSON-native for the
+    // common cases (`Schema.Date` encodes to an ISO string here, unlike v4's
+    // Date-instance-only `Schema.Date` — which is why v4 needs an explicit Json codec
+    // and this does not). A descriptor schema whose Encoded form is *not* JSON-native
+    // (`DateFromSelf`, `Uint8Array`) still reaches the wire as whatever JSON.stringify
+    // improvises; declare a JSON-native encoded type instead of relying on that.
+    const encodeEntity = Schema.encode(descriptor.schema)
     models.set(name, {
       hydrate: descriptor.hydrate,
       encode: (value) => encodeEntity(value),
@@ -68,9 +71,10 @@ const resolve = (registry: Record<string, ModelDescriptor<string, any, never>>):
   return { models }
 }
 
-export class ModelRegistry extends Context.Service<ModelRegistry, ModelRegistryShape>()(
-  "live-collection-server/ModelRegistry"
-) {
+export class ModelRegistry extends Context.Tag("live-collection-server/ModelRegistry")<
+  ModelRegistry,
+  ModelRegistryShape
+>() {
   /**
    * Lift a registry build effect into the kernel's layer graph. The effect's
    * requirements (the repos it yields) become the layer's requirements.

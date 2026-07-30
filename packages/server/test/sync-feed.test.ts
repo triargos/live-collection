@@ -76,7 +76,7 @@ describe("SyncFeed.catchup", () => {
       assert.strictEqual(event._tag, "Insert")
       if (event._tag === "Insert") {
         assert.strictEqual(String(event.modelId), "n1")
-        const decoded = yield* Schema.decodeUnknownEffect(Note)(event.data)
+        const decoded = yield* Schema.decodeUnknown(Note)(event.data)
         assert.strictEqual(decoded.title, "Renamed")
         // The folded event carries the run's latest syncId, so the cursor advances past every absorbed event.
         assert(compareSyncId(event.syncId, SyncId.make("1")) > 0)
@@ -232,18 +232,18 @@ describe("SyncFeed.streamEvents", () => {
           Stream.filter((frame) => frame.startsWith("data: ")),
           Stream.take(2),
           Stream.runCollect,
-          Effect.forkChild
+          Effect.fork
         )
       // Let the forked stream attach its bus subscription (it runs synchronously
       // up to its first await once this fiber yields).
-      yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow)
+      yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow())
 
       yield* upsertNote(note("live-1", "Streamed"))
       yield* Effect.flatMap(SyncDispatcher, (d) => d.dispatch(noteEvent("Insert", "foreign", [bob])))
       yield* Effect.flatMap(SyncDispatcher, (d) => d.dispatch(noteEvent("Delete", "live-1")))
 
       const frames = yield* Fiber.join(collected)
-      const decodeFrame = Schema.decodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
+      const decodeFrame = Schema.decode(Schema.parseJson(HydratedSyncEventEnvelope))
       const events = yield* Effect.forEach(frames, (frame) => {
         assert(frame.endsWith("\n\n"))
         return decodeFrame(frame.slice("data: ".length, -2))
@@ -253,7 +253,7 @@ describe("SyncFeed.streamEvents", () => {
       assert.deepStrictEqual(events.map((e) => e._tag), ["Insert", "Delete"])
       const insert = events[0]!
       if (insert._tag === "Insert") {
-        const decoded = yield* Schema.decodeUnknownEffect(Note)(insert.data)
+        const decoded = yield* Schema.decodeUnknown(Note)(insert.data)
         assert.strictEqual(decoded.title, "Streamed")
       }
     }).pipe(Effect.scoped, Effect.provide(makeKernelLayer())))

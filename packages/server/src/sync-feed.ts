@@ -45,11 +45,11 @@ export interface SyncFeedShape {
    */
   readonly streamEvents: (args: {
     readonly syncGroups: ReadonlyArray<SyncGroup>
-    readonly keepAlive?: Duration.Input
+    readonly keepAlive?: Duration.DurationInput
   }) => Stream.Stream<string>
 }
 
-const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
+const encodeEnvelope = Schema.encode(Schema.parseJson(HydratedSyncEventEnvelope))
 
 const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | ModelRegistry> =
   Effect.gen(function* () {
@@ -84,7 +84,7 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
             )
             // A caller without any sync group holds no visible data to reset.
             const createdAt = yield* DateTime.nowAsDate
-            const events = Arr.isReadonlyArrayNonEmpty(args.syncGroups)
+            const events = Arr.isNonEmptyReadonlyArray(args.syncGroups)
               ? [
                   HydratedSyncEventEnvelope.cases.Resync.make({
                     target: ResyncTarget.cases.All.make({}),
@@ -108,7 +108,7 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
         Stream.mapEffect((envelope) =>
           encodeEnvelope(envelope).pipe(
             Effect.map((json) => [`data: ${json}\n\n`]),
-            Effect.catch((error) =>
+            Effect.catchAll((error) =>
               Effect.logWarning("Skipping SSE frame: envelope failed to encode", error).pipe(
                 Effect.as<ReadonlyArray<string>>([])
               )
@@ -124,9 +124,10 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
     return { catchup, streamEvents }
   })
 
-export class SyncFeed extends Context.Service<SyncFeed, SyncFeedShape>()(
-  "live-collection-server/SyncFeed"
-) {
+export class SyncFeed extends Context.Tag("live-collection-server/SyncFeed")<
+  SyncFeed,
+  SyncFeedShape
+>() {
   /**
    * A plain constant: the registry arrives as the `ModelRegistry` service,
    * built with `ModelRegistry.layer(registry)` — which is where the

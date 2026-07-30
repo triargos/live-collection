@@ -29,7 +29,7 @@ const make: Effect.Effect<SyncDispatcherShape, never, SyncEventStore | SyncEvent
         // arrive as defects — catch the full cause so a broken bus can never
         // fail (or kill) the write.
         yield* bus.publish(persisted).pipe(
-          Effect.catchCause((cause) => Effect.logWarning("Sync bus publish failed", cause))
+          Effect.catchAllCause((cause) => Effect.logWarning("Sync bus publish failed", cause))
         )
         return persisted
       })
@@ -37,9 +37,10 @@ const make: Effect.Effect<SyncDispatcherShape, never, SyncEventStore | SyncEvent
   }
 )
 
-export class SyncDispatcher extends Context.Service<SyncDispatcher, SyncDispatcherShape>()(
-  "live-collection-server/SyncDispatcher"
-) {
+export class SyncDispatcher extends Context.Tag("live-collection-server/SyncDispatcher")<
+  SyncDispatcher,
+  SyncDispatcherShape
+>() {
   static readonly layer: Layer.Layer<SyncDispatcher, never, SyncEventStore | SyncEventBus> =
     Layer.effect(SyncDispatcher, make)
 }

@@ -32,8 +32,9 @@ const makeMemory: Effect.Effect<SyncEventBusShape> = Effect.gen(function* () {
   }
 })
 
-export class SyncEventBus extends Context.Service<SyncEventBus, SyncEventBusShape>()(
-  "live-collection-server/SyncEventBus"
-) {
+export class SyncEventBus extends Context.Tag("live-collection-server/SyncEventBus")<
+  SyncEventBus,
+  SyncEventBusShape
+>() {
   static readonly layerMemory: Layer.Layer<SyncEventBus> = Layer.effect(SyncEventBus, makeMemory)
 }

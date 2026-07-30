@@ -13,7 +13,7 @@ import {
  * honored. `SyncFeed.catchup` catches this and answers with a synthetic
  * `Resync(All)` — it never surfaces to the route.
  */
-export class CursorOutOfRetentionError extends Schema.TaggedErrorClass<CursorOutOfRetentionError>()(
+export class CursorOutOfRetentionError extends Schema.TaggedError<CursorOutOfRetentionError>()(
   "CursorOutOfRetentionError",
   { cursor: SyncId }
 ) {}
@@ -100,8 +100,9 @@ const makeMemory: Effect.Effect<SyncEventStoreShape> = Effect.gen(function* () {
   }
 })
 
-export class SyncEventStore extends Context.Service<SyncEventStore, SyncEventStoreShape>()(
-  "live-collection-server/SyncEventStore"
-) {
+export class SyncEventStore extends Context.Tag("live-collection-server/SyncEventStore")<
+  SyncEventStore,
+  SyncEventStoreShape
+>() {
   static readonly layerMemory: Layer.Layer<SyncEventStore> = Layer.effect(SyncEventStore, makeMemory)
 }

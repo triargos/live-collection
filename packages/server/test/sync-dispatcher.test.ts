@@ -28,10 +28,10 @@ describe("SyncDispatcher", () => {
       const bus = yield* SyncEventBus
       const dispatcher = yield* SyncDispatcher
       const store = yield* SyncEventStore
-      const receive = yield* Stream.runHead(bus.events).pipe(Effect.forkChild)
+      const receive = yield* Stream.runHead(bus.events).pipe(Effect.fork)
       // Let the forked stream attach its bus subscription (it runs synchronously
       // up to its first await once this fiber yields).
-      yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow)
+      yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow())
 
       const persisted = yield* dispatcher.dispatch(pending)
       const delivered = yield* Fiber.join(receive)

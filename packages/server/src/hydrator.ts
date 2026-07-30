@@ -69,7 +69,7 @@ export const makeHydrator = (registry: ModelRegistryShape): Hydrator => {
         }
         const encoded = yield* model.encode(present.get(id)).pipe(
           Effect.map((data): Resolution => ({ _tag: "Data", data })),
-          Effect.catch((error) =>
+          Effect.catchAll((error) =>
             Effect.logWarning(`Skipping ${name}/${id}: hydrated entity failed to encode`, error).pipe(
               Effect.as<Resolution>({ _tag: "Skip" })
             )
