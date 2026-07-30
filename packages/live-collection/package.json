@@ -29,6 +29,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {
+    "@effect/platform": "catalog:",
     "@tanstack/db": "catalog:",
     "@tanstack/db-sqlite-persistence-core": "catalog:",
     "@triargos/live-collection-protocol": "workspace:^",
@@ -38,6 +39,7 @@
     "idb": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform": "catalog:",
     "@tanstack/db": "catalog:",
     "@tanstack/db-sqlite-persistence-core": "catalog:",
     "@triargos/live-collection-protocol": "workspace:*",

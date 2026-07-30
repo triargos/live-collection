@@ -11,10 +11,13 @@ packages:
 # Ranges are carets because these values become the peerDependency ranges consumers must
 # satisfy. The exact versions the workspace builds and tests against live in pnpm-lock.yaml.
 catalog:
-  effect: ^4.0.0-beta.100
-  "@effect/platform-node": ^4.0.0-beta.100
-  "@effect/vitest": ^4.0.0-beta.100
-  "@effect/language-service": ^0.87.0
+  effect: ^3.22.0
+  "@effect/platform": ^0.97.0
+  "@effect/platform-node": ^0.108.0
+  "@effect/vitest": ^0.30.0
+  # @effect/tsgo's patched tsc bundles the Effect language service; the plugin entry in
+  # tsconfig.base.json only supplies its severity config. Do not add
+  # @effect/language-service as a separate dependency — it is dead weight.
   "@effect/tsgo": 0.24.2
   "@tanstack/db": ^0.6.16
   "@tanstack/db-sqlite-persistence-core": ^0.2.8
@@ -27,4 +30,4 @@ catalog:
   "@types/react-dom": ^19.2.3
   "@types/node": ^26.0.0
   typescript: ^7.0.2
-  vitest: ^4.1.10
+  vitest: ^3.2.4

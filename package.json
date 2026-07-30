@@ -14,15 +14,15 @@
     "clean": "tsc -b --clean",
     "prune-modules": "find . -type d -name node_modules -prune -exec rm -rf '{}' +",
     "changeset": "changeset",
-    "release": "pnpm -r build && changeset publish",
-"prepare": "effect-tsgo patch"
+    "release": "pnpm -r build && changeset publish --tag effect3",
+    "prepare": "effect-tsgo patch"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@effect/language-service": "catalog:",
+    "@effect/tsgo": "catalog:",
     "@effect/vitest": "catalog:",
+    "effect": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@effect/tsgo": "catalog:"
+    "vitest": "catalog:"
   }
 }

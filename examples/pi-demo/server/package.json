@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@pi-demo/shared": "workspace:*",
     "@triargos/live-collection-protocol": "workspace:*",
