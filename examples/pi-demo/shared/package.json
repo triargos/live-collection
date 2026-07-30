@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@effect/platform": "catalog:",
     "@triargos/live-collection-protocol": "workspace:*",
     "effect": "catalog:"
   }

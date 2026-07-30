@@ -1,4 +1,4 @@
-import type { HttpClient } from "effect/unstable/http"
+import type { HttpClient } from "@effect/platform"
 import {
   CatchupClient,
   SyncJournal,

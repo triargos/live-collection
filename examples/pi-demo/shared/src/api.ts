@@ -1,4 +1,4 @@
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "@effect/platform"
 import { Context, Schema } from "effect"
 import { CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
 import { Project, ProjectId, SessionCode, Todo, TodoId } from "./domain.js"
@@ -23,69 +23,72 @@ import { Project, ProjectId, SessionCode, Todo, TodoId } from "./domain.js"
  */
 
 /** The session header is missing or not a valid code. */
-export class UnauthorizedError extends Schema.TaggedErrorClass<UnauthorizedError>()(
+export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()(
   "UnauthorizedError",
   { reason: Schema.String },
+  HttpApiSchema.annotations({ status: 401 }),
 ) {}
-const UnauthorizedErrorResponse = UnauthorizedError.pipe(HttpApiSchema.status(401))
 
 /** The authenticated session of the current request — provided by {@link SessionAuth}. */
-export class CurrentSession extends Context.Service<CurrentSession, SessionCode>()("CurrentSession") {}
+export class CurrentSession extends Context.Tag("CurrentSession")<CurrentSession, SessionCode>() {}
 
 /**
  * Decodes `x-session-code` into {@link CurrentSession}. The contract kit only declares
  * the seam; the server implements the layer.
  */
-export class SessionAuth extends HttpApiMiddleware.Service<
-  SessionAuth,
-  { provides: CurrentSession }
->()("SessionAuth", {
-  error: UnauthorizedErrorResponse,
+export class SessionAuth extends HttpApiMiddleware.Tag<SessionAuth>()("SessionAuth", {
+  provides: CurrentSession,
+  failure: UnauthorizedError,
 }) {}
 
-export class ProjectNotFound extends Schema.TaggedErrorClass<ProjectNotFound>()(
+export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()(
   "ProjectNotFound",
   { id: ProjectId },
+  HttpApiSchema.annotations({ status: 404 }),
 ) {}
-const ProjectNotFoundResponse = ProjectNotFound.pipe(HttpApiSchema.status(404))
 
-export class TodoNotFound extends Schema.TaggedErrorClass<TodoNotFound>()(
+export class TodoNotFound extends Schema.TaggedError<TodoNotFound>()(
   "TodoNotFound",
   { id: TodoId },
+  HttpApiSchema.annotations({ status: 404 }),
 ) {}
-const TodoNotFoundResponse = TodoNotFound.pipe(HttpApiSchema.status(404))
 
 export const projectsGroup = HttpApiGroup.make("projects")
-  .add(HttpApiEndpoint.get("list", "/projects", { success: Schema.Array(Project) }))
-  .add(HttpApiEndpoint.post("upsert", "/projects", {
-    payload: Project,
-    success: Project,
-    error: UnauthorizedErrorResponse,
-  }))
-  .add(HttpApiEndpoint.delete("remove", "/projects/:id", {
-    params: { id: ProjectId },
-    error: ProjectNotFoundResponse,
-  }))
+  .add(HttpApiEndpoint.get("list", "/projects").addSuccess(Schema.Array(Project)))
+  .add(
+    HttpApiEndpoint.post("upsert", "/projects")
+      .setPayload(Project)
+      .addSuccess(Project)
+      .addError(UnauthorizedError),
+  )
+  .add(
+    HttpApiEndpoint.del("remove", "/projects/:id")
+      .setPath(Schema.Struct({ id: ProjectId }))
+      .addError(ProjectNotFound),
+  )
   .middleware(SessionAuth)
 
 export const todosGroup = HttpApiGroup.make("todos")
-  .add(HttpApiEndpoint.get("list", "/todos", { success: Schema.Array(Todo) }))
-  .add(HttpApiEndpoint.post("upsert", "/todos", {
-    payload: Todo,
-    success: Todo,
-    error: UnauthorizedErrorResponse,
-  }))
-  .add(HttpApiEndpoint.delete("remove", "/todos/:id", {
-    params: { id: TodoId },
-    error: TodoNotFoundResponse,
-  }))
+  .add(HttpApiEndpoint.get("list", "/todos").addSuccess(Schema.Array(Todo)))
+  .add(
+    HttpApiEndpoint.post("upsert", "/todos")
+      .setPayload(Todo)
+      .addSuccess(Todo)
+      .addError(UnauthorizedError),
+  )
+  .add(
+    HttpApiEndpoint.del("remove", "/todos/:id")
+      .setPath(Schema.Struct({ id: TodoId }))
+      .addError(TodoNotFound),
+  )
   .middleware(SessionAuth)
 
 export const syncApiGroup = HttpApiGroup.make("sync")
-  .add(HttpApiEndpoint.get("catchup", "/catchup", {
-    query: { from: SyncId },
-    success: CatchupResponse,
-  }))
+  .add(
+    HttpApiEndpoint.get("catchup", "/catchup")
+      .setUrlParams(Schema.Struct({ from: SyncId }))
+      .addSuccess(CatchupResponse),
+  )
   .middleware(SessionAuth)
 
 export class DemoApi extends HttpApi.make("pi-demo")

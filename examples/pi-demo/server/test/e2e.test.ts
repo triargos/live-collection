@@ -1,5 +1,4 @@
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
+import { HttpApiClient, HttpClient, HttpClientRequest } from "@effect/platform"
 import { NodeHttpClient } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Duration, Effect, Fiber, Layer, ManagedRuntime } from "effect"
@@ -38,14 +37,14 @@ const makeApiFor = (baseUrl: string) =>
     baseUrl,
     transformClient: addSessionHeader,
   })
-type DemoClient = Effect.Success<ReturnType<typeof makeApiFor>>
+type DemoClient = Effect.Effect.Success<ReturnType<typeof makeApiFor>>
 
 const waitUntil = (condition: () => boolean): Effect.Effect<void> => {
   const attempt: Effect.Effect<void> = Effect.suspend(() =>
     condition() ? Effect.void : Effect.sleep(Duration.millis(20)).pipe(Effect.andThen(attempt)),
   )
   return attempt.pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(10), orElse: () => Effect.fail(new Error("condition not met within 10 seconds")) }),
+    Effect.timeoutFail({ duration: Duration.seconds(10), onTimeout: () => new Error("condition not met within 10 seconds") }),
     Effect.orDie,
   )
 }
@@ -56,7 +55,7 @@ const waitUntilEffect = <E>(condition: Effect.Effect<boolean, E>): Effect.Effect
     ready ? Effect.void : Effect.sleep(Duration.millis(20)).pipe(Effect.andThen(attempt)),
   )
   return attempt.pipe(
-    Effect.timeoutOrElse({ duration: Duration.seconds(10), orElse: () => Effect.fail(new Error("effectful condition not met within 10 seconds")) }),
+    Effect.timeoutFail({ duration: Duration.seconds(10), onTimeout: () => new Error("effectful condition not met within 10 seconds") }),
     Effect.orDie,
   )
 }
@@ -156,7 +155,7 @@ describe("pi-demo client ↔ server", () => {
           withApi((client) => client.todos.upsert({ payload: transaction.mutations[0]!.modified })),
         onDelete: ({ transaction }) =>
           withApi((client) =>
-            client.todos.remove({ params: { id: transaction.mutations[0]!.original.id } }),
+            client.todos.remove({ path: { id: transaction.mutations[0]!.original.id } }),
           ),
       })
       const projects = projectsHandle(session)
@@ -183,7 +182,7 @@ describe("pi-demo client ↔ server", () => {
       yield* waitUntil(() => todos.get(todoKey(liveTodo))?.title === "Live update")
       assert.strictEqual(todos.get(todoKey(liveTodo))?.title, "Live update")
 
-      yield* otherClient.todos.remove({ params: { id: liveTodo.id } })
+      yield* otherClient.todos.remove({ path: { id: liveTodo.id } })
       yield* waitUntil(() => !todos.has(todoKey(liveTodo)))
       assert.isFalse(todos.has(todoKey(liveTodo)))
 
@@ -199,7 +198,7 @@ describe("pi-demo client ↔ server", () => {
         todos.has(todoKey(cascadeTwo)),
       )
 
-      yield* otherClient.projects.remove({ params: { id: cascadeProject.id } })
+      yield* otherClient.projects.remove({ path: { id: cascadeProject.id } })
       yield* waitUntil(() =>
         !projects.has(projectKey(cascadeProject)) &&
         !todos.has(todoKey(cascadeOne)) &&
@@ -235,7 +234,7 @@ describe("pi-demo client ↔ server", () => {
       const squashed = todo({ id: "e2e-squashed", projectId: seedProject.id, title: "Never visible" })
       yield* otherClient.todos.upsert({ payload: offline })
       yield* otherClient.todos.upsert({ payload: squashed })
-      yield* otherClient.todos.remove({ params: { id: squashed.id } })
+      yield* otherClient.todos.remove({ path: { id: squashed.id } })
       assert.isFalse(todos.has(todoKey(offline)))
       assert.isFalse(todos.has(todoKey(squashed)))
 

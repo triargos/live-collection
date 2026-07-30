@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@effect/platform": "catalog:",
     "@journeyapps/wa-sqlite": "^1.7.2",
     "@pi-demo/shared": "workspace:*",
     "@tanstack/browser-db-sqlite-persistence": "catalog:",

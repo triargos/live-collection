@@ -1,4 +1,4 @@
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder } from "@effect/platform"
 import { Effect, Option } from "effect"
 import {
   CurrentSession,
@@ -67,18 +67,18 @@ export const ProjectsApiLive = HttpApiBuilder.group(DemoApi, "projects", (handle
         return saved.row
       }),
     )
-    .handle("remove", ({ params }) =>
+    .handle("remove", ({ path }) =>
       Effect.gen(function* () {
         const session = yield* CurrentSession
         const projects = yield* ProjectRepo
         const todos = yield* TodoRepo
         const dispatcher = yield* SyncDispatcher
-        const existing = yield* projects.find(params.id)
+        const existing = yield* projects.find(path.id)
         const owned = Option.filter(existing, (row) => row.sessionId === session)
-        if (Option.isNone(owned)) return yield* new ProjectNotFound({ id: params.id })
+        if (Option.isNone(owned)) return yield* new ProjectNotFound({ id: path.id })
 
-        const removedTodos = yield* todos.removeByProject({ projectId: params.id, session })
-        const removedProject = yield* projects.remove(params.id)
+        const removedTodos = yield* todos.removeByProject({ projectId: path.id, session })
+        const removedProject = yield* projects.remove(path.id)
         const group = sessionGroup(session)
         for (const todo of removedTodos) {
           yield* dispatcher.dispatch(PendingSyncEvent.cases.Delete.make({
@@ -131,15 +131,15 @@ export const TodosApiLive = HttpApiBuilder.group(DemoApi, "todos", (handlers) =>
         return saved.row
       }),
     )
-    .handle("remove", ({ params }) =>
+    .handle("remove", ({ path }) =>
       Effect.gen(function* () {
         const session = yield* CurrentSession
         const repo = yield* TodoRepo
         const dispatcher = yield* SyncDispatcher
-        const existing = yield* repo.find(params.id)
+        const existing = yield* repo.find(path.id)
         const owned = Option.filter(existing, (row) => row.sessionId === session)
-        if (Option.isNone(owned)) return yield* new TodoNotFound({ id: params.id })
-        const removed = yield* repo.remove(params.id)
+        if (Option.isNone(owned)) return yield* new TodoNotFound({ id: path.id })
+        const removed = yield* repo.remove(path.id)
         yield* dispatcher.dispatch(PendingSyncEvent.cases.Delete.make({
           modelName: TODO_MODEL,
           modelId: todoKey(removed),
@@ -150,12 +150,12 @@ export const TodosApiLive = HttpApiBuilder.group(DemoApi, "todos", (handlers) =>
 )
 
 export const SyncApiLive = HttpApiBuilder.group(DemoApi, "sync", (handlers) =>
-  handlers.handle("catchup", ({ query }) =>
+  handlers.handle("catchup", ({ urlParams }) =>
     Effect.gen(function* () {
       const session = yield* CurrentSession
       const feed = yield* SyncFeed
       return yield* feed.catchup({
-        fromSyncId: query.from,
+        fromSyncId: urlParams.from,
         syncGroups: [sessionGroup(session)],
       })
     }),

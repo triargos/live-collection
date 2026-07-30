@@ -1,9 +1,8 @@
 import { createServer } from "node:http"
 import path from "node:path"
-import { Config, Effect, FileSystem, Layer } from "effect"
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { NodeHttpServer, NodeServices } from "@effect/platform-node"
+import { Config, Effect, Layer } from "effect"
+import { FileSystem, HttpLayerRouter, HttpServerResponse } from "@effect/platform"
+import { NodeHttpServer } from "@effect/platform-node"
 import { DemoApi } from "@pi-demo/shared"
 import {
   SyncDispatcher,
@@ -34,12 +33,12 @@ export const BackendServices = Layer.merge(
 )
 
 const ApiHandlers = Layer.mergeAll(ProjectsApiLive, TodosApiLive, SyncApiLive)
-const ApiRoute = HttpApiBuilder.layer(DemoApi).pipe(
+const ApiRoute = HttpLayerRouter.addHttpApi(DemoApi).pipe(
   Layer.provide(ApiHandlers),
   Layer.provide(SessionAuthLive),
 )
 
-const StaticRoute = Layer.unwrap(
+const StaticRoute = Layer.unwrapEffect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const configured = yield* Config.string("STATIC_DIR").pipe(
@@ -52,7 +51,7 @@ const StaticRoute = Layer.unwrap(
     }
 
     const indexPath = path.join(staticDir, "index.html")
-    return HttpRouter.add("GET", "*", (request) =>
+    return HttpLayerRouter.add("GET", "*", (request) =>
       Effect.gen(function* () {
         const pathname = new URL(request.url, "http://localhost").pathname
         if (pathname === "/api" || pathname.startsWith("/api/")) {
@@ -73,10 +72,11 @@ const StaticRoute = Layer.unwrap(
 
 const Routes = Layer.mergeAll(ApiRoute, SseRoute, StaticRoute)
 
+// NodeHttpServer.layer also supplies HttpPlatform, Etag.Generator, and NodeContext
+// (FileSystem + Path) — the services the api and static routes need.
 const serve = (config: { readonly port: number }) =>
-  HttpRouter.serve(Routes).pipe(
+  HttpLayerRouter.serve(Routes).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port })),
-    Layer.provide(NodeServices.layer),
   )
 
 /**

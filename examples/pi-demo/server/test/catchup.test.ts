@@ -74,12 +74,12 @@ describe("GET /api/catchup", () => {
 
       const otherResponse = yield* request(base, "/catchup?from=0", undefined, otherSession)
       const otherBody = yield* Effect.tryPromise(() => otherResponse.json()).pipe(Effect.orDie)
-      const otherCatchup = yield* Schema.decodeUnknownEffect(CatchupResponse)(otherBody)
+      const otherCatchup = yield* Schema.decodeUnknown(CatchupResponse)(otherBody)
       assert.strictEqual(otherCatchup.events.length, 0)
 
       const response = yield* request(base, "/catchup?from=0")
       const unknownBody = yield* Effect.tryPromise(() => response.json()).pipe(Effect.orDie)
-      const caughtUp = yield* Schema.decodeUnknownEffect(CatchupResponse)(unknownBody)
+      const caughtUp = yield* Schema.decodeUnknown(CatchupResponse)(unknownBody)
       const cursor = yield* store.getLatestSyncId
 
       assert.strictEqual(caughtUp.lastSyncId, cursor)
@@ -88,7 +88,7 @@ describe("GET /api/catchup", () => {
       assert.strictEqual(event._tag, "Insert")
       if (event._tag === "Insert") {
         assert.strictEqual(event.modelName, "Project")
-        const decoded = yield* Schema.decodeUnknownEffect(ProjectSchema)(event.data)
+        const decoded = yield* Schema.decodeUnknown(ProjectSchema)(event.data)
         assert.strictEqual(decoded.name, "Confirmed")
       }
 

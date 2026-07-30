@@ -1,6 +1,6 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Chunk, Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import {
   type Project,
   ProjectId,
@@ -65,7 +65,8 @@ describe("GET /api/sync", () => {
       const receivedFiber = yield* transport.connect.pipe(
         Stream.take(7),
         Stream.runCollect,
-        Effect.forkChild,
+        Effect.map(Chunk.toReadonlyArray),
+        Effect.fork,
       )
       yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 100)))
 
@@ -88,7 +89,7 @@ describe("GET /api/sync", () => {
       const update = events[2]!
       assert.strictEqual(update._tag, "Update")
       if (update._tag === "Update") {
-        const decoded = yield* Schema.decodeUnknownEffect(Todo)(update.data)
+        const decoded = yield* Schema.decodeUnknown(Todo)(update.data)
         assert.strictEqual(decoded.title, "Updated")
       }
     }).pipe(Effect.scoped))

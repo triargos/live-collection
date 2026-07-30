@@ -120,6 +120,9 @@ importers:
 
   examples/pi-demo/shared:
     dependencies:
+      '@effect/platform':
+        specifier: 'catalog:'
+        version: 0.97.1(effect@3.22.1)
       '@triargos/live-collection-protocol':
         specifier: workspace:*
         version: link:../../../packages/protocol
@@ -129,6 +132,9 @@ importers:
 
   examples/pi-demo/web:
     dependencies:
+      '@effect/platform':
+        specifier: 'catalog:'
+        version: 0.97.1(effect@3.22.1)
       '@journeyapps/wa-sqlite':
         specifier: ^1.7.2
         version: 1.7.2

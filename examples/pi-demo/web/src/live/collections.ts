@@ -1,5 +1,4 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
+import { FetchHttpClient, HttpApiClient, HttpClient, HttpClientRequest } from "@effect/platform"
 import {
   defineCollection,
   type LiveRuntime,
@@ -10,7 +9,7 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { createRuntime } from "./runtime.js"
 
 const makeApi = HttpApiClient.make(DemoApi)
-type DemoClient = Effect.Success<typeof makeApi>
+type DemoClient = Effect.Effect.Success<typeof makeApi>
 
 const withApi = <A, E>(f: (client: DemoClient) => Effect.Effect<A, E>) =>
   makeApi.pipe(Effect.flatMap(f))
@@ -48,7 +47,7 @@ export const createApp = async (args: { readonly session: SessionCode }): Promis
       withApi((client) => client.todos.upsert({ payload: transaction.mutations[0]!.modified })),
     onDelete: ({ transaction }) =>
       withApi((client) =>
-        client.todos.remove({ params: { id: transaction.mutations[0]!.original.id } }),
+        client.todos.remove({ path: { id: transaction.mutations[0]!.original.id } }),
       ),
   })
 
@@ -66,7 +65,7 @@ export const createApp = async (args: { readonly session: SessionCode }): Promis
       withApi((client) => client.projects.upsert({ payload: transaction.mutations[0]!.modified })),
     onDelete: ({ transaction }) =>
       withApi((client) =>
-        client.projects.remove({ params: { id: transaction.mutations[0]!.original.id } }),
+        client.projects.remove({ path: { id: transaction.mutations[0]!.original.id } }),
       ),
   })
 
