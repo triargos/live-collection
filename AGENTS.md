@@ -173,9 +173,11 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 
 ## Effect v4 notes
 
-- Workspace Effect packages sit at `^4.0.0-beta.100` in the catalog. The caret may float to a newer beta
+- Workspace Effect packages sit at `^4.0.0-rc.108` in the catalog. The caret may float to a newer rc
   or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all packages
   together.
+- Schema-backed error classes are `Schema.TaggedError`; `Schema.TaggedErrorClass` is gone. The decode
+  failure type is `Schema.SchemaError`, not a top-level `SchemaError` module.
 - The workspace cannot mix Effect v3 and v4 in one type graph.
 - `@effect/platform` is not a dependency. HTTP client APIs come from `effect/unstable/http`, HttpApi APIs
   from `effect/unstable/httpapi`, and Node integrations from matching `@effect/platform-node` v4 versions.

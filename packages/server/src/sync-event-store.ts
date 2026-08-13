@@ -13,7 +13,7 @@ import {
  * honored. `SyncFeed.catchup` catches this and answers with a synthetic
  * `Resync(All)` — it never surfaces to the route.
  */
-export class CursorOutOfRetentionError extends Schema.TaggedErrorClass<CursorOutOfRetentionError>()(
+export class CursorOutOfRetentionError extends Schema.TaggedError<CursorOutOfRetentionError>()(
   "CursorOutOfRetentionError",
   { cursor: SyncId }
 ) {}

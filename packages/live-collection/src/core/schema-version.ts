@@ -35,7 +35,7 @@ export type SchemaVersion = typeof SchemaVersion.Type
  * FNV-1a 32-bit → `uint32`, the same family TanStack itself uses for table names.
  */
 export const deriveSchemaVersion = (schema: Schema.Top): SchemaVersion => {
-  const signature = JSON.stringify(SchemaRepresentation.fromAST(schema.ast))
+  const signature = JSON.stringify(SchemaRepresentation.toRepresentation(schema.ast))
   let hash = 2166136261
   for (let i = 0; i < signature.length; i++) {
     hash ^= signature.charCodeAt(i)

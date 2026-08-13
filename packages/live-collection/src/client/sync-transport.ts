@@ -7,7 +7,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
  * window. It is **expected**, not exceptional: the broker's retry catches it, re-runs
  * catchup to heal the disconnect gap, and reconnects. The `reason` carries why, for logs.
  */
-export class SyncConnectionLost extends Schema.TaggedErrorClass<SyncConnectionLost>()("SyncConnectionLost", {
+export class SyncConnectionLost extends Schema.TaggedError<SyncConnectionLost>()("SyncConnectionLost", {
   reason: Schema.String,
 }) {}
 

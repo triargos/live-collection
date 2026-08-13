@@ -98,7 +98,7 @@ interface MutationHandlers<T extends object, InsertE, UpdateE, DeleteE, R> {
  * transaction drops — instead the whole transaction fails loudly, before any server
  * call. Split the writes into one mutation per transaction.
  */
-export class BatchedMutationsUnsupported extends Schema.TaggedErrorClass<BatchedMutationsUnsupported>()(
+export class BatchedMutationsUnsupported extends Schema.TaggedError<BatchedMutationsUnsupported>()(
   "BatchedMutationsUnsupported",
   { entity: Schema.String, mutationCount: Schema.Finite },
 ) {}

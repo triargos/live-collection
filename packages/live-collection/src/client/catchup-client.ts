@@ -8,7 +8,7 @@ import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-col
  * broker logs it and tails the live stream anyway (a transient catchup miss is healed on the
  * next reconnect), so the read path degrades gracefully instead of crashing.
  */
-export class CatchupFailed extends Schema.TaggedErrorClass<CatchupFailed>()("CatchupFailed", {
+export class CatchupFailed extends Schema.TaggedError<CatchupFailed>()("CatchupFailed", {
   from: SyncId,
   reason: Schema.String,
 }) {}

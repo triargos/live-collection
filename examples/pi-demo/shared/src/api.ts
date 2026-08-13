@@ -23,7 +23,7 @@ import { Project, ProjectId, SessionCode, Todo, TodoId } from "./domain.js"
  */
 
 /** The session header is missing or not a valid code. */
-export class UnauthorizedError extends Schema.TaggedErrorClass<UnauthorizedError>()(
+export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()(
   "UnauthorizedError",
   { reason: Schema.String },
 ) {}
@@ -43,13 +43,13 @@ export class SessionAuth extends HttpApiMiddleware.Service<
   error: UnauthorizedErrorResponse,
 }) {}
 
-export class ProjectNotFound extends Schema.TaggedErrorClass<ProjectNotFound>()(
+export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()(
   "ProjectNotFound",
   { id: ProjectId },
 ) {}
 const ProjectNotFoundResponse = ProjectNotFound.pipe(HttpApiSchema.status(404))
 
-export class TodoNotFound extends Schema.TaggedErrorClass<TodoNotFound>()(
+export class TodoNotFound extends Schema.TaggedError<TodoNotFound>()(
   "TodoNotFound",
   { id: TodoId },
 ) {}

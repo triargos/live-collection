@@ -11,11 +11,11 @@ packages:
 # Ranges are carets because these values become the peerDependency ranges consumers must
 # satisfy. The exact versions the workspace builds and tests against live in pnpm-lock.yaml.
 catalog:
-  effect: ^4.0.0-beta.100
-  "@effect/platform-node": ^4.0.0-beta.100
-  "@effect/vitest": ^4.0.0-beta.100
-  "@effect/language-service": ^0.87.0
-  "@effect/tsgo": 0.24.2
+  effect: ^4.0.0-rc.108
+  "@effect/platform-node": ^4.0.0-rc.108
+  "@effect/vitest": ^4.0.0-rc.108
+  "@effect/language-service": ^0.87.2
+  "@effect/tsgo": 0.36.4
   "@tanstack/db": ^0.6.16
   "@tanstack/db-sqlite-persistence-core": ^0.2.8
   "@tanstack/react-db": ^0.1.94

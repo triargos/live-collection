@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, type Option, Schema, type SchemaError } from "effect"
+import { Context, Effect, Layer, type Option, Schema } from "effect"
 import type { ModelDescriptor, ModelId, SyncGroup } from "@triargos/live-collection-protocol"
 
 /**
@@ -45,7 +45,7 @@ export interface ResolvedModel {
     syncGroups: ReadonlyArray<SyncGroup>
   ) => Effect.Effect<ReadonlyMap<ModelId, unknown>>
   /** Encode a hydrated entity to its wire form via the descriptor's schema. */
-  readonly encode: (value: unknown) => Effect.Effect<unknown, SchemaError.SchemaError>
+  readonly encode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>
 }
 
 export interface ModelRegistryShape {
