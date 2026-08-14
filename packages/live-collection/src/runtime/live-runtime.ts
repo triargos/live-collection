@@ -17,6 +17,8 @@ export interface LiveRuntime {
   readonly forkSync: () => Fiber.Fiber<void>
   /** Internal collection-side drain executor. */
   readonly forkDrain: (drain: Effect.Effect<void, never, SyncBroker>) => Fiber.Fiber<void>
+  /** Internal: run a broker-facing effect to a Promise — the `loadBy*` ensure executor. */
+  readonly runEnsure: <A, E>(effect: Effect.Effect<A, E, SyncBroker>) => Promise<A>
   readonly dispose: () => void
 }
 
@@ -50,6 +52,7 @@ export const makeLiveRuntime = (config: {
       return syncFiber
     },
     forkDrain: (drain) => runtime.runFork(drain),
+    runEnsure: (effect) => runtime.runPromise(effect),
     dispose: () => {
       void runtime.dispose()
       Effect.runFork(Scope.close(scope, Exit.void))

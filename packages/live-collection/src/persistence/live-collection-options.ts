@@ -68,6 +68,12 @@ export const liveCollectionOptions = <T extends object>(config: {
             for (const row of rows) params.write({ type: "update", value: row })
             params.commit()
           },
+          patch: ({ deleteKeys, rows }) => {
+            params.begin()
+            for (const key of deleteKeys) params.write({ type: "delete", key })
+            for (const row of rows) params.write({ type: "update", value: row })
+            params.commit()
+          },
         }
         provide(session)
         params.markReady() // wrapper defers this until internal hydration completes

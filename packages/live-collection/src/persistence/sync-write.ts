@@ -26,6 +26,15 @@ export interface SyncWrite<T> {
    */
   readonly replaceSynced: (rows: ReadonlyArray<T>) => Effect.Effect<void>
   /**
+   * Delete `deleteKeys` and upsert `rows` in ONE synced transaction — the subset
+   * **slice** replace. Unlike {@link replaceSynced} it never touches rows outside the
+   * slice, so a partial collection can reconcile one subset without wiping the others.
+   */
+  readonly patchSynced: (args: {
+    readonly deleteKeys: ReadonlyArray<ModelId>
+    readonly rows: ReadonlyArray<T>
+  }) => Effect.Effect<void>
+  /**
    * Structural-only index so `SyncWrite<T>` matches TanStack's `UtilsRecord` shape —
    * which is what `useLiveQuery((q) => q.from({ … }))` requires of a collection's
    * `utils`. `(...args: never[]) => unknown` (NOT `any`) is the widest function the real

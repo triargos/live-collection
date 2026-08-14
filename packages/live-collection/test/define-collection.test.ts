@@ -77,7 +77,7 @@ describe("defineCollection — runtime-bound handle", () => {
       listFn: Effect.succeed([]),
     })
     assert.strictEqual(user(), user())
-    assert.deepStrictEqual(keys[0], { entity: "User", scope: Option.none() }) // global key, no scope
+    assert.deepStrictEqual(keys[0], { entity: "User", scope: Option.none(), subset: Option.none() }) // global key, no scope
   })
 
   it("_meta carries entity, scopeOf and the snapshot listFn the loop reads", () => {
