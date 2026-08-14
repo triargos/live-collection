@@ -114,6 +114,35 @@ export const CatchupResponse = Schema.Struct({
 
 Schemas only — the route, method, errors, and auth are your backend's. There is deliberately no group parameter in the request: the server resolves the caller's visibility itself. See the [backend contract](./backend.md) for the semantics.
 
+## Partial-index batch schemas
+
+The wire contract of [partial indexes](./partial-indexes.md) — fetching one keyed subset of a model (`POST /sync/batch`, route yours):
+
+```ts
+export const IndexValue = Schema.Struct({
+  modelName: ModelName,
+  indexKey: Schema.NonEmptyString,   // must be declared in the server registry's `indexes`
+  keyValue: Schema.NonEmptyString,
+})
+
+export const HydrateBatchRequest = Schema.Struct({
+  requests: Schema.NonEmptyArray(IndexValue),
+})
+
+export const HydrateBatchResult = Schema.TaggedUnion({
+  Members: { request: IndexValue, rows: Schema.Array(Schema.Unknown) },
+  Forbidden: { request: IndexValue },   // visibility refusal ≠ empty membership
+})
+
+export const HydrateBatchResponse = Schema.Struct({
+  results: Schema.Array(HydrateBatchResult),
+  lastSyncId: SyncId,                         // server log head, read BEFORE the index queries
+  epoch: Schema.OptionFromOptionalKey(Epoch), // same semantics as CatchupResponse.epoch
+})
+```
+
+The head-first stamp is the contract's safety: every returned row reflects at least `lastSyncId`, so a client replaying its journal from the stamp re-applies at worst a few already-reflected events (idempotent) and misses nothing. A request naming an undeclared index key is malformed — the kernel fails the whole batch (`UnknownIndexError`, answered 400), never an empty result.
+
 ## Model registry types
 
 Helpers for building a backend's hydration registry. Model names are open on the wire but a closed union inside each app; these types provide the one open→closed hop.
@@ -130,6 +159,10 @@ interface ModelDescriptor<Name extends string, T, R> {
   /** optional batch — one lookup per model instead of one per event */
   readonly hydrateMany?: (ids: ReadonlyArray<ModelId>, syncGroups: ReadonlyArray<SyncGroup>) =>
     Effect.Effect<ReadonlyMap<ModelId, T>, never, R>
+  /** declared partial indexes — the only keys the server answers subset fetches for;
+   *  none ⇒ Forbidden on the wire, some([]) ⇒ valid empty membership */
+  readonly indexes?: Record<string, (keyValue: string, syncGroups: ReadonlyArray<SyncGroup>) =>
+    Effect.Effect<Option.Option<ReadonlyArray<T>>, never, R>>
 }
 ```
 

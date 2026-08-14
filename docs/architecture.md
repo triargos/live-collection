@@ -102,6 +102,10 @@ Sync cursors are only meaningful within one server log timeline. If the server's
 
 Persistence bounds what survives a reload; **scope** bounds what's in memory. A mounted collection holds its working set in memory, so per-workspace scoped collections (`scopeOf`) plus `disposeScope` on exit are the lever for large datasets — not the persistence layer.
 
+## Partial collections
+
+[Partial indexes](./partial-indexes.md) add a third collection kind: one shared instance per entity whose rows are the union of the **subsets** ensured so far (`utils.loadBy*`). Each ensured subset has its own durable coverage mark — a widened last-applied record `(entity, indexKey, keyValue) → syncId` in the journal — so subsets get the same Skip / Replay / Snapshot mount logic and pruning participation as whole collections. The drain filters live events by the declared extractors: covered rows land, rows moving out of every covered subset are deleted, uncovered events are dropped (but still logged in the journal for a later ensure to replay). Snapshot fetches go through `POST /sync/batch`, stamped with the server head read before the queries.
+
 ## See also
 
 - [Persistence](./persistence.md) — the local SQLite layer collections write through.
