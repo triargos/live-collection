@@ -45,6 +45,21 @@ export interface ModelDescriptor<Name extends string, T, R> {
     ids: ReadonlyArray<ModelId>,
     syncGroups: ReadonlyArray<SyncGroup>
   ) => Effect.Effect<ReadonlyMap<ModelId, T>, never, R>
+  /**
+   * Declared partial indexes — the closed set of keys the server answers subset
+   * fetches for (`POST /sync/batch`). Like `hydrate`, the fetch is the authoritative
+   * visibility check: `Option.none()` ⇒ the caller may not see this subset (the wire
+   * result is `Forbidden`); `Option.some([])` ⇒ valid empty membership. A requested
+   * key absent from this record is a malformed request — the kernel fails the whole
+   * batch — never an empty result.
+   */
+  readonly indexes?: Record<
+    string,
+    (
+      keyValue: string,
+      syncGroups: ReadonlyArray<SyncGroup>
+    ) => Effect.Effect<Option.Option<ReadonlyArray<T>>, never, R>
+  >
 }
 
 /**
