@@ -9,6 +9,7 @@ import {
 
 export interface TodoRepoShape {
   readonly list: (session: SessionCode) => Effect.Effect<ReadonlyArray<Todo>>
+  readonly listByProject: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<Todo>>
   readonly find: (id: TodoId) => Effect.Effect<Option.Option<Todo>>
   readonly upsert: (
     row: Todo,
@@ -26,6 +27,10 @@ const makeMemory: Effect.Effect<TodoRepoShape> = Effect.gen(function* () {
     list: (session) =>
       Ref.get(rows).pipe(
         Effect.map((map) => Array.from(map.values()).filter((row) => row.sessionId === session)),
+      ),
+    listByProject: (projectId) =>
+      Ref.get(rows).pipe(
+        Effect.map((map) => Array.from(map.values()).filter((row) => row.projectId === projectId)),
       ),
     find: (id) => Ref.get(rows).pipe(Effect.map((map) => Option.fromNullishOr(map.get(id)))),
     upsert: (row) =>

@@ -1,5 +1,5 @@
-import { Effect } from "effect"
-import { Project, ProjectId, Todo, TodoId } from "@pi-demo/shared"
+import { Effect, Option } from "effect"
+import { Project, ProjectId, sessionGroup, Todo, TodoId } from "@pi-demo/shared"
 import { defineModelRegistry } from "@triargos/live-collection-protocol"
 import { ModelRegistry } from "@triargos/live-collection-server"
 import { ProjectRepo } from "../repo/project-repo.js"
@@ -28,7 +28,25 @@ export const RegistryLayer = ModelRegistry.layer(
       Todo: {
         modelName: "Todo",
         schema: Todo,
-        hydrate: (id) => todos.find(TodoId.make(id))
+        hydrate: (id) => todos.find(TodoId.make(id)),
+        // The partial-index vocabulary: `POST /api/sync/batch` answers only these
+        // keys. The fetch is the authoritative visibility check — a project outside
+        // the caller's session is `Option.none()` (⇒ `Forbidden` on the wire), while
+        // an owned project with no todos is `Option.some([])` (valid empty membership).
+        indexes: {
+          projectId: (keyValue, syncGroups) =>
+            projects.find(ProjectId.make(keyValue)).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.succeedNone,
+                  onSome: (project) =>
+                    syncGroups.includes(sessionGroup(project.sessionId))
+                      ? todos.listByProject(project.id).pipe(Effect.asSome)
+                      : Effect.succeedNone
+                })
+              )
+            )
+        }
       }
     })
   })

@@ -1,4 +1,5 @@
 import { ProjectId, projectKey } from "@pi-demo/shared"
+import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
 import { Copy, ListTodo, LogOut, Plus, Trash2 } from "lucide-react"
 import { type FormEvent, useMemo, useState } from "react"
@@ -18,7 +19,7 @@ const COLORS: ReadonlyArray<string> = [DEFAULT_COLOR, "#06b6d4", "#f59e0b", "#f4
 
 export function Sidebar({ bundle }: { readonly bundle: AppBundle }) {
   const projects = bundle.projectsCollection(bundle.session)
-  const todos = bundle.todosCollection(bundle.session)
+  const todos = bundle.todosCollection()
   const navigate = useNavigate()
   const location = useLocation()
   const [name, setName] = useState("")
@@ -26,7 +27,15 @@ export function Sidebar({ bundle }: { readonly bundle: AppBundle }) {
   const { data: projectRows } = useLiveQuery((q) =>
     q.from({ project: projects }).orderBy(({ project }) => project.createdAt),
   )
-  const { data: todoRows } = useLiveQuery((q) => q.from({ todo: todos }))
+  // The partial Todo collection holds the union of loaded subsets (and is
+  // session-agnostic), so counts (a) join through this session's projects and
+  // (b) only cover projects someone has loaded — that IS the partial contract.
+  const { data: todoRows } = useLiveQuery((q) =>
+    q
+      .from({ todo: todos })
+      .innerJoin({ project: projects }, ({ todo, project }) => eq(todo.projectId, project.id))
+      .select(({ todo }) => ({ id: todo.id, projectId: todo.projectId })),
+  )
   const stats = useGameStats(bundle)
   useLevelUpConfetti(stats.level.level)
 

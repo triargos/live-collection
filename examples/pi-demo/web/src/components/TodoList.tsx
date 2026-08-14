@@ -2,7 +2,7 @@ import { ProjectId, TodoId, todoKey } from "@pi-demo/shared"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
 import { Option } from "effect"
-import { Check, Plus, Radio, Trash2 } from "lucide-react"
+import { Check, LoaderCircle, Plus, Radio, Trash2 } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { Badge } from "@/components/ui/badge.js"
 import { Button } from "@/components/ui/button.js"
@@ -15,10 +15,12 @@ import type { AppBundle } from "../live/collections.js"
 interface TodoListProps {
   readonly bundle: AppBundle
   readonly projectId: Option.Option<ProjectId>
+  /** A subset ensure is in flight (`POST /api/sync/batch`) — rows on screen are the persisted baseline. */
+  readonly syncing?: boolean
 }
 
-export function TodoList({ bundle, projectId }: TodoListProps) {
-  const todos = bundle.todosCollection(bundle.session)
+export function TodoList({ bundle, projectId, syncing = false }: TodoListProps) {
+  const todos = bundle.todosCollection()
   const projects = bundle.projectsCollection(bundle.session)
   const [title, setTitle] = useState("")
   const [selectedProjectId, setSelectedProjectId] = useState("")
@@ -90,9 +92,15 @@ export function TodoList({ bundle, projectId }: TodoListProps) {
     <section className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 sm:py-10">
       <header className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div>
-          <Badge className="mb-3 gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">
-            <Radio className="size-3 animate-pulse" /> Live quest log
-          </Badge>
+          {syncing ? (
+            <Badge className="mb-3 gap-1.5 border-amber-200 bg-amber-50 text-amber-700" variant="outline">
+              <LoaderCircle className="size-3 animate-spin" /> Fetching quests…
+            </Badge>
+          ) : (
+            <Badge className="mb-3 gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">
+              <Radio className="size-3 animate-pulse" /> Live quest log
+            </Badge>
+          )}
           <h1 className="text-balance text-3xl font-extrabold tracking-tight sm:text-4xl">
             {activeProject === undefined ? "All quests" : activeProject.name}
           </h1>
