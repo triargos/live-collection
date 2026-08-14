@@ -1,5 +1,8 @@
 import {
     type CatchupResponse,
+    type HydrateBatchRequest,
+    HydrateBatchResult,
+    type HydrateBatchResponse,
     HydratedSyncEventEnvelope,
     intersects,
     ResyncTarget,
@@ -7,7 +10,7 @@ import {
     type SyncGroup,
     type SyncId
 } from "@triargos/live-collection-protocol";
-import { Context, DateTime, Duration, Effect, Layer, Schema, Stream } from "effect";
+import { Context, DateTime, Duration, Effect, Layer, Option, Schema, Stream } from "effect";
 import * as Arr from "effect/Array";
 import { makeHydrator } from "./hydrator.js";
 import { ModelRegistry } from "./model-registry.js";
@@ -15,7 +18,18 @@ import { SyncEventBus } from "./sync-event-bus.js";
 import { SyncEventStore } from "./sync-event-store.js";
 
 /**
- * The read-side entry — the two surfaces the client contract observes. The
+ * A batch request named an index the registry does not declare for that model — a
+ * malformed request born of config drift between client and server vocabularies.
+ * Loud by design: the whole batch fails (the app route answers 400), never a silent
+ * empty result.
+ */
+export class UnknownIndexError extends Schema.TaggedError<UnknownIndexError>()(
+  "UnknownIndexError",
+  { modelName: Schema.String, indexKey: Schema.String }
+) {}
+
+/**
+ * The read-side entry — the surfaces the client contract observes. The
  * app's routes own auth and resolve the caller's sync groups server-side; the
  * feed owns everything the client's correctness depends on.
  */
@@ -47,6 +61,19 @@ export interface SyncFeedShape {
     readonly syncGroups: ReadonlyArray<SyncGroup>
     readonly keepAlive?: Duration.Input
   }) => Stream.Stream<string>
+
+  /**
+   * One partial-index batch: head-read (`getLatestSyncId`) FIRST — the stamp's
+   * safety: every fetched row reflects at least that position — then per request:
+   * resolve model + declared index (miss ⇒ fail the whole batch with
+   * {@link UnknownIndexError}) → run the index fetch with the caller's syncGroups →
+   * `Option.none` ⇒ `Forbidden`, `Option.some` ⇒ `Members` with rows encoded via the
+   * descriptor schema. No event-store reads beyond the head.
+   */
+  readonly hydrateBatch: (args: {
+    readonly request: HydrateBatchRequest
+    readonly syncGroups: ReadonlyArray<SyncGroup>
+  }) => Effect.Effect<HydrateBatchResponse, UnknownIndexError>
 }
 
 const encodeEnvelope = Schema.encodeEffect(Schema.fromJsonString(HydratedSyncEventEnvelope))
@@ -55,7 +82,8 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
   Effect.gen(function* () {
     const store = yield* SyncEventStore
     const bus = yield* SyncEventBus
-    const hydrator = makeHydrator(yield* ModelRegistry)
+    const registry = yield* ModelRegistry
+    const hydrator = makeHydrator(registry)
 
     const catchup: SyncFeedShape["catchup"] = Effect.fn("SyncFeed.catchup")(function* (args) {
       // Head first, then the slice: events appended in between simply arrive
@@ -121,7 +149,33 @@ const make: Effect.Effect<SyncFeedShape, never, SyncEventStore | SyncEventBus | 
       return Stream.merge(frames, keepAliveFrames).pipe(Stream.withSpan("SyncFeed.streamEvents"))
     }
 
-    return { catchup, streamEvents }
+    const hydrateBatch: SyncFeedShape["hydrateBatch"] = Effect.fn("SyncFeed.hydrateBatch")(
+      function* (args) {
+        const lastSyncId = yield* store.getLatestSyncId
+        const epoch = yield* store.getCurrentEpoch
+        const results = yield* Effect.forEach(args.request.requests, (request) => {
+          const fetch = registry.models
+            .get(String(request.modelName))
+            ?.indexFetch?.(request.indexKey, request.keyValue, args.syncGroups)
+          if (fetch === undefined) {
+            return Effect.fail(
+              new UnknownIndexError({ modelName: request.modelName, indexKey: request.indexKey })
+            )
+          }
+          return fetch.pipe(
+            Effect.map(
+              Option.match({
+                onNone: () => HydrateBatchResult.cases.Forbidden.make({ request }),
+                onSome: (rows) => HydrateBatchResult.cases.Members.make({ request, rows })
+              })
+            )
+          )
+        })
+        return { results, lastSyncId, epoch }
+      }
+    )
+
+    return { catchup, streamEvents, hydrateBatch }
   })
 
 export class SyncFeed extends Context.Service<SyncFeed, SyncFeedShape>()(
