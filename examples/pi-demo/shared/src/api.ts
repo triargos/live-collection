@@ -1,6 +1,6 @@
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi"
 import { Context, Schema } from "effect"
-import { CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
+import { CatchupResponse, HydrateBatchRequest, HydrateBatchResponse, SyncId } from "@triargos/live-collection-protocol"
 import { Project, ProjectId, SessionCode, Todo, TodoId } from "./domain.js"
 
 /**
@@ -55,6 +55,17 @@ export class TodoNotFound extends Schema.TaggedError<TodoNotFound>()(
 ) {}
 const TodoNotFoundResponse = TodoNotFound.pipe(HttpApiSchema.status(404))
 
+/**
+ * The batch named an index the server registry does not declare — config drift
+ * between client and server vocabularies, answered 400 (the whole batch fails, never
+ * a silent empty result). Mirrors the kernel's `UnknownIndexError` on the wire.
+ */
+export class UnknownIndex extends Schema.TaggedError<UnknownIndex>()(
+  "UnknownIndexError",
+  { modelName: Schema.String, indexKey: Schema.String },
+) {}
+const UnknownIndexResponse = UnknownIndex.pipe(HttpApiSchema.status(400))
+
 export const projectsGroup = HttpApiGroup.make("projects")
   .add(HttpApiEndpoint.get("list", "/projects", { success: Schema.Array(Project) }))
   .add(HttpApiEndpoint.post("upsert", "/projects", {
@@ -85,6 +96,11 @@ export const syncApiGroup = HttpApiGroup.make("sync")
   .add(HttpApiEndpoint.get("catchup", "/catchup", {
     query: { from: SyncId },
     success: CatchupResponse,
+  }))
+  .add(HttpApiEndpoint.post("batch", "/sync/batch", {
+    payload: HydrateBatchRequest,
+    success: HydrateBatchResponse,
+    error: UnknownIndexResponse,
   }))
   .middleware(SessionAuth)
 

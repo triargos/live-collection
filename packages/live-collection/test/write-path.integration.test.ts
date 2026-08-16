@@ -58,6 +58,7 @@ const inertRuntime = (
   persistence,
   forkDrain: () => Effect.runFork(Effect.never),
   forkSync: () => Effect.runFork(Effect.never),
+  runEnsure: () => Promise.reject(new Error("inert runtime has no broker")),
   dispose: () => {},
 })
 

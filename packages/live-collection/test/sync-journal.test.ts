@@ -2,8 +2,9 @@ import { Effect, Option } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import { SchemaVersion } from "../src/core/schema-version.js"
-import { scopedKey } from "../src/core/collection-key.js"
-import { SyncJournal, type JournalEvent } from "../src/client/sync-journal.js"
+import { scopedKey, subsetKey } from "../src/core/collection-key.js"
+import { JournalWrite, makeMemoryStore } from "../src/client/journal-store.js"
+import { makeSyncJournal, SyncJournal, type JournalEvent } from "../src/client/sync-journal.js"
 
 const sid = (s: string) => SyncId.make(s)
 const insert = (syncId: string, scope: string, id: string): JournalEvent => ({
@@ -164,6 +165,112 @@ describe("SyncJournal (memory)", () => {
       assert.deepStrictEqual(settings.map((r) => r.syncId), [sid("3")])
       assert.deepStrictEqual(yield* journal.highestPrunedSyncId(ModelName.make("Webhook")), Option.none())
     }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  it.effect("subset marks round-trip and filter by entity, scope, and schema version", () =>
+    Effect.gen(function* () {
+      const journal = yield* SyncJournal
+      const version = SchemaVersion.make(1)
+      const t1 = subsetKey<unknown>({
+        entity: "Value",
+        scope: Option.none(),
+        subset: { indexKey: "templateId", keyValue: "t1" },
+      })
+      const t2 = subsetKey<unknown>({
+        entity: "Value",
+        scope: Option.none(),
+        subset: { indexKey: "templateId", keyValue: "t2" },
+      })
+      yield* journal.setCollectionLastAppliedSyncId({ key: t1, schemaVersion: version, at: sid("5") })
+      yield* journal.setCollectionLastAppliedSyncId({ key: t2, schemaVersion: version, at: sid("7") })
+      // Non-subset mark for the same model — must NOT show up as a subset.
+      yield* journal.setCollectionLastAppliedSyncId({
+        key: scopedKey({ entity: "Value", scope: "org-1" }),
+        schemaVersion: version,
+        at: sid("9"),
+      })
+      // Same subset under another scope — excluded by the scope filter.
+      yield* journal.setCollectionLastAppliedSyncId({
+        key: subsetKey({ entity: "Value", scope: Option.some("org-1"), subset: { indexKey: "templateId", keyValue: "t1" } }),
+        schemaVersion: version,
+        at: sid("11"),
+      })
+
+      const marks = yield* journal.subsetMarks({ entity: "Value", scope: Option.none(), schemaVersion: version })
+      assert.deepStrictEqual(
+        [...marks].sort((a, b) => a.subset.keyValue.localeCompare(b.subset.keyValue)),
+        [
+          { subset: { indexKey: "templateId", keyValue: "t1" }, at: sid("5") },
+          { subset: { indexKey: "templateId", keyValue: "t2" }, at: sid("7") },
+        ],
+      )
+
+      // A schema bump dumps the saved table — old-version marks describe dead rows.
+      const bumped = yield* journal.subsetMarks({ entity: "Value", scope: Option.none(), schemaVersion: SchemaVersion.make(2) })
+      assert.deepStrictEqual(bumped, [])
+    }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  it.effect("prune's per-model minimum includes subset marks — a trailing subset keeps its replay tail", () =>
+    Effect.gen(function* () {
+      const journal = yield* SyncJournal
+      const version = SchemaVersion.make(1)
+      yield* journal.append(["1", "2", "3"].map((s) => insert(s, "org-1", `w${s}`)))
+      // The collection itself is far ahead…
+      yield* journal.setCollectionLastAppliedSyncId({
+        key: scopedKey({ entity: "Webhook", scope: "org-1" }),
+        schemaVersion: version,
+        at: sid("3"),
+      })
+      // …but one subset's mark trails at 1: rows 2 and 3 are still its replay tail.
+      yield* journal.setCollectionLastAppliedSyncId({
+        key: subsetKey({ entity: "Webhook", scope: Option.some("org-1"), subset: { indexKey: "channel", keyValue: "c1" } }),
+        schemaVersion: version,
+        at: sid("1"),
+      })
+      yield* journal.prune({ maxEventsPerModel: 100, maxEventsTotal: 100 })
+      const rows = yield* journal.read({ modelName: ModelName.make("Webhook"), since: sid("0") })
+      assert.deepStrictEqual(rows.map((r) => r.syncId), [sid("2"), sid("3")])
+    }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  it.effect("resetToEpoch wipes subset marks with everything else", () =>
+    Effect.gen(function* () {
+      const journal = yield* SyncJournal
+      const version = SchemaVersion.make(1)
+      yield* journal.setCollectionLastAppliedSyncId({
+        key: subsetKey({ entity: "Value", scope: Option.none(), subset: { indexKey: "templateId", keyValue: "t1" } }),
+        schemaVersion: version,
+        at: sid("5"),
+      })
+      yield* journal.resetToEpoch({ epoch: Epoch.make("new"), at: sid("1") })
+      assert.deepStrictEqual(
+        yield* journal.subsetMarks({ entity: "Value", scope: Option.none(), schemaVersion: version }),
+        [],
+      )
+    }).pipe(Effect.provide(SyncJournal.layerMemory)))
+
+  it.effect("pre-partial-index at-rest records still decode — scope and subset default to None", () =>
+    Effect.gen(function* () {
+      // A journal written by an old client: the last-applied record has no scope/subset
+      // fields, stored under the frozen key spelling. The upgraded policy layer must
+      // read it as a plain collection mark, never die, and never mistake it for a subset.
+      const store = yield* makeMemoryStore
+      const key = scopedKey<unknown>({ entity: "Webhook", scope: "org-1" })
+      yield* store.commit(
+        JournalWrite.Patch({
+          putRecords: [['wm:["Webhook","org-1"]', { entity: "Webhook", schemaVersion: 1, at: "7" }]],
+        }),
+      )
+      const journal = makeSyncJournal(store)
+      assert.deepStrictEqual(
+        yield* journal.getCollectionLastAppliedSyncId({ key, schemaVersion: SchemaVersion.make(1) }),
+        Option.some(sid("7")),
+      )
+      assert.deepStrictEqual(
+        yield* journal.subsetMarks({ entity: "Webhook", scope: Option.some("org-1"), schemaVersion: SchemaVersion.make(1) }),
+        [],
+      )
+      // Prune folds the old record without dying.
+      yield* journal.prune({ maxEventsPerModel: 100, maxEventsTotal: 100 })
+    }))
 
   it.effect("prune squashes an entity's history to its newest event without moving the prune boundary", () =>
     Effect.gen(function* () {

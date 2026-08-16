@@ -3,6 +3,7 @@ import { HttpApiClient } from "effect/unstable/httpapi"
 import {
   defineCollection,
   type LiveRuntime,
+  type PartialHandle,
   type ScopedHandle,
 } from "@triargos/live-collection"
 import { DemoApi, Project, type SessionCode, Todo, projectKey, todoKey } from "@pi-demo/shared"
@@ -15,10 +16,19 @@ type DemoClient = Effect.Success<typeof makeApi>
 const withApi = <A, E>(f: (client: DemoClient) => Effect.Effect<A, E>) =>
   makeApi.pipe(Effect.flatMap(f))
 
+/**
+ * The partial-index vocabulary of the Todo collection — must mirror what the server
+ * registry declares under `Todo.indexes`. One key ⇒ one generated ensure:
+ * `projectId` → `utils.loadByProjectId(projectId)`.
+ */
+const todosBy = {
+  projectId: (todo: Todo) => todo.projectId,
+}
+
 export interface AppBundle {
   readonly runtime: LiveRuntime
   readonly session: SessionCode
-  readonly todosCollection: ScopedHandle<Todo>
+  readonly todosCollection: PartialHandle<Todo, typeof todosBy>
   readonly projectsCollection: ScopedHandle<Project>
 }
 
@@ -34,14 +44,16 @@ export const createApp = async (args: { readonly session: SessionCode }): Promis
   const runtime = await createRuntime(httpClient)
   const services = ManagedRuntime.make(httpClient)
 
+  // Partial: no listFn — todos load subset-by-subset through POST /api/sync/batch
+  // (`utils.loadByProjectId`), then stay live over the same SSE stream. A project
+  // never loaded costs zero bytes on this device.
   const todosCollection = defineCollection({
     runtime,
     services,
     entity: "Todo",
     schema: Todo,
     getKey: todoKey,
-    scopeOf: (todo) => todo.sessionId,
-    listFn: (_session) => withApi((client) => client.todos.list()).pipe(Effect.orDie),
+    partial: { by: todosBy },
     onInsert: ({ transaction }) =>
       withApi((client) => client.todos.upsert({ payload: transaction.mutations[0]!.modified })),
     onUpdate: ({ transaction }) =>

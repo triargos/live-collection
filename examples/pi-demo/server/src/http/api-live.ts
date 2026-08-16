@@ -11,6 +11,7 @@ import {
   todoKey,
   TODO_MODEL,
   UnauthorizedError,
+  UnknownIndex,
 } from "@pi-demo/shared"
 import { PendingSyncEvent } from "@triargos/live-collection-protocol"
 import { SyncDispatcher, SyncFeed } from "@triargos/live-collection-server"
@@ -150,14 +151,30 @@ export const TodosApiLive = HttpApiBuilder.group(DemoApi, "todos", (handlers) =>
 )
 
 export const SyncApiLive = HttpApiBuilder.group(DemoApi, "sync", (handlers) =>
-  handlers.handle("catchup", ({ query }) =>
-    Effect.gen(function* () {
-      const session = yield* CurrentSession
-      const feed = yield* SyncFeed
-      return yield* feed.catchup({
-        fromSyncId: query.from,
-        syncGroups: [sessionGroup(session)],
-      })
-    }),
-  ),
+  handlers
+    .handle("catchup", ({ query }) =>
+      Effect.gen(function* () {
+        const session = yield* CurrentSession
+        const feed = yield* SyncFeed
+        return yield* feed.catchup({
+          fromSyncId: query.from,
+          syncGroups: [sessionGroup(session)],
+        })
+      }),
+    )
+    .handle("batch", ({ payload }) =>
+      Effect.gen(function* () {
+        const session = yield* CurrentSession
+        const feed = yield* SyncFeed
+        return yield* feed.hydrateBatch({
+          request: payload,
+          syncGroups: [sessionGroup(session)],
+        }).pipe(
+          // Kernel error → the api's 400: same tag and fields, the wire contract's class.
+          Effect.catchTag("UnknownIndexError", (error) =>
+            new UnknownIndex({ modelName: error.modelName, indexKey: error.indexKey }),
+          ),
+        )
+      }),
+    ),
 )

@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest"
 import {
   deriveGroup,
   Epoch,
+  HydrateBatchResult,
   type HydratedSyncEventEnvelope,
   ModelId,
   ModelName,
@@ -11,6 +12,7 @@ import {
   SyncId,
 } from "@triargos/live-collection-protocol"
 import { CatchupClient, CatchupFailed } from "../src/client/catchup-client.js"
+import { HydrateClient } from "../src/client/hydrate-client.js"
 import { SyncJournal, type SyncJournalShape, type JournalEvent } from "../src/client/sync-journal.js"
 import {
   SyncBroker,
@@ -104,6 +106,7 @@ const attach = (
 
 const run = <A, E>(options: {
   readonly catchup?: Layer.Layer<CatchupClient>
+  readonly hydrate?: Layer.Layer<HydrateClient>
   readonly broker?: SyncBrokerOptions
   readonly body: (services: {
     readonly broker: SyncBrokerShape
@@ -114,11 +117,12 @@ const run = <A, E>(options: {
   Effect.scoped(
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<HydratedSyncEventEnvelope>()
-      const sync = Layer.mergeAll(
+      const base = Layer.mergeAll(
         SyncTransport.layerMemory(events),
         options.catchup ?? CatchupClient.layerMemory({ events: [], lastSyncId: sid("0"), epoch: Option.none() }),
         SyncJournal.layerMemory,
       )
+      const sync: typeof base = options.hydrate === undefined ? base : Layer.mergeAll(base, options.hydrate)
       const brokerLayer = SyncBroker.layer(options.broker).pipe(Layer.provide(sync))
       return yield* Effect.gen(function* () {
         const broker = yield* SyncBroker
@@ -506,6 +510,234 @@ describe("SyncBroker", () => {
           const fresh = yield* attach(broker)
           const received = yield* fresh.take(1)
           assert.strictEqual(received[0]!._tag === "Snapshot" && received[0]!.at, sid("3"))
+          yield* Fiber.interrupt(start)
+        }),
+    }))
+})
+
+// ── ensureSubset — the loadBy* engine ──
+
+const subset = { indexKey: "templateId", keyValue: "t1" }
+
+/** Members-for-everything hydrate stub with a call counter and a fixed stamp. */
+const countingHydrate = (args: {
+  readonly calls: Ref.Ref<number>
+  readonly stamp: string
+  readonly rows?: ReadonlyArray<unknown>
+  readonly epoch?: Epoch
+  readonly forbidden?: boolean
+}): Layer.Layer<HydrateClient> =>
+  HydrateClient.layerMemory((request) =>
+    Ref.update(args.calls, (n) => n + 1).pipe(
+      Effect.as({
+        results: request.requests.map((r) =>
+          args.forbidden === true
+            ? HydrateBatchResult.cases.Forbidden.make({ request: r })
+            : HydrateBatchResult.cases.Members.make({ request: r, rows: args.rows ?? [] }),
+        ),
+        lastSyncId: sid(args.stamp),
+        epoch: Option.fromNullishOr(args.epoch),
+      }),
+    ),
+  )
+
+/** Run one ensure, recording every replaceSlice and apply the broker drives. */
+const ensureRecorded = (broker: SyncBrokerShape) =>
+  Effect.gen(function* () {
+    const slices = yield* Ref.make<ReadonlyArray<{ rows: ReadonlyArray<unknown>; at: SyncId }>>([])
+    const applied = yield* Ref.make<ReadonlyArray<SyncSignal>>([])
+    const ensure = broker.ensureSubset({
+      modelName: Webhook,
+      scope: Option.none(),
+      schemaVersion: version,
+      subset,
+      replaceSlice: (rows, at) => Ref.update(slices, (all) => [...all, { rows, at }]),
+      apply: (signal) => Ref.update(applied, (all) => [...all, signal]),
+    })
+    return { ensure, slices: Ref.get(slices), applied: Ref.get(applied) }
+  })
+
+describe("SyncBroker.ensureSubset", () => {
+  it.effect("a fresh subset takes the Snapshot tier: one fetch, the slice lands with the server stamp, the mark holds", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "5", rows: [{ id: "v1" }, { id: "v2" }] }),
+        body: ({ broker }) =>
+          Effect.gen(function* () {
+            const first = yield* ensureRecorded(broker)
+            yield* first.ensure
+            assert.deepStrictEqual(yield* first.slices, [{ rows: [{ id: "v1" }, { id: "v2" }], at: sid("5") }])
+            assert.deepStrictEqual(yield* first.applied, []) // empty journal ⇒ nothing to replay
+            assert.deepStrictEqual(yield* broker.coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version }), [
+              { subset, at: sid("5") },
+            ])
+
+            // Second ensure: the mark is current ⇒ Skip — no fetch, no slice.
+            const second = yield* ensureRecorded(broker)
+            yield* second.ensure
+            assert.deepStrictEqual(yield* second.slices, [])
+          }),
+      })
+      assert.strictEqual(yield* Ref.get(calls), 1)
+    }))
+
+  it.effect("a journal-covered gap takes the Replay tier — local slice, zero fetches", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "2" }),
+        body: ({ broker, journal }) =>
+          Effect.gen(function* () {
+            const first = yield* ensureRecorded(broker)
+            yield* first.ensure // Snapshot tier, mark at 2
+            yield* journal.append([logged("3"), logged("4")])
+            yield* journal.setLastIngestedSyncId(sid("4"))
+
+            const replay = yield* ensureRecorded(broker)
+            yield* replay.ensure
+            assert.deepStrictEqual(yield* replay.slices, []) // no fetch: journal covers the gap
+            assert.deepStrictEqual(
+              (yield* replay.applied).map((s) => (s._tag === "Upsert" ? s.syncId : s._tag)),
+              [sid("3"), sid("4")],
+            )
+
+            const third = yield* ensureRecorded(broker)
+            yield* third.ensure // mark advanced to 4 ⇒ Skip
+            assert.deepStrictEqual(yield* third.applied, [])
+          }),
+      })
+      assert.strictEqual(yield* Ref.get(calls), 1)
+    }))
+
+  it.effect("events landing between the head-read and the response are re-applied from the journal after the slice", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        // Stamp 2: the server read its head before event 3 was appended.
+        hydrate: countingHydrate({ calls, stamp: "2", rows: [{ id: "v1" }] }),
+        body: ({ broker, journal }) =>
+          Effect.gen(function* () {
+            yield* journal.append([logged("3")])
+            yield* journal.setLastIngestedSyncId(sid("3"))
+            const first = yield* ensureRecorded(broker)
+            yield* first.ensure
+            assert.deepStrictEqual(yield* first.slices, [{ rows: [{ id: "v1" }], at: sid("2") }])
+            // The journal event above the stamp replays on top of the slice — the
+            // idempotence story: worst case it re-applies an already-reflected row.
+            assert.deepStrictEqual(
+              (yield* first.applied).map((s) => (s._tag === "Upsert" ? s.syncId : s._tag)),
+              [sid("3")],
+            )
+            assert.deepStrictEqual(yield* broker.coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version }), [
+              { subset, at: sid("3") },
+            ])
+          }),
+      })
+    }))
+
+  it.effect("Forbidden fails the ensure typed, writes no mark, and the next ensure asks the server again", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "5", forbidden: true }),
+        body: ({ broker }) =>
+          Effect.gen(function* () {
+            const first = yield* ensureRecorded(broker)
+            const error = yield* Effect.flip(first.ensure)
+            assert.strictEqual(error._tag, "SubsetForbidden")
+            assert.deepStrictEqual(
+              yield* broker.coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version }),
+              [],
+            )
+            const second = yield* ensureRecorded(broker)
+            yield* Effect.flip(second.ensure) // retried — not remembered as denied
+          }),
+      })
+      assert.strictEqual(yield* Ref.get(calls), 2)
+    }))
+
+  it.effect("a pruned gap forces the Snapshot tier — the journal can no longer replay the subset forward", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "1" }),
+        body: ({ broker, journal }) =>
+          Effect.gen(function* () {
+            const first = yield* ensureRecorded(broker)
+            yield* first.ensure // mark at 1
+            yield* broker.coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version }) // flush the pending mark so prune sees it
+            // Two newer events; caps of one force pruning to eat event 2 — boundary 2 > mark 1.
+            yield* journal.append([logged("2"), logged("3")])
+            yield* journal.setLastIngestedSyncId(sid("3"))
+            yield* journal.prune({ maxEventsPerModel: 1, maxEventsTotal: 100 })
+            const second = yield* ensureRecorded(broker)
+            yield* second.ensure
+            assert.strictEqual((yield* second.slices).length, 1) // refetched, not replayed
+          }),
+      })
+      assert.strictEqual(yield* Ref.get(calls), 2)
+    }))
+
+  it.effect("a resync newer than the mark forces the Snapshot tier", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "2" }),
+        body: ({ broker, journal }) =>
+          Effect.gen(function* () {
+            const first = yield* ensureRecorded(broker)
+            yield* first.ensure // mark at 2
+            yield* journal.setLastResync(sid("5"))
+            yield* journal.setLastIngestedSyncId(sid("5"))
+            const second = yield* ensureRecorded(broker)
+            yield* second.ensure
+            assert.strictEqual((yield* second.slices).length, 1)
+          }),
+      })
+      assert.strictEqual(yield* Ref.get(calls), 2)
+    }))
+
+  it.effect("an epoch mismatch on the response fails the ensure and writes no mark — ingest owns the reset", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* run({
+        hydrate: countingHydrate({ calls, stamp: "5", epoch: Epoch.make("B") }),
+        body: ({ broker, journal }) =>
+          Effect.gen(function* () {
+            yield* journal.setEpoch(Epoch.make("A"))
+            const first = yield* ensureRecorded(broker)
+            const error = yield* Effect.flip(first.ensure)
+            assert.strictEqual(error._tag, "HydrateFailed")
+            assert.isTrue(error._tag === "HydrateFailed" && error.reason.includes("epoch"))
+            assert.deepStrictEqual(
+              yield* broker.coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version }),
+              [],
+            )
+          }),
+      })
+    }))
+
+  it.effect("apply's returned subset keys advance their coverage marks through each acked signal", () =>
+    run({
+      body: ({ broker, events }) =>
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            broker.attachSubscriber({
+              modelName: Webhook,
+              scope: Option.none(),
+              schemaVersion: version,
+              // A partial drain reporting one covered subset for every signal.
+              apply: () => Effect.succeed([subset]),
+            }),
+          )
+          const start = yield* Effect.forkScoped(broker.start)
+          yield* Queue.offer(events, insert("7"))
+          yield* waitUntil(
+            broker
+              .coveredSubsets({ modelName: Webhook, scope: Option.none(), schemaVersion: version })
+              .pipe(Effect.map((marks) => marks.some((m) => m.at === sid("7")))),
+          )
           yield* Fiber.interrupt(start)
         }),
     }))

@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option, Order, Schema } from "effect"
 import { advanceSyncId, compareSyncId, Epoch, ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import { SchemaVersion } from "../core/schema-version.js"
-import { type CollectionKey, serializeKey } from "../core/collection-key.js"
+import { type CollectionKey, serializeKey, type SubsetKey } from "../core/collection-key.js"
 import {
   type JournalStore,
   JournalWrite,
@@ -112,6 +112,17 @@ export interface SyncJournalShape {
   readonly setLastResync: (at: SyncId) => Effect.Effect<void>
 
   /**
+   * Every durable subset coverage mark for one partial collection — the coverage-map
+   * hydration read on mount. Only records written under the same `schemaVersion`
+   * qualify (a schema change dumped the saved table, so old marks describe dead rows).
+   */
+  readonly subsetMarks: (args: {
+    readonly entity: string
+    readonly scope: Option.Option<string>
+    readonly schemaVersion: SchemaVersion
+  }) => Effect.Effect<ReadonlyArray<{ readonly subset: SubsetKey; readonly at: SyncId }>>
+
+  /**
    * The global high-water mark of the log: the newest syncId durably ingested from
    * *any* model. Gates catchup (`from = lastIngested ?? "0"`) and is the "how far has
    * the world moved" side of the mount decision. NOT per-collection "applied" — an
@@ -160,23 +171,35 @@ const LAST_INGESTED_KEY = "cursor"
 
 /**
  * The stored last-applied mark — a structured value so `prune` can group by `entity`
- * without ever parsing a key (`serializeKey` stays write-only). `schemaVersion` is the
- * record's supersede guard, not part of its identity: one record per collection key.
+ * and `subsetMarks` can filter by `(scope, subset)` without ever parsing a key
+ * (`serializeKey` stays write-only). `schemaVersion` is the record's supersede guard,
+ * not part of its identity: one record per collection key. `scope`/`subset` are
+ * optional at rest so pre-partial-index records still decode (⇒ `None`).
  */
 const LastAppliedRecord = Schema.Struct({
   entity: Schema.String,
   schemaVersion: SchemaVersion,
   at: SyncId,
+  scope: Schema.OptionFromOptionalKey(Schema.String),
+  subset: Schema.OptionFromOptionalKey(
+    Schema.Struct({ indexKey: Schema.String, keyValue: Schema.String }),
+  ),
 })
 type LastAppliedRecord = typeof LastAppliedRecord.Type
 
 /** Supersede-or-advance: same version ⇒ monotonic; version change ⇒ replace outright. */
 const foldLastApplied = (
   current: Option.Option<LastAppliedRecord>,
-  next: { readonly entity: string; readonly schemaVersion: SchemaVersion; readonly at: SyncId },
+  next: {
+    readonly key: CollectionKey<unknown>
+    readonly schemaVersion: SchemaVersion
+    readonly at: SyncId
+  },
 ): LastAppliedRecord => ({
-  entity: next.entity,
+  entity: next.key.entity,
   schemaVersion: next.schemaVersion,
+  scope: next.key.scope,
+  subset: next.key.subset,
   at: advanceSyncId(
     current.pipe(
       Option.filter((record) => record.schemaVersion === next.schemaVersion),
@@ -208,7 +231,7 @@ const DEFAULT_DATABASE_NAME = "live-collection-eventlog"
  * single-writer read-fold-commit sequences (sequential under broker ingest) and
  * all-or-nothing `commit`s. Store faults are defects; the error channel stays empty.
  */
-const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
+export const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
   const decodeRows = (raw: ReadonlyArray<unknown>): Effect.Effect<ReadonlyArray<JournalEvent>> =>
     Schema.decodeUnknownEffect(StoredEvents)(raw).pipe(Effect.orDie)
 
@@ -312,10 +335,25 @@ const makeSyncJournal = (store: JournalStore): SyncJournalShape => {
     setCollectionLastAppliedSyncId: ({ key, schemaVersion, at }) =>
       getLastAppliedRecord(key).pipe(
         Effect.flatMap((current) =>
-          store.commit(
-            JournalWrite.Patch({
-              putRecords: [[lastAppliedKey(key), foldLastApplied(current, { entity: key.entity, schemaVersion, at })]],
-            }),
+          Schema.encodeEffect(LastAppliedRecord)(foldLastApplied(current, { key, schemaVersion, at })).pipe(
+            Effect.orDie,
+            Effect.flatMap((encoded) =>
+              store.commit(JournalWrite.Patch({ putRecords: [[lastAppliedKey(key), encoded]] })),
+            ),
+          ),
+        ),
+      ),
+
+    subsetMarks: ({ entity, scope, schemaVersion }) =>
+      readLastAppliedRecords.pipe(
+        Effect.map((records) =>
+          records.flatMap((record) =>
+            record.entity === entity &&
+            record.schemaVersion === schemaVersion &&
+            Option.getOrNull(record.scope) === Option.getOrNull(scope) &&
+            Option.isSome(record.subset)
+              ? [{ subset: record.subset.value, at: record.at }]
+              : [],
           ),
         ),
       ),

@@ -13,6 +13,8 @@ export interface SyncSession<T> {
   readonly remove: (id: ModelId) => void
   /** Replace the whole synced store with `rows` — one transaction: truncate, then write each row. */
   readonly replace: (rows: ReadonlyArray<T>) => void
+  /** Delete + upsert in one transaction — the subset slice replace. */
+  readonly patch: (args: { readonly deleteKeys: ReadonlyArray<ModelId>; readonly rows: ReadonlyArray<T> }) => void
 }
 
 /**
@@ -32,6 +34,7 @@ export const makeSyncWrite = <T>(): Effect.Effect<{
       writeSynced: (entity) => Deferred.await(session).pipe(Effect.map((s) => s.upsert(entity))),
       deleteSynced: (id) => Deferred.await(session).pipe(Effect.map((s) => s.remove(id))),
       replaceSynced: (rows) => Deferred.await(session).pipe(Effect.map((s) => s.replace(rows))),
+      patchSynced: (args) => Deferred.await(session).pipe(Effect.map((s) => s.patch(args))),
     }
     const provide = (s: SyncSession<T>): void => {
       Deferred.doneUnsafe(session, Exit.succeed(s))

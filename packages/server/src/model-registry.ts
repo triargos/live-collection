@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, type Option, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import type { ModelDescriptor, ModelId, SyncGroup } from "@triargos/live-collection-protocol"
 
 /**
@@ -46,6 +46,19 @@ export interface ResolvedModel {
   ) => Effect.Effect<ReadonlyMap<ModelId, unknown>>
   /** Encode a hydrated entity to its wire form via the descriptor's schema. */
   readonly encode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>
+  /**
+   * One declared partial-index fetch, wire-encoded — present iff the descriptor
+   * declares `indexes`. Returns `undefined` for an undeclared `indexKey` (the caller
+   * fails the batch loudly); `Option.none` ⇒ visibility refused (`Forbidden` on the
+   * wire); `Option.some(rows)` ⇒ the subset's full membership, already encoded via
+   * the descriptor schema. A row that fails to encode is a defect: the registry's
+   * schema disagrees with its own repo — a config bug, not a runtime condition.
+   */
+  readonly indexFetch?: (
+    indexKey: string,
+    keyValue: string,
+    syncGroups: ReadonlyArray<SyncGroup>
+  ) => Effect.Effect<Option.Option<ReadonlyArray<unknown>>> | undefined
 }
 
 export interface ModelRegistryShape {
@@ -59,10 +72,32 @@ const resolve = (registry: Record<string, ModelDescriptor<string, any, never>>):
     // whose plain encoded form isn't JSON-native (Date, Uint8Array, ...) get an
     // explicit serialization instead of whatever JSON.stringify improvises.
     const encodeEntity = Schema.encodeEffect(Schema.toCodecJson(descriptor.schema))
+    const indexes = descriptor.indexes
     models.set(name, {
       hydrate: descriptor.hydrate,
       encode: (value) => encodeEntity(value),
-      ...(descriptor.hydrateMany !== undefined ? { hydrateMany: descriptor.hydrateMany } : {})
+      ...(descriptor.hydrateMany !== undefined ? { hydrateMany: descriptor.hydrateMany } : {}),
+      ...(indexes !== undefined
+        ? {
+            indexFetch: (
+              indexKey: string,
+              keyValue: string,
+              syncGroups: ReadonlyArray<SyncGroup>
+            ) => {
+              const fetch = indexes[indexKey]
+              if (fetch === undefined) return undefined
+              return fetch(keyValue, syncGroups).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.succeedNone,
+                    onSome: (rows) =>
+                      Effect.forEach(rows, (row) => encodeEntity(row)).pipe(Effect.orDie, Effect.asSome)
+                  })
+                )
+              )
+            }
+          }
+        : {})
     })
   }
   return { models }

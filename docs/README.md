@@ -10,6 +10,7 @@
 - [Collections](./collections.md) — `defineCollection` in full: scoped vs global, optimistic writes, reading, lifecycle.
 - [Persistence](./persistence.md) — local SQLite setup, schema versioning, Vite config, multi-tab behavior.
 - [React](./react.md) — `useLiveSync` and reading with `useLiveQuery`.
+- [Partial indexes](./partial-indexes.md) — load keyed subsets of a model on demand (`partial.by`, `loadBy*`, `usePartialLoad`) and keep them live.
 
 ## Under the hood
 

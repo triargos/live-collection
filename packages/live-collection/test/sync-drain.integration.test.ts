@@ -110,6 +110,31 @@ describe("defineCollection broker drain", () => {
       }),
     ))
 
+  it.live("deletes the local row when an upsert moves it out of this scope", () =>
+    withRuntime(({ runtime, events }) =>
+      Effect.gen(function* () {
+        const webhooks = defineCollection({
+          runtime,
+          entity: "Webhook",
+          schema: Webhook,
+          getKey: (row) => key(row.id),
+          scopeOf: (row) => row.orgId,
+          listFn: (scope) => Effect.succeed([{ id: "seed", orgId: scope }]),
+        })
+        const collection = webhooks("org-1")
+        yield* Effect.promise(() => collection.preload())
+        yield* waitUntil(() => collection.has(key("seed")))
+
+        yield* Queue.offer(events, event("1", { id: "moving", orgId: "org-1" }, "moving"))
+        yield* waitUntil(() => collection.has(key("moving")))
+
+        // The same entity re-parented into another org: the stale local copy must go.
+        yield* Queue.offer(events, event("2", { id: "moving", orgId: "org-2" }, "moving"))
+        yield* waitUntil(() => !collection.has(key("moving")))
+        assert.isTrue(collection.has(key("seed")))
+      }),
+    ))
+
   it.live("decodes non-JSON-native fields through the canonical JSON codec — Date arrives as an ISO string", () =>
     withRuntime(({ runtime, events }) =>
       Effect.gen(function* () {

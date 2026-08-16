@@ -1,19 +1,22 @@
-import { Effect, Fiber, type ManagedRuntime, Option, Schema, type Scope } from "effect"
+import { Effect, Fiber, type ManagedRuntime, Option, Ref, Schema, type Scope, Semaphore } from "effect"
 import {
+  type Collection,
   createCollection,
   type DeleteMutationFnParams,
   type InsertMutationFnParams,
   type UpdateMutationFnParams,
 } from "@tanstack/db"
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core"
-import type { ModelId } from "@triargos/live-collection-protocol"
+import { ModelName, type ModelId } from "@triargos/live-collection-protocol"
 import type { SyncWrite } from "./persistence/sync-write.js"
 import type { LiveCollection } from "./persistence/live-collection.js"
 import { liveCollectionOptions } from "./persistence/live-collection-options.js"
 import { deriveSchemaVersion } from "./core/schema-version.js"
 import type { LiveRuntime } from "./runtime/live-runtime.js"
-import { drainCollection } from "./collection-drain.js"
+import { drainCollection, drainPartialCollection } from "./collection-drain.js"
 import { type CollectionKey, globalKey, scopedKey, serializeKey } from "./core/collection-key.js"
+import { SyncBroker } from "./client/sync-broker.js"
+import { applySlice, emptyCoverage, makePartialApplier, type PartialWrite } from "./partial-coverage.js"
 
 /**
  * The per-model metadata each collection drain reads from its handle (`handle._meta`):
@@ -31,6 +34,8 @@ export interface ModelMeta<T extends object> {
   readonly getKey: (entity: T) => ModelId
   readonly scopeOf: Option.Option<(entity: T) => string>
   readonly listFn: (scope: Option.Option<string>) => Effect.Effect<ReadonlyArray<T>>
+  /** `Some` for a partial collection — its client-side membership extractors, by index key. */
+  readonly partial: Option.Option<{ readonly by: Record<string, (entity: T) => string> }>
 }
 
 /**
@@ -49,6 +54,34 @@ export type ScopedHandle<T extends object> = ((scope: string) => LiveCollection<
 }
 /** Either collection handle — global or scoped. */
 export type Handle<T extends object> = GlobalHandle<T> | ScopedHandle<T>
+
+/**
+ * The generated ensure methods of a partial collection — one per `partial.by` key,
+ * `templateId` → `loadByTemplateId`. Each is an idempotent ensure: it resolves when
+ * the subset's local rows are current (Skip / Replay / Snapshot — only the last hits
+ * the wire), rejects with `SubsetForbidden` on a visibility refusal (no mark written;
+ * the next call retries) or `HydrateFailed` on network trouble.
+ */
+export type LoadByMethods<T extends object, By extends Record<string, (entity: T) => string>> = {
+  [K in keyof By as `loadBy${Capitalize<string & K>}`]: (value: ReturnType<By[K]>) => Promise<void>
+}
+
+/**
+ * A partial collection — a native TanStack collection whose rows are the union of the
+ * subsets ensured so far, with the generated `loadBy*` ensures merged into `utils`.
+ */
+export type PartialLiveCollection<
+  T extends object,
+  By extends Record<string, (entity: T) => string>,
+> = Collection<T, ModelId, SyncWrite<T> & LoadByMethods<T, By>, never, T>
+
+/**
+ * A partial collection's handle: `templateValues()` mounts (or reuses) the single
+ * shared instance. Subsets are loaded through `utils.loadBy*`, read through
+ * `useLiveQuery` — a query is only complete for subsets you have ensured.
+ */
+export type PartialHandle<T extends object, By extends Record<string, (entity: T) => string>> =
+  (() => PartialLiveCollection<T, By>) & { readonly _meta: ModelMeta<T> }
 
 /**
  * The optional **optimistic write path**. The handlers are TanStack DB's native mutation
@@ -173,12 +206,37 @@ interface ScopedBase<T extends object, R> extends ConfigBase<T> {
   /** Fetches one scope's current server truth — run on cold starts and resyncs to (re)build that instance's base. */
   readonly listFn: (scope: string) => Effect.Effect<ReadonlyArray<T>, never, R>
 }
+interface PartialBase<T extends object, By extends Record<string, (entity: T) => string>>
+  extends ConfigBase<T> {
+  /**
+   * Partial collection: rows arrive subset-by-subset through the generated
+   * `utils.loadBy*` ensures and the batch endpoint — there is **no `listFn`** (the
+   * batch endpoint is the snapshot path) and **no `scopeOf`**. Each key here must
+   * match an index the server registry declares under `indexes`; drift is caught
+   * loudly at runtime (`UnknownIndexError` → 400).
+   */
+  readonly partial: { readonly by: By }
+  readonly listFn?: never
+  readonly scopeOf?: never
+}
 type GlobalConfig<T extends object, InsertE, UpdateE, DeleteE, R> = GlobalBase<T, R> &
   MutationHandlers<T, InsertE, UpdateE, DeleteE, R> &
   ServicesOf<R>
 type ScopedConfig<T extends object, InsertE, UpdateE, DeleteE, R> = ScopedBase<T, R> &
   MutationHandlers<T, InsertE, UpdateE, DeleteE, R> &
   ServicesOf<R>
+type PartialConfig<
+  T extends object,
+  By extends Record<string, (entity: T) => string>,
+  InsertE,
+  UpdateE,
+  DeleteE,
+  R,
+> = PartialBase<T, By> & MutationHandlers<T, InsertE, UpdateE, DeleteE, R> & ServicesOf<R>
+
+/** Exactly TS's `Capitalize` at runtime — `templateId` → `loadByTemplateId`. */
+export const loadByMethodName = (indexKey: string): string =>
+  `loadBy${indexKey.length === 0 ? "" : indexKey[0]!.toUpperCase() + indexKey.slice(1)}`
 
 /**
  * Define one synced model and get back its collection handle. Calling the handle mounts
@@ -218,6 +276,14 @@ type ScopedConfig<T extends object, InsertE, UpdateE, DeleteE, R> = ScopedBase<T
  */
 export function defineCollection<
   T extends object,
+  By extends Record<string, (entity: T) => string>,
+  InsertE = never,
+  UpdateE = never,
+  DeleteE = never,
+  R = never,
+>(config: PartialConfig<T, By, InsertE, UpdateE, DeleteE, R>): PartialHandle<T, By>
+export function defineCollection<
+  T extends object,
   InsertE = never,
   UpdateE = never,
   DeleteE = never,
@@ -239,10 +305,12 @@ export function defineCollection<
 >(
   config:
     | GlobalConfig<T, InsertE, UpdateE, DeleteE, R>
-    | ScopedConfig<T, InsertE, UpdateE, DeleteE, R>,
-): Handle<T> {
+    | ScopedConfig<T, InsertE, UpdateE, DeleteE, R>
+    | PartialConfig<T, Record<string, (entity: T) => string>, InsertE, UpdateE, DeleteE, R>,
+): Handle<T> | PartialHandle<T, Record<string, (entity: T) => string>> {
   const { runtime, entity, schema, getKey } = config
   const scopeOf = "scopeOf" in config ? config.scopeOf : undefined
+  const partialBy = "partial" in config && config.partial !== undefined ? config.partial.by : undefined
   const schemaVersion = deriveSchemaVersion(schema)
 
   // The `services` ManagedRuntime IS the executor for everything carrying the app's `R` — handlers run
@@ -273,14 +341,18 @@ export function defineCollection<
     schema,
     getKey,
     scopeOf: Option.fromNullishOr(scopeOf),
+    partial: Option.fromNullishOr(partialBy).pipe(Option.map((by) => ({ by }))),
     listFn:
-      scopeOf === undefined
-        ? () => provideServices((config as GlobalBase<T, R>).listFn)
-        : (scope) =>
-            Option.match(scope, {
-              onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
-              onSome: (s) => provideServices((config as ScopedBase<T, R>).listFn(s)),
-            }),
+      partialBy !== undefined
+        ? // Never reached: the partial drain snapshots through the batch endpoint.
+          () => Effect.die(`[defineCollection] partial "${entity}" collections have no listFn`)
+        : scopeOf === undefined
+          ? () => provideServices((config as GlobalBase<T, R>).listFn)
+          : (scope) =>
+              Option.match(scope, {
+                onNone: () => Effect.die(`[defineCollection] scoped "${entity}" snapshot with no scope`),
+                onSome: (s) => provideServices((config as ScopedBase<T, R>).listFn(s)),
+              }),
   }
 
   // Bridge an Effect handler (with R) to the native TanStack handler (a Promise): run the handler, then
@@ -335,8 +407,120 @@ export function defineCollection<
       }),
     )
 
+  // ── Partial variant: shared instance + coverage map + gate + generated loadBy* ──
+  type PartialInstance = PartialLiveCollection<T, Record<string, (entity: T) => string>>
+
+  const makePartialFor = (
+    key: CollectionKey<PartialInstance>,
+    by: Record<string, (entity: T) => string>,
+  ): Effect.Effect<PartialInstance, never, Scope.Scope> =>
+    Effect.gen(function* () {
+      const coverage = yield* Ref.make(emptyCoverage)
+      // One permit serializes ALL collection application — the drain fiber and every
+      // ensure's replaceSlice/replay — so a response slice and live events never
+      // interleave mid-apply.
+      const gate = yield* Semaphore.make(1)
+      const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(schema))
+      const modelName = ModelName.make(entity)
+
+      // The loadBy* closures and the drain need the collection, which exists only
+      // after createCollection returns — bound immediately below, read only at call
+      // time (every caller runs after the mount).
+      let bound: PartialInstance | undefined
+      const write: PartialWrite<T> = {
+        has: (id) => bound!.has(id),
+        currentRows: () => bound!.values(),
+        writeSynced: (row) => bound!.utils.writeSynced(row),
+        deleteSynced: (id) => bound!.utils.deleteSynced(id),
+        replaceSynced: (rows) => bound!.utils.replaceSynced(rows),
+      }
+      const applier = makePartialApplier({ entity, by, getKey, decode, write, coverage })
+
+      // Idempotent ensure with in-flight dedupe: concurrent calls for one subset share
+      // one promise; a settled call (success or failure) clears, so retries re-run.
+      const inFlight = new Map<string, Promise<void>>()
+      const loadFor = (indexKey: string) => {
+        const extractor = by[indexKey]!
+        return (value: string): Promise<void> => {
+          const cacheKey = `${indexKey}\u0000${value}`
+          const existing = inFlight.get(cacheKey)
+          if (existing !== undefined) return existing
+          const subset = { indexKey, keyValue: value }
+          const promise = runtime
+            .runEnsure(
+              Effect.flatMap(SyncBroker, (broker) =>
+                broker.ensureSubset({
+                  modelName,
+                  scope: Option.none(),
+                  schemaVersion,
+                  subset,
+                  replaceSlice: (rows, at) =>
+                    gate.withPermit(
+                      applySlice({
+                        entity,
+                        extractor,
+                        getKey,
+                        decode,
+                        currentRows: () => bound!.values(),
+                        patchSynced: (args) => bound!.utils.patchSynced(args),
+                        coverage,
+                        subset,
+                        rows,
+                        at,
+                      }),
+                    ),
+                  apply: (signal) => gate.withPermit(Effect.asVoid(applier(signal))),
+                }),
+              ),
+            )
+            .finally(() => inFlight.delete(cacheKey))
+          inFlight.set(cacheKey, promise)
+          return promise
+        }
+      }
+      const loadMethods = Object.fromEntries(
+        Object.keys(by).map((indexKey) => [loadByMethodName(indexKey), loadFor(indexKey)]),
+      )
+
+      const inner = liveCollectionOptions({ getKey })
+      const collection = createCollection(
+        // TUtils stays SyncWrite<T>: the loadBy* methods ride its structural index
+        // signature; the handle's PartialLiveCollection type names them precisely.
+        persistedCollectionOptions<T, ModelId, never, SyncWrite<T>>({
+          persistence: runtime.persistence,
+          id: serializeKey(key),
+          schemaVersion,
+          ...inner,
+          utils: { ...inner.utils, ...loadMethods },
+          ...(config.onInsert ? { onInsert: bridge(config.onInsert, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
+          ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
+          ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => p.collection.utils.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
+        }),
+        // The runtime utils really do carry the loadBy* methods (merged just above);
+        // TanStack's config type can't express the merged TUtils, so the instance is
+        // renamed to its precise public type here, once.
+      ) as unknown as PartialInstance
+      bound = collection
+
+      const drain = drainPartialCollection({ meta, by, write, schemaVersion, coverage, gate })
+      yield* Effect.sync(() => runtime.forkDrain(drain)).pipe(
+        Effect.flatMap((fiber) =>
+          Effect.addFinalizer(() =>
+            Fiber.interrupt(fiber).pipe(Effect.andThen(Effect.promise(() => collection.cleanup()))),
+          ),
+        ),
+      )
+      return collection
+    })
+
   const mount = (key: CollectionKey<LiveCollection<T>>): LiveCollection<T> =>
     Effect.runSync(runtime.registry.getOrCreate({ key, make: makeFor(key) }))
+
+  if (partialBy !== undefined) {
+    const key = globalKey<PartialInstance>(entity)
+    const handle = () => Effect.runSync(runtime.registry.getOrCreate({ key, make: makePartialFor(key, partialBy) }))
+    return Object.assign(handle, { _meta: meta }) as PartialHandle<T, Record<string, (entity: T) => string>>
+  }
 
   const handle =
     scopeOf === undefined
