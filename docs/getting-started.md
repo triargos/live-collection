@@ -51,7 +51,7 @@ import {
   openBrowserWASQLiteOPFSDatabase,
 } from "@tanstack/browser-db-sqlite-persistence"
 import { Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
 const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "myapp" })
 const persistence = createBrowserWASQLitePersistence({ database })
@@ -137,7 +137,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 
 function TodoList({ projectId }: { projectId: string }) {
   const todos = todosCollection(projectId)
-  const { data } = useLiveQuery((q) => q.from({ todo: todos }), [projectId])
+  const { data } = useLiveQuery((q) => q.from({ todo: todos }))
 
   return (
     <ul>

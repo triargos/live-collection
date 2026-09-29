@@ -82,9 +82,8 @@ function TemplateEditor({ templateId }: { templateId: string }) {
 
   const subset = usePartialLoad(values, { templateId })
 
-  const { data } = useLiveQuery(
-    (q) => q.from({ v: values }).where(({ v }) => eq(v.templateId, templateId)),
-    [templateId],
+  const { data } = useLiveQuery((q) =>
+    q.from({ v: values }).where(({ v }) => eq(v.templateId, templateId)),
   )
 
   return SubsetStatus.$match(subset, {

@@ -96,9 +96,8 @@ export const statusFromRejection = (error: unknown, retry: () => void): SubsetSt
  * ```tsx
  * const values = templateValues()
  * const subset = usePartialLoad(values, { templateId })
- * const { data } = useLiveQuery(
- *   (q) => q.from({ v: values }).where(({ v }) => eq(v.templateId, templateId)),
- *   [templateId],
+ * const { data } = useLiveQuery((q) =>
+ *   q.from({ v: values }).where(({ v }) => eq(v.templateId, templateId)),
  * )
  * return SubsetStatus.$match(subset, {
  *   Loading: () => <Spinner />,          // or data — persisted rows are stale-while-revalidate

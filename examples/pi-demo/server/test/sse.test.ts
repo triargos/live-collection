@@ -1,4 +1,4 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import {

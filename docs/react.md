@@ -24,13 +24,13 @@ import { useLiveQuery } from "@tanstack/react-db"
 
 function TodoList({ projectId }: { projectId: string }) {
   const todos = todosCollection(projectId)
-  const { data } = useLiveQuery((q) => q.from({ todo: todos }), [projectId])
+  const { data } = useLiveQuery((q) => q.from({ todo: todos }))
 
   return <ul>{data.map((todo) => <li key={todo.id}>{todo.title}</li>)}</ul>
 }
 ```
 
-Calling the handle during render is synchronous and cheap — the registry returns the same instance for the same `(entity, scope)`. Joins across collections, filters, and aggregations are plain `useLiveQuery` features.
+Calling the handle during render is synchronous and cheap — the registry returns the same instance for the same `(entity, scope)`. No dependency array: `useLiveQuery` derives the query's identity from the query itself, and a different scope yields a different collection instance, so the query re-runs on its own. Joins across collections, filters, and aggregations are plain `useLiveQuery` features.
 
 Writes go straight through the collection: `todos.insert(...)`, `todos.update(...)`, `todos.delete(...)` — see [collections](./collections.md#optimistic-writes).
 

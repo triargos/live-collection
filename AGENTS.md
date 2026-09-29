@@ -24,11 +24,12 @@ Guidance for agents working in this repository.
 - **Effect v4** — runtime, services, layers, schemas, streams, and HTTP.
 - **TanStack DB `persistedCollectionOptions`** from
   `@tanstack/db-sqlite-persistence-core` — client persistence. The persistence integration is alpha:
-  the catalog range is `^0.6.16` and `pnpm-lock.yaml` holds the exact build, so bumping means a
+  the catalog range is `^0.9.2` and `pnpm-lock.yaml` holds the exact build, so bumping means a
   deliberate `pnpm update`, not a passive install.
-- **`effect/unstable/http`** — HTTP client/response APIs. Keep these unstable imports confined to
+- **`effect/http`** — HTTP client/response APIs (`@stability unstable`). Keep these imports confined to
   `packages/live-collection/src/client/sync-transport.ts`,
-  `packages/live-collection/src/client/catchup-client.ts`, and application-edge wiring.
+  `packages/live-collection/src/client/catchup-client.ts`,
+  `packages/live-collection/src/client/hydrate-client.ts`, and application-edge wiring.
 - **React** is optional and lives in `@triargos/live-collection-react`; core stays framework-neutral.
 - **Tooling:** pnpm workspaces, TypeScript project references, Vitest/`@effect/vitest`, and Changesets.
 
@@ -159,11 +160,19 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 - Effect tests import `assert`, `describe`, and `it` from `@effect/vitest`; use `it.effect` or `it.live`.
   Use `assert`, not `expect`, in Effect tests.
 - Pure tests may use regular Vitest.
-- Property tests import FastCheck from `effect/testing/FastCheck`:
+- Property tests use Effect's native `Arbitrary` through `it.prop` from `@effect/vitest`. Effect no longer
+  ships fast-check. Derive inputs from Schemas (`Schema.Int.check(Schema.isBetween(...))`,
+  `Schema.Union`, `Schema.Literals`) and compose them with `Arbitrary.schema`, `Arbitrary.array`,
+  `Arbitrary.all`, and `Arbitrary.map`:
 
   ```ts
-  import * as fc from "effect/testing/FastCheck"
+  import { Arbitrary, Schema } from "effect"
+  import { it } from "@effect/vitest"
+
+  it.prop("name", [streamArb, Schema.Int], ([events, n]) => { /* assert */ }, { arbitrary: { size: 30 } })
   ```
+
+  Array length grows with the check `size` (default 10), so raise `size` when `maxLength` is larger.
 
 - Test behavior through public service seams and real `layerMemory` adapters; do not use `vi.mock`,
   `vi.stubGlobal`, or `vi.spyOn` when dependency injection can drive the behavior.
@@ -173,15 +182,18 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 
 ## Effect v4 notes
 
-- Workspace Effect packages sit at `^4.0.0-rc.108` in the catalog. The caret may float to a newer rc
+- Workspace Effect packages sit at `^4.0.0-rc.118` in the catalog. The caret may float to a newer rc
   or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all packages
   together.
 - Schema-backed error classes are `Schema.TaggedError`; `Schema.TaggedErrorClass` is gone. The decode
   failure type is `Schema.SchemaError`, not a top-level `SchemaError` module.
 - The workspace cannot mix Effect v3 and v4 in one type graph.
-- `@effect/platform` is not a dependency. HTTP client APIs come from `effect/unstable/http`, HttpApi APIs
-  from `effect/unstable/httpapi`, and Node integrations from matching `@effect/platform-node` v4 versions.
-- Unstable HTTP/HttpApi imports may break between releases; containment at existing adapters and app edges
+- `@effect/platform` is not a dependency. HTTP client APIs come from `effect/http`, HttpApi APIs
+  from `effect/http-api`, and Node integrations from matching `@effect/platform-node` v4 versions.
+  The old `effect/unstable/*` paths are gone (every unstable module moved to `effect/*`), and
+  `NetAddress` lives in `effect/net`.
+- Built-in `Config` constructors are PascalCase: `Config.String`, `Config.Port`, and so on.
+- HTTP/HttpApi APIs are still `@stability unstable` and may break between releases; containment at existing adapters and app edges
   is the chosen mitigation, not another wrapper abstraction.
 
 ## Anti-references

@@ -11,20 +11,20 @@ packages:
 # Ranges are carets because these values become the peerDependency ranges consumers must
 # satisfy. The exact versions the workspace builds and tests against live in pnpm-lock.yaml.
 catalog:
-  effect: ^4.0.0-rc.108
-  "@effect/platform-node": ^4.0.0-rc.108
-  "@effect/vitest": ^4.0.0-rc.108
-  "@effect/language-service": ^0.87.2
-  "@effect/tsgo": 0.36.4
-  "@tanstack/db": ^0.6.16
-  "@tanstack/db-sqlite-persistence-core": ^0.2.8
-  "@tanstack/react-db": ^0.1.94
-  "@tanstack/browser-db-sqlite-persistence": ^0.2.8
+  effect: ^4.0.0-rc.118
+  "@effect/platform-node": ^4.0.0-rc.118
+  "@effect/vitest": ^4.0.0-rc.118
+  "@effect/language-service": ^0.87.3
+  "@effect/tsgo": 0.46.1
+  "@tanstack/db": ^0.9.2
+  "@tanstack/db-sqlite-persistence-core": ^0.2.23
+  "@tanstack/react-db": ^0.4.1
+  "@tanstack/browser-db-sqlite-persistence": ^0.2.23
   idb: ^8.0.3
-  react: ^19.2.7
-  react-dom: ^19.2.7
-  "@types/react": ^19.2.17
-  "@types/react-dom": ^19.2.3
-  "@types/node": ^26.0.0
+  react: ^19.3.0
+  react-dom: ^19.3.0
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
+  "@types/node": ^26.6.3
   typescript: ^7.0.2
-  vitest: ^4.1.10
+  vitest: ^5.0.2

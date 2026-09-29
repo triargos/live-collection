@@ -56,7 +56,6 @@ export function TodoList({ bundle, projectId, syncing = false }: TodoListProps) 
         }))
         .orderBy(({ todo }) => todo.createdAt, "desc")
     },
-    [Option.getOrElse(projectId, () => "all")],
   )
 
   const addTodo = (event: FormEvent<HTMLFormElement>) => {

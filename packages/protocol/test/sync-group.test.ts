@@ -1,14 +1,14 @@
-import { Schema } from "effect"
-import * as fc from "effect/testing/FastCheck"
+import { Arbitrary, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { deriveGroup, intersects, SyncGroup } from "../src/sync-group.js"
 
 const decode = Schema.decodeUnknownResult(SyncGroup)
 const g = (s: string): SyncGroup => Schema.decodeUnknownSync(SyncGroup)(s)
 
-const groupArb: fc.Arbitrary<SyncGroup> = fc
-  .stringMatching(/^[a-z0-9:-]{1,32}$/)
-  .map(g)
+const groupsArb = Arbitrary.array(
+  Arbitrary.schema(SyncGroup.check(Schema.isPattern(/^[a-z0-9:-]{1,32}$/))),
+  { maxLength: 5 }
+)
 
 describe("SyncGroup schema", () => {
   it("accepts any non-empty string — structure is an app convention, not grammar", () => {
@@ -39,17 +39,9 @@ describe("intersects (literal overlap, ACL-critical)", () => {
     assert.isFalse(intersects([g("organization:a")], [g("organization:a:channel:x")]))
   })
 
-  it("is symmetric and overlap-exact", () => {
-    fc.assert(
-      fc.property(
-        fc.array(groupArb, { maxLength: 5 }),
-        fc.array(groupArb, { maxLength: 5 }),
-        (a, b) => {
-          assert.strictEqual(intersects(a, b), intersects(b, a))
-          const overlap = a.some((x) => b.includes(x))
-          assert.strictEqual(intersects(a, b), overlap)
-        }
-      )
-    )
+  it.prop("is symmetric and overlap-exact", [groupsArb, groupsArb], ([a, b]) => {
+    assert.strictEqual(intersects(a, b), intersects(b, a))
+    const overlap = a.some((x) => b.includes(x))
+    assert.strictEqual(intersects(a, b), overlap)
   })
 })

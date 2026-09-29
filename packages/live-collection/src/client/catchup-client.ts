@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient } from "effect/http"
 import { type CatchupRequest, CatchupResponse, SyncId } from "@triargos/live-collection-protocol"
 
 /**

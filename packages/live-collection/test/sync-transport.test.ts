@@ -1,6 +1,6 @@
 import { Cause, DateTime, Effect, Layer, Option, Queue, Stream } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientResponse } from "effect/http"
 import {
   type HydratedSyncEventEnvelope,
   ModelId,

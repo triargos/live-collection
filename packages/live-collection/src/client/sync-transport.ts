@@ -1,6 +1,6 @@
 import { HydratedSyncEventEnvelope } from "@triargos/live-collection-protocol";
 import { Context, type Duration, Effect, Layer, type Queue, Schema, Stream } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 /**
  * The live connection dropped — it ended, errored, or fell silent past the keep-alive
