@@ -1,0 +1,17 @@
+{
+  "lsp": {
+    "typescript-language-server": {
+      "binary": {
+        "path": "node_modules/.bin/tsc",
+        "arguments": ["--lsp", "--stdio"]
+      }
+    }
+  },
+
+  "languages": {
+    "TypeScript": { "language_servers": ["typescript-language-server", "!vtsls", "!typescript-ls", "!eslint", "..."] },
+    "TSX": { "language_servers": ["typescript-language-server", "!vtsls", "!typescript-ls", "!eslint", "..."] },
+    "JavaScript": { "language_servers": ["typescript-language-server", "!vtsls", "!typescript-ls", "!eslint", "..."] },
+    "JSX": { "language_servers": ["typescript-language-server", "!vtsls", "!typescript-ls", "!eslint", "..."] }
+  }
+}
