@@ -1,5 +1,6 @@
 import { Context } from "effect"
-import { HttpServer } from "effect/unstable/http"
+import { HttpServer } from "effect/http"
+import { NetAddress } from "effect/net"
 
 /**
  * Reads the ephemeral TCP port the test server bound (via `port: 0`) and
@@ -8,7 +9,7 @@ import { HttpServer } from "effect/unstable/http"
  */
 export const testServerUrl = (services: Context.Context<HttpServer.HttpServer>): string => {
   const address = Context.get(services, HttpServer.HttpServer).address
-  if (address._tag !== "TcpAddress") {
+  if (!NetAddress.isInetAddress(address)) {
     throw new Error("test server must listen on a TCP address")
   }
   return `http://127.0.0.1:${address.port}`

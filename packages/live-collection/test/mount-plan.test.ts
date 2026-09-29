@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest"
-import { Option } from "effect"
-import { FastCheck as fc } from "effect/testing"
+import { describe, expect, it } from "@effect/vitest"
+import { Arbitrary, Option, Schema } from "effect"
 import { ModelId, ModelName, SyncId, compareSyncId } from "@triargos/live-collection-protocol"
 import type { JournalEvent } from "../src/client/sync-journal.js"
 import { PublishedItem } from "../src/client/ingest.js"
 import { MountDecision, concernsModel, dropStale, planMount } from "../src/client/mount-plan.js"
+
+const IntBetween = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
 
 const id = (n: number) => SyncId.make(String(n))
 const some = (n: number) => Option.some(id(n))
@@ -64,22 +65,22 @@ describe("planMount", () => {
     expect(plan({ lastApplied: 5, lastIngested: 9, lastResync: 5 }).decision).toEqual(MountDecision.Replay())
   })
 
-  it("property: since and tailGuardSeed are always consistent with the decision", () => {
-    const maybe = fc.option(fc.integer({ min: 0, max: 50 }), { nil: undefined })
-    fc.assert(
-      fc.property(maybe, maybe, maybe, maybe, (lastApplied, lastIngested, highestPruned, lastResync) => {
-        const result = plan({ lastApplied, lastIngested, highestPruned, lastResync })
-        // The tail guard never trails the replay start: nothing read is later re-emitted by the tail.
-        expect(compareSyncId(result.tailGuardSeed, result.since)).toBeGreaterThanOrEqual(0)
-        if (result.decision._tag === "Snapshot") {
-          expect(result.since).toBe(result.decision.at)
-          expect(result.tailGuardSeed).toBe(result.decision.at)
-        } else {
-          expect(result.since).toBe(id(lastApplied ?? 0))
-        }
-      }),
-    )
-  })
+  const maybe = Schema.UndefinedOr(IntBetween(0, 50))
+  it.prop(
+    "property: since and tailGuardSeed are always consistent with the decision",
+    [maybe, maybe, maybe, maybe],
+    ([lastApplied, lastIngested, highestPruned, lastResync]) => {
+      const result = plan({ lastApplied, lastIngested, highestPruned, lastResync })
+      // The tail guard never trails the replay start: nothing read is later re-emitted by the tail.
+      expect(compareSyncId(result.tailGuardSeed, result.since)).toBeGreaterThanOrEqual(0)
+      if (result.decision._tag === "Snapshot") {
+        expect(result.since).toBe(result.decision.at)
+        expect(result.tailGuardSeed).toBe(result.decision.at)
+      } else {
+        expect(result.since).toBe(id(lastApplied ?? 0))
+      }
+    },
+  )
 })
 
 const row = (syncId: number, model = "Webhook"): JournalEvent => ({
@@ -130,24 +131,30 @@ describe("dropStale", () => {
     expect(signals[0]?._tag).toBe("Snapshot")
   })
 
-  it("property: the guard never decreases except through EpochReset", () => {
-    const arbItem = fc.oneof(
-      fc.integer({ min: 0, max: 99 }).map((n) => PublishedItem.Event({ row: row(n) })),
-      fc.integer({ min: 0, max: 99 }).map((n) => PublishedItem.Resync({ at: id(n) })),
-    )
-    fc.assert(
-      fc.property(fc.integer({ min: 0, max: 99 }), fc.array(arbItem, { maxLength: 30 }), (start, items) => {
-        let guard = id(start)
-        for (const item of items) {
-          const [next, signals] = step(guard, item)
-          expect(compareSyncId(next, guard)).toBeGreaterThanOrEqual(0)
-          // anything emitted is strictly above the previous guard
-          for (const signal of signals) {
-            if (signal._tag !== "Snapshot") expect(compareSyncId(signal.syncId, guard)).toBeGreaterThan(0)
-          }
-          guard = next
+  const itemsArb = Arbitrary.array(
+    Arbitrary.all([Arbitrary.schema(Schema.Literals(["Event", "Resync"])), Arbitrary.schema(IntBetween(0, 99))]).pipe(
+      Arbitrary.map(([tag, n]) =>
+        tag === "Event" ? PublishedItem.Event({ row: row(n) }) : PublishedItem.Resync({ at: id(n) }),
+      ),
+    ),
+    { maxLength: 30 },
+  )
+  it.prop(
+    "property: the guard never decreases except through EpochReset",
+    [IntBetween(0, 99), itemsArb],
+    ([start, items]) => {
+      let guard = id(start)
+      for (const item of items) {
+        const [next, signals] = step(guard, item)
+        expect(compareSyncId(next, guard)).toBeGreaterThanOrEqual(0)
+        // anything emitted is strictly above the previous guard
+        for (const signal of signals) {
+          if (signal._tag !== "Snapshot") expect(compareSyncId(signal.syncId, guard)).toBeGreaterThan(0)
         }
-      }),
-    )
-  })
+        guard = next
+      }
+    },
+    // Array length grows with the check `size` (default 10); 30 lets item lists reach maxLength.
+    { arbitrary: { size: 30 } },
+  )
 })

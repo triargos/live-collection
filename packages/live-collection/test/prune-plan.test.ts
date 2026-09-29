@@ -1,5 +1,4 @@
-import { Option } from "effect"
-import * as fc from "effect/testing/FastCheck"
+import { Arbitrary, Option, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
 import { ModelId, ModelName, SyncId } from "@triargos/live-collection-protocol"
 import type { JournalEvent } from "../src/client/sync-journal.js"
@@ -159,12 +158,14 @@ describe("prunePlan — stage 2 (dead weight, floor-neutral)", () => {
 const MODELS = ["A", "B"] as const
 const IDS = ["1", "2", "3"] as const
 
-type Choice = { readonly mi: number; readonly idi: number; readonly del: boolean }
-const choiceArb: fc.Arbitrary<Choice> = fc.record({
-  mi: fc.integer({ min: 0, max: MODELS.length - 1 }),
-  idi: fc.integer({ min: 0, max: IDS.length - 1 }),
-  del: fc.boolean(),
+const IntBetween = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+
+const Choice = Schema.Struct({
+  mi: IntBetween(0, MODELS.length - 1),
+  idi: IntBetween(0, IDS.length - 1),
+  del: Schema.Boolean,
 })
+type Choice = typeof Choice.Type
 
 const buildStream = (choices: ReadonlyArray<Choice>, steps: ReadonlyArray<number>): Array<JournalEvent> => {
   const present = new Set<string>()
@@ -183,12 +184,14 @@ const buildStream = (choices: ReadonlyArray<Choice>, steps: ReadonlyArray<number
   return events
 }
 
-const streamArb = fc
-  .tuple(
-    fc.array(choiceArb, { minLength: 0, maxLength: 30 }),
-    fc.array(fc.integer({ min: 0, max: 4 }), { maxLength: 30 }),
-  )
-  .map(([choices, steps]) => buildStream(choices, steps))
+const streamArb = Arbitrary.all([
+  Arbitrary.array(Arbitrary.schema(Choice), { maxLength: 30 }),
+  Arbitrary.array(Arbitrary.schema(IntBetween(0, 4)), { maxLength: 30 }),
+]).pipe(Arbitrary.map(([choices, steps]) => buildStream(choices, steps)))
+
+// Array length grows with the check `size` (default 10); 30 lets streams reach maxLength.
+const streamCheck = { arbitrary: { size: 30 } }
+const Bound = IntBetween(0, 40)
 
 /** The drain's binary fold: Upsert replaces, Delete removes. Rows must be syncId-ordered. */
 const applyInOrder = (state: Map<string, unknown>, rows: ReadonlyArray<JournalEvent>): Map<string, unknown> => {
@@ -205,58 +208,44 @@ const stateThrough = (events: ReadonlyArray<JournalEvent>, through: number): Map
   applyInOrder(new Map(), events.filter((e) => Number(e.syncId) <= through))
 
 describe("prunePlan — convergence contract (stages 1–2)", () => {
-  const boundsArb = fc.tuple(fc.integer({ min: 0, max: 40 }), fc.integer({ min: 0, max: 40 }))
-
-  it("state at any L ≥ min, plus replay of kept rows > L, equals the terminal state", () => {
-    fc.assert(
-      fc.property(streamArb, boundsArb, (events, [a, b]) => {
-        const min = Math.min(a, b)
-        const lastApplied = Math.max(a, b)
-        const plan = prunePlan({
-          rows: events,
-          minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
-          maxEventsPerModel: Number.MAX_SAFE_INTEGER,
-          maxEventsTotal: Number.MAX_SAFE_INTEGER,
-        })
-        const replayed = applyInOrder(
-          stateThrough(events, lastApplied),
-          plan.keep.filter((r) => Number(r.syncId) > lastApplied),
-        )
-        const terminal = stateThrough(events, Number.MAX_SAFE_INTEGER)
-        assert.deepStrictEqual(
-          [...replayed.entries()].sort(),
-          [...terminal.entries()].sort(),
-        )
-      }),
+  it.prop("state at any L ≥ min, plus replay of kept rows > L, equals the terminal state", [streamArb, Bound, Bound], ([events, a, b]) => {
+    const min = Math.min(a, b)
+    const lastApplied = Math.max(a, b)
+    const plan = prunePlan({
+      rows: events,
+      minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
+      maxEventsPerModel: Number.MAX_SAFE_INTEGER,
+      maxEventsTotal: Number.MAX_SAFE_INTEGER,
+    })
+    const replayed = applyInOrder(
+      stateThrough(events, lastApplied),
+      plan.keep.filter((r) => Number(r.syncId) > lastApplied),
     )
-  })
-
-  it("stages 1–2 never move the floor", () => {
-    fc.assert(
-      fc.property(streamArb, fc.integer({ min: 0, max: 40 }), (events, min) => {
-        const plan = prunePlan({
-          rows: events,
-          minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
-          maxEventsPerModel: Number.MAX_SAFE_INTEGER,
-          maxEventsTotal: Number.MAX_SAFE_INTEGER,
-        })
-        assert.strictEqual(plan.maxDeletedSyncId.size, 0)
-      }),
+    const terminal = stateThrough(events, Number.MAX_SAFE_INTEGER)
+    assert.deepStrictEqual(
+      [...replayed.entries()].sort(),
+      [...terminal.entries()].sort(),
     )
-  })
+  }, streamCheck)
 
-  it("is idempotent: pruning the kept rows again keeps them all", () => {
-    fc.assert(
-      fc.property(streamArb, fc.integer({ min: 0, max: 40 }), (events, min) => {
-        const args = {
-          minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
-          maxEventsPerModel: Number.MAX_SAFE_INTEGER,
-          maxEventsTotal: Number.MAX_SAFE_INTEGER,
-        }
-        const once = prunePlan({ rows: events, ...args })
-        const twice = prunePlan({ rows: once.keep, ...args })
-        assert.deepStrictEqual(ids(twice.keep), ids(once.keep))
-      }),
-    )
-  })
+  it.prop("stages 1–2 never move the floor", [streamArb, Bound], ([events, min]) => {
+    const plan = prunePlan({
+      rows: events,
+      minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
+      maxEventsPerModel: Number.MAX_SAFE_INTEGER,
+      maxEventsTotal: Number.MAX_SAFE_INTEGER,
+    })
+    assert.strictEqual(plan.maxDeletedSyncId.size, 0)
+  }, streamCheck)
+
+  it.prop("is idempotent: pruning the kept rows again keeps them all", [streamArb, Bound], ([events, min]) => {
+    const args = {
+      minLastApplied: minOf(Object.fromEntries(MODELS.map((m) => [m, String(min)]))),
+      maxEventsPerModel: Number.MAX_SAFE_INTEGER,
+      maxEventsTotal: Number.MAX_SAFE_INTEGER,
+    }
+    const once = prunePlan({ rows: events, ...args })
+    const twice = prunePlan({ rows: once.keep, ...args })
+    assert.deepStrictEqual(ids(twice.keep), ids(once.keep))
+  }, streamCheck)
 })

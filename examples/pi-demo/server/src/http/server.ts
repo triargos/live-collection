@@ -1,8 +1,8 @@
 import { createServer } from "node:http"
 import path from "node:path"
 import { Config, Effect, FileSystem, Layer } from "effect"
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServerResponse } from "effect/http"
+import { HttpApiBuilder } from "effect/http-api"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { DemoApi } from "@pi-demo/shared"
 import {
@@ -42,7 +42,7 @@ const ApiRoute = HttpApiBuilder.layer(DemoApi).pipe(
 const StaticRoute = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    const configured = yield* Config.string("STATIC_DIR").pipe(
+    const configured = yield* Config.String("STATIC_DIR").pipe(
       Config.withDefault("../web/dist"),
     )
     const staticDir = path.resolve(process.cwd(), configured)

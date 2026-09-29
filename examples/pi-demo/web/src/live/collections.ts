@@ -1,5 +1,5 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
+import { HttpApiClient } from "effect/http-api"
 import {
   defineCollection,
   type LiveRuntime,

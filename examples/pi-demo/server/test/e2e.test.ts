@@ -1,5 +1,5 @@
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
+import { HttpClient, HttpClientRequest } from "effect/http"
+import { HttpApiClient } from "effect/http-api"
 import { NodeHttpClient } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Duration, Effect, Fiber, Layer, ManagedRuntime } from "effect"

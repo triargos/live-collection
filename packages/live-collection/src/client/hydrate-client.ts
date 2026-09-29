@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpBody, HttpClient } from "effect/unstable/http"
+import { HttpBody, HttpClient } from "effect/http"
 import {
   HydrateBatchRequest,
   HydrateBatchResponse,
