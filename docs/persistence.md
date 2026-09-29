@@ -52,7 +52,7 @@ Tabs sharing one `databaseName` share one persisted state — fine when they're 
 
 `persistedCollectionOptions` and the `PersistedCollectionPersistence` type come from `@tanstack/db-sqlite-persistence-core`; the browser package builds on it. In Node (e.g. tests) you can assemble a persistence value over any SQLite driver against the same core interface — the library only sees the value.
 
-Note that `@tanstack/db` is pinned exactly (currently `0.6.7`) because the persistence integration is alpha; bump it deliberately, together with the persistence packages.
+The persistence packages pin `@tanstack/db` exactly (`db-sqlite-persistence-core@0.2.23` requires `@tanstack/db@0.9.2`), and the integration is alpha. Bump `@tanstack/db`, `@tanstack/react-db`, and both persistence packages together, deliberately.
 
 ## See also
 

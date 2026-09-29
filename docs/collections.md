@@ -95,7 +95,7 @@ The handle returns a native collection, so reads are TanStack DB's own API:
 import { useLiveQuery } from "@tanstack/react-db"
 
 const todos = todosCollection(projectId)
-const { data } = useLiveQuery((q) => q.from({ todo: todos }), [projectId])
+const { data } = useLiveQuery((q) => q.from({ todo: todos }))
 ```
 
 Joins, filters, and aggregations across collections all work — a live collection is just a collection.

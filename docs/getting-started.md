@@ -137,7 +137,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 
 function TodoList({ projectId }: { projectId: string }) {
   const todos = todosCollection(projectId)
-  const { data } = useLiveQuery((q) => q.from({ todo: todos }), [projectId])
+  const { data } = useLiveQuery((q) => q.from({ todo: todos }))
 
   return (
     <ul>
