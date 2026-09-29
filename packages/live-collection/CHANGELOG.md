@@ -1,5 +1,97 @@
 # @triargos/live-collection
 
+## 4.2.0
+
+### Minor Changes
+
+- f355f32: Upgrade to Effect `4.0.0-rc.118`.
+
+  The `effect` peer range moves to `^4.0.0-rc.118`. Upgrade Effect in lockstep; a
+  workspace cannot mix Effect release candidates in one type graph.
+
+  Renamed APIs, applied across all packages and the reference app:
+
+  - Every `effect/unstable/*` module moved to `effect/*`; the old paths are removed.
+    `effect/unstable/http` is now `effect/http`.
+  - `effect/unstable/httpapi` is now `effect/http-api`.
+  - `NetAddress` lives in `effect/net`; `HttpServer.address` is a `NetAddress.SocketAddress`
+    (`InetAddressV4 | InetAddressV6 | UnixPathAddress`) instead of `TcpAddress`.
+  - Built-in `Config` constructors are PascalCase: `Config.string` is `Config.String`, and
+    `Config.Port("PORT")` replaces `Config.schema(Config.Port, "PORT")`.
+
+  The library's exported services, layers, and error classes keep their names, tags, and
+  fields. Apps only update their own Effect imports, for example `FetchHttpClient` from
+  `effect/http`.
+
+  **One-time local rebuild on first load.** `deriveSchemaVersion` hashes Effect's
+  AST representation, and that representation changed shape. Every collection
+  derives a new version, so TanStack dumps and rebuilds the persisted local table,
+  the journal mark is orphaned, and the mount decides `Snapshot` and re-lists from
+  the server. This costs one full refetch per collection and then settles.
+
+- cbbc4a1: Partial indexes: load keyed subsets of a model on demand and keep them live.
+
+  A model's cost becomes proportional to what the user opens instead of table size.
+  The server declares a closed set of index keys per model — no predicate language —
+  and the client asks for one key value at a time.
+
+  `defineCollection` gains a third variant next to global and scoped. `partial.by`
+  replaces `listFn` (the batch endpoint is the snapshot path) and excludes `scopeOf`;
+  each key generates one flat ensure, `templateId` → `utils.loadByTemplateId`:
+
+  ```ts
+  defineCollection({
+    entity: "SelectionTemplateValue",
+    partial: { by: { templateId: (v) => v.templateId } },
+    // ...
+  });
+  ```
+
+  `loadBy*` is an idempotent ensure, not a query and not a lease. It decides between
+  skip (durable coverage mark is current), replay (journal still holds the gap, no
+  network), and snapshot (`POST /sync/batch`). Calls in one microtask window coalesce
+  into a single batch request across keys and collections.
+
+  New public API:
+
+  - **protocol** — `HydrateBatchRequest`, `HydrateBatchResponse`, `HydrateBatchResult`,
+    `IndexValue`; `indexes` on the model registry entry.
+  - **server** — `SyncFeed.hydrateBatch`, `UnknownIndexError` (⇒ 400 at the app's route).
+  - **live-collection** — `HydrateClient` (`layer({ url })`), the `partial` collection
+    variant, coverage tracking, and `SyncJournal.subsetMarks`.
+  - **react** — `usePartialLoad` and `SubsetStatus` (`Loading | Ready | Forbidden | Failed`,
+    `Failed` carrying a `retry` handle).
+
+  Apps without partial collections change nothing and omit `HydrateClient`; a `loadBy*`
+  snapshot without it is a defect with a clear message. Reads stay `useLiveQuery`, and
+  writes keep the existing optimistic handlers.
+
+  **No local rebuild.** The journal's last-applied record gained optional `scope` and
+  `subset` fields, so records written by earlier versions still decode. Schema versions
+  are untouched.
+
+  Known residual: a write committing during an in-flight snapshot fetch can flicker once
+  and self-heals. There is no subset eviction — rows and marks stay for the session.
+  See `docs/partial-indexes.md`.
+
+- 22fbdfd: Upgrade to TanStack DB `0.9.2`.
+
+  The `@tanstack/db` peer range moves to `^0.9.2` and `@tanstack/db-sqlite-persistence-core`
+  to `^0.2.23`. The persistence packages pin `@tanstack/db` exactly, so upgrade `@tanstack/db`,
+  `@tanstack/react-db` (`^0.4.1`), and `@tanstack/browser-db-sqlite-persistence` (`^0.2.23`)
+  together.
+
+  The library's exported types and behavior are unchanged, and the SQLite storage format is
+  identical, so persisted collections load without a rebuild.
+
+  A synced write whose SQLite persistence fails now logs a warning
+  (`[liveCollection] sync transaction for "<id>" failed to persist`). TanStack's persistence
+  wrapper stopped reporting these failures itself in this range.
+
+  `useLiveQuery`'s dependency-array form is deprecated by `@tanstack/react-db` `0.3.0` and
+  logs a development warning. Drop the array: the query's identity now derives from the query
+  itself. The docs examples are updated.
+
 ## 4.1.0
 
 ### Minor Changes
