@@ -182,9 +182,10 @@ as one unit. `protocol` is separate because backend consumers need it without fr
 
 ## Effect v4 notes
 
-- Workspace Effect packages sit at `^4.0.0-rc.118` in the catalog. The caret may float to a newer rc
-  or final v4, so treat lockfile updates as deliberate compatibility events and typecheck all packages
-  together.
+- Workspace Effect packages sit at `^4.0.1` in the catalog. The caret may float to a newer v4 minor,
+  so treat lockfile updates as deliberate compatibility events and typecheck all packages together.
+- `Schema.brand` is TypeScript-only: brands are absent from the AST and from
+  `SchemaRepresentation`, so `deriveSchemaVersion` does not see them.
 - Schema-backed error classes are `Schema.TaggedError`; `Schema.TaggedErrorClass` is gone. The decode
   failure type is `Schema.SchemaError`, not a top-level `SchemaError` module.
 - The workspace cannot mix Effect v3 and v4 in one type graph.

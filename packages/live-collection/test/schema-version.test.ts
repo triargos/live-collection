@@ -33,11 +33,18 @@ describe("deriveSchemaVersion", () => {
     expect(deriveSchemaVersion(Retyped)).not.toBe(deriveSchemaVersion(Base))
   })
 
-  // Brands ride along in the AST string, so two different brands on the same base type differ.
-  it("changes when a field's brand changes", () => {
+  // Brands are TypeScript-only in Effect 4: they reject nothing at runtime, so rows saved under one
+  // brand still decode under another and the table need not rebuild.
+  it("keeps the version when only a field's brand changes", () => {
     const A = Schema.Struct({ id: Schema.String.pipe(Schema.brand("A")) })
     const B = Schema.Struct({ id: Schema.String.pipe(Schema.brand("B")) })
-    expect(deriveSchemaVersion(A)).not.toBe(deriveSchemaVersion(B))
+    expect(deriveSchemaVersion(A)).toBe(deriveSchemaVersion(B))
+  })
+
+  // Checks do reject rows at runtime, so adding one must rebuild.
+  it("changes when a field's check changes", () => {
+    const Checked = Schema.Struct({ id: Schema.NonEmptyString, name: Schema.String, age: Schema.Finite })
+    expect(deriveSchemaVersion(Checked)).not.toBe(deriveSchemaVersion(Base))
   })
 
   it("returns a uint32", () => {

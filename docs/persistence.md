@@ -42,7 +42,7 @@ export default defineConfig({
 
 ## Schema versioning
 
-The persisted table's schema version is **derived automatically** from your Effect schema — a structural hash covering field names, types, and brands. Change the schema and the next start dumps and rebuilds that table from the server; there is no version number to bump or forget. The worst failure mode is a spurious rebuild (a harmless refetch), never a silently stale table.
+The persisted table's schema version is **derived automatically** from your Effect schema — a structural hash covering field names, types, and checks. Brands are TypeScript-only and do not affect it. Change the schema and the next start dumps and rebuilds that table from the server; there is no version number to bump or forget. The worst failure mode is a spurious rebuild (a harmless refetch), never a silently stale table.
 
 ## Multiple tabs
 
