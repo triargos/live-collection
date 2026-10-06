@@ -21,9 +21,13 @@ persisting mutation settles, so waiting there deadlocks. `defineCollection`'s ha
 already reconcile without waiting.
 
 **Synced writes wait for hydration.** A `SyncWrite` call made before the collection's first
-hydration finishes now waits until it does. In browsers, a sync commit made while TanStack's
-SQLite persistence is still hydrating never settles and stalls every collection on the shared
-persistence. Collections stayed in `loading` forever.
+hydration finishes now waits until it does. This guards a TanStack bug in browsers: with the
+default `SingleProcessCoordinator`, a sync commit made during startup hydration never settles,
+and every collection on the shared persistence stays in `loading` forever.
+
+**Pass a `BrowserCollectionCoordinator`** to `createBrowserWASQLitePersistence` when more
+than one tab can open the same database. It coordinates writers across tabs and is not
+affected by the hydration bug. The docs and pi-demo now use it.
 
 **Breaking changes in TanStack DB to check in app code:**
 

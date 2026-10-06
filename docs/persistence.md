@@ -8,13 +8,17 @@ The library takes a persistence **value**, built from TanStack DB's browser pers
 
 ```ts
 import {
+  BrowserCollectionCoordinator,
   createBrowserWASQLitePersistence,
   openBrowserWASQLiteOPFSDatabase,
 } from "@tanstack/browser-db-sqlite-persistence"
 import { makeLiveRuntime } from "@triargos/live-collection"
 
 const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "myapp" })
-const persistence = createBrowserWASQLitePersistence({ database })
+const persistence = createBrowserWASQLitePersistence({
+  database,
+  coordinator: new BrowserCollectionCoordinator({ dbName: "myapp" }),
+})
 
 const runtime = makeLiveRuntime({ persistence, sync })
 ```
@@ -47,6 +51,8 @@ The persisted table's schema version is **derived automatically** from your Effe
 ## Multiple tabs
 
 Tabs sharing one `databaseName` share one persisted state — fine when they're the same logical client. If you want tabs to act as independent clients (each with its own cursor and journal), give each a distinct `databaseName` for both the SQLite database and the `SyncJournal`.
+
+Pass a `BrowserCollectionCoordinator` (as in the setup above) whenever more than one tab can open the same database. It elects one writer tab with Web Locks and fans commits out to the other tabs over `BroadcastChannel`. Without it, tabs write to the shared OPFS database uncoordinated. The coordinator also avoids a TanStack bug in the default `SingleProcessCoordinator` (`db-sqlite-persistence-core` 0.4.x), where a sync commit made during startup hydration never settles. The library guards against that bug either way.
 
 ## Outside the browser
 

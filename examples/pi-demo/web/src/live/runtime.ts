@@ -8,6 +8,7 @@ import {
   SyncTransport,
 } from "@triargos/live-collection"
 import {
+  BrowserCollectionCoordinator,
   createBrowserWASQLitePersistence,
   openBrowserWASQLiteOPFSDatabase,
 } from "@tanstack/browser-db-sqlite-persistence"
@@ -17,7 +18,12 @@ export const createRuntime = async (
   httpClient: Layer.Layer<HttpClient.HttpClient>,
 ): Promise<LiveRuntime> => {
   const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "pi-demo" })
-  const persistence = createBrowserWASQLitePersistence({ database })
+  // Tabs share one OPFS database; the coordinator elects one writer tab (Web Locks) and fans
+  // commits out to the others (BroadcastChannel).
+  const persistence = createBrowserWASQLitePersistence({
+    database,
+    coordinator: new BrowserCollectionCoordinator({ dbName: "pi-demo" }),
+  })
   const sync = Layer.mergeAll(
     SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
     CatchupClient.layer({ url: "/api/catchup" }),
