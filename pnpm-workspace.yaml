@@ -28,3 +28,4 @@ catalog:
   "@types/node": ^26.6.3
   typescript: ^7.0.2
   vitest: ^5.0.2
+  "@playwright/test": ^1.63.0
