@@ -24,7 +24,7 @@ Guidance for agents working in this repository.
 - **Effect v4** — runtime, services, layers, schemas, streams, and HTTP.
 - **TanStack DB `persistedCollectionOptions`** from
   `@tanstack/db-sqlite-persistence-core` — client persistence. The persistence integration is alpha:
-  the catalog range is `^0.9.2` and `pnpm-lock.yaml` holds the exact build, so bumping means a
+  the catalog range is `^0.12.0` and `pnpm-lock.yaml` holds the exact build, so bumping means a
   deliberate `pnpm update`, not a passive install.
 - **`effect/http`** — HTTP client/response APIs (`@stability unstable`). Keep these imports confined to
   `packages/live-collection/src/client/sync-transport.ts`,

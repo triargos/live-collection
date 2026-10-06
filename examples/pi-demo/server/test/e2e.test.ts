@@ -216,7 +216,7 @@ describe("pi-demo client ↔ server", () => {
       })
       const optimisticTx = todos.insert(optimistic)
       assert.isTrue(todos.has(todoKey(optimistic)))
-      yield* Effect.promise(() => optimisticTx.isPersisted.promise)
+      yield* Effect.promise(() => optimisticTx.when("settled"))
       yield* waitUntilEffect(
         otherClient.todos.list().pipe(
           Effect.map((rows) => rows.some((row) => row.id === optimistic.id)),

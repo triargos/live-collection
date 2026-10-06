@@ -16,10 +16,10 @@ catalog:
   "@effect/vitest": ^4.0.1
   "@effect/language-service": ^0.87.3
   "@effect/tsgo": 0.48.1
-  "@tanstack/db": ^0.9.2
-  "@tanstack/db-sqlite-persistence-core": ^0.2.23
-  "@tanstack/react-db": ^0.4.1
-  "@tanstack/browser-db-sqlite-persistence": ^0.2.23
+  "@tanstack/db": ^0.12.0
+  "@tanstack/db-sqlite-persistence-core": ^0.4.4
+  "@tanstack/react-db": ^0.5.4
+  "@tanstack/browser-db-sqlite-persistence": ^0.2.29
   idb: ^8.0.3
   react: ^19.3.0
   react-dom: ^19.3.0
