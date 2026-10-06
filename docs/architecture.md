@@ -66,7 +66,7 @@ Snapshot? → replayed journal rows → live tail
 
 The broker subscribes to the live feed *before* reading the journal, so events arriving mid-setup buffer instead of falling into a gap; buffered events at or below the replay head are dropped so an older duplicate can never land after newer replayed state. Upserts and deletes are idempotent, so overlap is always safe.
 
-Last-applied marks are acked in memory per signal and flushed durably in batches (every 100 ms and on shutdown). A crash between flushes just replays a few idempotent events on the next mount.
+A signal is acked only after its rows are written to SQLite, so a mark never covers a lost write. Last-applied marks are acked in memory per signal and flushed durably in batches (every 100 ms and on shutdown). A crash between flushes just replays a few idempotent events on the next mount.
 
 ## Journal pruning
 

@@ -48,9 +48,8 @@ const withMount = <T extends object, A>(
   })
 
 /**
- * Synced writes persist fire-and-forget (the alpha exposes no durability handle), so a write that just
- * cleaned up may not be on disk for a few ticks. Poll: remount + read until `predicate` holds. Serializes
- * persistence between write phases too, so an orphaned persist can't clobber a later write across remounts.
+ * Synced writes complete once durable, so one remount normally suffices; poll (remount + read until
+ * `predicate` holds) anyway so a regression shows up as a clear timeout rather than a flaky assert.
  */
 const reloadUntil = <T extends object, A>(
   persistence: PersistedCollectionPersistence,

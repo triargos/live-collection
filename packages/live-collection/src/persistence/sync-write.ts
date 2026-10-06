@@ -11,6 +11,13 @@ import type { ModelId } from "@triargos/live-collection-protocol"
  * normally don't call these directly — reach for them only when feeding the store from a
  * source the library doesn't manage.
  *
+ * Each operation completes only once its sync transaction is applied **and written to
+ * SQLite**, so a caller that records progress afterwards (the broker's last-applied mark)
+ * never records a write that was lost. It is interrupted if `cleanup()` drops the
+ * transaction first. Do not run one inside a mutation handler (`onInsert`/`onUpdate`/
+ * `onDelete`): TanStack holds sync transactions until the persisting mutation settles,
+ * so waiting there deadlocks.
+ *
  * @typeParam T - the collection's entity type
  */
 export interface SyncWrite<T> {

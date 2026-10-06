@@ -10,7 +10,7 @@ import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core
 import { ModelName, type ModelId } from "@triargos/live-collection-protocol"
 import type { SyncWrite } from "./persistence/sync-write.js"
 import type { LiveCollection } from "./persistence/live-collection.js"
-import { liveCollectionOptions } from "./persistence/live-collection-options.js"
+import { makeLiveCollectionOptions } from "./persistence/live-collection-options.js"
 import { deriveSchemaVersion } from "./core/schema-version.js"
 import type { LiveRuntime } from "./runtime/live-runtime.js"
 import { drainCollection, drainPartialCollection } from "./collection-drain.js"
@@ -379,22 +379,24 @@ export function defineCollection<
   // instance; its finalizer interrupts the drain BEFORE `cleanup()` so no signal lands on a
   // cleaned-up collection.
   const makeFor = (key: CollectionKey<LiveCollection<T>>): Effect.Effect<LiveCollection<T>, never, Scope.Scope> =>
-    Effect.sync(
-      () =>
-        createCollection(
-          persistedCollectionOptions<T, ModelId, never, SyncWrite<T>>({
-            persistence: runtime.persistence,
-            id: serializeKey(key),
-            schemaVersion,
-            ...liveCollectionOptions({ getKey }),
-            // Omit absent handlers entirely (exactOptionalPropertyTypes forbids an explicit `undefined`).
-            // Insert/update reconcile the returned confirmed row; delete reconciles by the mutation key.
-            ...(config.onInsert ? { onInsert: bridge(config.onInsert, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
-            ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
-            ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => p.collection.utils.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
-          }),
-        ) satisfies LiveCollection<T>,
-    ).pipe(
+    Effect.sync(() => {
+      const live = makeLiveCollectionOptions({ getKey })
+      const reconcile = live.reconcileWrite
+      return createCollection(
+        persistedCollectionOptions<T, ModelId, never, SyncWrite<T>>({
+          persistence: runtime.persistence,
+          id: serializeKey(key),
+          schemaVersion,
+          ...live.options,
+          // Omit absent handlers entirely (exactOptionalPropertyTypes forbids an explicit `undefined`).
+          // Insert/update reconcile the returned confirmed row; delete reconciles by the mutation key.
+          // Reconcile is fire-and-forget: awaiting a sync receipt inside a handler deadlocks.
+          ...(config.onInsert ? { onInsert: bridge(config.onInsert, (_, row) => reconcile.writeSynced(row)) } : {}),
+          ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (_, row) => reconcile.writeSynced(row)) } : {}),
+          ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => reconcile.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
+        }),
+      ) satisfies LiveCollection<T>
+    }).pipe(
       Effect.tap((collection) => {
         const drain = drainCollection({ meta, collection, scope: key.scope, schemaVersion })
         return Effect.sync(() => runtime.forkDrain(drain)).pipe(
@@ -482,7 +484,9 @@ export function defineCollection<
         Object.keys(by).map((indexKey) => [loadByMethodName(indexKey), loadFor(indexKey)]),
       )
 
-      const inner = liveCollectionOptions({ getKey })
+      const live = makeLiveCollectionOptions({ getKey })
+      const inner = live.options
+      const reconcile = live.reconcileWrite
       const collection = createCollection(
         // TUtils stays SyncWrite<T>: the loadBy* methods ride its structural index
         // signature; the handle's PartialLiveCollection type names them precisely.
@@ -492,9 +496,9 @@ export function defineCollection<
           schemaVersion,
           ...inner,
           utils: { ...inner.utils, ...loadMethods },
-          ...(config.onInsert ? { onInsert: bridge(config.onInsert, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
-          ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (p, row) => p.collection.utils.writeSynced(row)) } : {}),
-          ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => p.collection.utils.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
+          ...(config.onInsert ? { onInsert: bridge(config.onInsert, (_, row) => reconcile.writeSynced(row)) } : {}),
+          ...(config.onUpdate ? { onUpdate: bridge(config.onUpdate, (_, row) => reconcile.writeSynced(row)) } : {}),
+          ...(config.onDelete ? { onDelete: bridge(config.onDelete, (p) => reconcile.deleteSynced(p.transaction.mutations[0]!.key)) } : {}),
         }),
         // The runtime utils really do carry the loadBy* methods (merged just above);
         // TanStack's config type can't express the merged TUtils, so the instance is
