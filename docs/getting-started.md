@@ -47,6 +47,7 @@ The runtime is built once at startup. It needs two things: a **persistence value
 ```ts
 import { CatchupClient, makeLiveRuntime, SyncJournal, SyncTransport } from "@triargos/live-collection"
 import {
+  BrowserCollectionCoordinator,
   createBrowserWASQLitePersistence,
   openBrowserWASQLiteOPFSDatabase,
 } from "@tanstack/browser-db-sqlite-persistence"
@@ -54,7 +55,10 @@ import { Layer } from "effect"
 import { FetchHttpClient } from "effect/http"
 
 const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "myapp" })
-const persistence = createBrowserWASQLitePersistence({ database })
+const persistence = createBrowserWASQLitePersistence({
+  database,
+  coordinator: new BrowserCollectionCoordinator({ dbName: "myapp" }),
+})
 
 const sync = Layer.mergeAll(
   SyncTransport.layer({ url: "/api/sync", keepAlive: "45 seconds" }),
@@ -67,7 +71,7 @@ export const runtime = makeLiveRuntime({ persistence, sync })
 
 What each piece is for:
 
-- **`persistence`** — where collections store their rows. On reload, a collection hydrates from this database instead of re-fetching the server. See [persistence](./persistence.md) for setup details and the Vite configuration it needs.
+- **`persistence`** — where collections store their rows. On reload, a collection hydrates from this database instead of re-fetching the server. The `BrowserCollectionCoordinator` keeps tabs that share the database from writing over each other. See [persistence](./persistence.md) for setup details and the Vite configuration it needs.
 - **`SyncTransport`** — the SSE connection. `keepAlive` is the silence window after which the client treats the connection as dead and reconnects; your server's keepalive interval must be shorter.
 - **`CatchupClient`** — the catchup endpoint.
 - **`SyncJournal`** — a durable local event log (IndexedDB) holding the sync cursor and recent events, so a collection that mounts later can replay what it missed without a network round trip.

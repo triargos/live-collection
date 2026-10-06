@@ -20,7 +20,7 @@ export * from "./core/schema-version.js"
 // persistence/ — LiveCollection<T> (the hero type), the synced-store write path contract, and
 // the building blocks for assembling a persisted collection by hand (defineCollection uses them).
 export type { LiveCollection } from "./persistence/live-collection.js"
-export * from "./persistence/live-collection-options.js"
+export { liveCollectionOptions, type LiveCollectionOptions } from "./persistence/live-collection-options.js"
 export * from "./persistence/sync-write.js"
 
 // client/ — SSE transport, catchup, the durable sync journal, and the subscription broker.

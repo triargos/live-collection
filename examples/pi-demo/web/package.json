@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@journeyapps/wa-sqlite": "^1.7.2",
@@ -32,6 +33,7 @@
     "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "@tailwindcss/vite": "^4.3.3",
     "@types/canvas-confetti": "^1.9.0",
     "@types/react": "catalog:",

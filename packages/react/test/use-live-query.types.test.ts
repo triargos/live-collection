@@ -24,11 +24,11 @@ export function _typeCheck(runtime: LiveRuntime, orgId: string): void {
   useLiveSync(runtime)
 
   // Direct-collection overload — the native read: data is the entity rows, no wrapper.
-  const direct = useLiveQuery(() => webhookCollection(orgId), [orgId])
+  const direct = useLiveQuery(() => webhookCollection(orgId))
   const _direct: ReadonlyArray<Webhook> | undefined = direct.data
   void _direct
 
   // Query-builder overload — native joins/filters: from({ w: collection }) accepts our collection.
-  const joined = useLiveQuery((q) => q.from({ w: webhookCollection(orgId) }), [orgId])
+  const joined = useLiveQuery((q) => q.from({ w: webhookCollection(orgId) }))
   void joined.data
 }

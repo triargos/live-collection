@@ -4,8 +4,10 @@ dist/
 .DS_Store
 coverage/
 
-# Playwright/vitest browser failure screenshots
+# Playwright/vitest browser failure screenshots and reports
 __screenshots__/
+test-results/
+playwright-report/
 
 # Claude Code local session state
 .claude/scheduled_tasks.lock

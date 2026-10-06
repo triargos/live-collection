@@ -186,7 +186,7 @@ export function TodoList({ bundle, projectId, syncing = false }: TodoListProps) 
               <button
                 aria-label={todo.completed ? "Mark incomplete" : "Mark complete"}
                 className={`grid size-10 shrink-0 place-items-center rounded-xl border-2 transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 ${todo.completed ? "animate-pop border-emerald-500 bg-emerald-500 text-white shadow-[0_3px_0_oklch(0.55_0.17_155)]" : "border-primary/25 bg-secondary/50 text-transparent hover:scale-105 hover:border-primary hover:text-primary/25"}`}
-                onClick={() => todos.update(todo.id, (draft) => { draft.completed = !draft.completed })}
+                onClick={() => todos.update(todoKey(todo), (draft) => { draft.completed = !draft.completed })}
                 type="button"
               >
                 <Check className="size-5 stroke-[3]" />

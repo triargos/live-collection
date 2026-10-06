@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import { DatabaseSync } from "node:sqlite"
 import type { SQLiteDriver } from "@tanstack/db-sqlite-persistence-core"
 
@@ -6,11 +7,13 @@ import type { SQLiteDriver } from "@tanstack/db-sqlite-persistence-core"
  * shipped (the library is frontend-only; DEC-A8). It runs the *same* core persistence adapter the
  * browser path runs, so a headless node test exercises the real persist/hydrate/reset semantics.
  *
- * `node:sqlite` is synchronous; each method wraps a call in a resolved promise. Nested transactions
- * use savepoints so the adapter's transaction usage composes.
+ * `node:sqlite` is synchronous; each method wraps a call in a resolved promise. Collections sharing
+ * the connection persist concurrently, so top-level transactions are serialized; `AsyncLocalStorage`
+ * tells true nesting apart, which uses savepoints. Mirrors pi-demo's server test driver.
  */
 export class NodeSqliteDriver implements SQLiteDriver {
-  #depth = 0
+  readonly #transactionDepth = new AsyncLocalStorage<number>()
+  #transactionTail: Promise<void> = Promise.resolve()
 
   constructor(private readonly db: DatabaseSync) {}
 
@@ -30,25 +33,31 @@ export class NodeSqliteDriver implements SQLiteDriver {
   }
 
   transaction = <T>(fn: (tx: SQLiteDriver) => Promise<T>): Promise<T> => {
-    const d = this.#depth++
-    const open = d === 0 ? "BEGIN" : `SAVEPOINT s${d}`
-    const release = d === 0 ? "COMMIT" : `RELEASE s${d}`
-    const rollback = d === 0 ? "ROLLBACK" : `ROLLBACK TO s${d}; RELEASE s${d}`
-    this.db.exec(open)
-    return Promise.resolve()
-      .then(() => fn(this))
-      .then((result) => {
-        this.db.exec(release)
-        return result
-      })
-      .catch((error: unknown) => {
-        this.db.exec(rollback)
-        throw error
-      })
-      .finally(() => {
-        this.#depth--
-      })
+    const parentDepth = this.#transactionDepth.getStore()
+    if (parentDepth !== undefined) return this.#runTransaction(parentDepth + 1, fn)
+
+    const result = this.#transactionTail.then(() => this.#runTransaction(0, fn))
+    this.#transactionTail = result.then(() => undefined, () => undefined)
+    return result
   }
+
+  #runTransaction = <T>(depth: number, fn: (tx: SQLiteDriver) => Promise<T>): Promise<T> =>
+    this.#transactionDepth.run(depth, () => {
+      const open = depth === 0 ? "BEGIN" : `SAVEPOINT s${depth}`
+      const release = depth === 0 ? "COMMIT" : `RELEASE s${depth}`
+      const rollback = depth === 0 ? "ROLLBACK" : `ROLLBACK TO s${depth}; RELEASE s${depth}`
+      this.db.exec(open)
+      return fn(this).then(
+        (result) => {
+          this.db.exec(release)
+          return result
+        },
+        (error: unknown) => {
+          this.db.exec(rollback)
+          throw error
+        },
+      )
+    })
 }
 
 /** An in-memory `node:sqlite` driver. One connection holds the data across the two adapter builds a

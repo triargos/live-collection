@@ -133,7 +133,7 @@ describe("write path — optimistic mutations", () => {
           const coll = webhooks("org-1")
           yield* Effect.promise(() => coll.preload())
           const tx = coll.insert({ id: "w1", orgId: "org-1", url: "https://example.com/hook" })
-          yield* Effect.promise(() => tx.isPersisted.promise)
+          yield* Effect.promise(() => tx.when("settled"))
           yield* Effect.sleep(Duration.millis(20))
         }),
       )
@@ -181,7 +181,7 @@ describe("write path — optimistic mutations", () => {
           const coll = webhooks("org-1")
           yield* Effect.promise(() => coll.preload())
           const tx = coll.insert({ id: "w3", orgId: "org-1", url: "https://example.com/hook" })
-          yield* Effect.promise(() => tx.isPersisted.promise)
+          yield* Effect.promise(() => tx.when("settled"))
           yield* Effect.sleep(Duration.millis(20))
         }),
       )
@@ -193,7 +193,7 @@ describe("write path — optimistic mutations", () => {
           yield* Effect.promise(() => coll.preload())
           yield* waitUntil(() => coll.has(k("w3"))) // hydrated from the durable baseline
           const tx = coll.delete(k("w3"))
-          yield* Effect.promise(() => tx.isPersisted.promise)
+          yield* Effect.promise(() => tx.when("settled"))
           yield* Effect.sleep(Duration.millis(20))
         }),
       )
@@ -219,7 +219,7 @@ describe("write path — optimistic mutations", () => {
 
       // The library reconciles exactly mutations[0]'s confirmed row, so a batch would silently lose
       // rows 2..n when the optimistic tx drops. The guard must reject the whole transaction…
-      const exit = yield* Effect.exit(Effect.tryPromise(() => tx.isPersisted.promise))
+      const exit = yield* Effect.exit(Effect.tryPromise(() => tx.when("settled")))
       assert.isTrue(Exit.isFailure(exit))
       // …BEFORE the handler runs (no server call with an unreconcilable batch)…
       assert.deepStrictEqual(log, [])
@@ -266,7 +266,7 @@ describe("write path — optimistic mutations", () => {
       const coll = webhooks("org-1")
       yield* Effect.promise(() => coll.preload())
       const tx = coll.insert({ id: "w9", orgId: "org-1", url: "https://example.com/hook" })
-      yield* Effect.promise(() => tx.isPersisted.promise)
+      yield* Effect.promise(() => tx.when("settled"))
       assert.isTrue(coll.has(k("w9"))) // confirmed + reconciled through the lazily-built runtime
       assert.deepStrictEqual(log, ["create:w9"])
       // the listFn bridge reaches the same runtime, still as an Effect (loop-side seam)
