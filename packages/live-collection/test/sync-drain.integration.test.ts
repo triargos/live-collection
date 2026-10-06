@@ -148,7 +148,7 @@ describe("defineCollection broker drain", () => {
           schema: Stamped,
           getKey: (row) => key(row.id),
           scopeOf: (row) => row.orgId,
-          listFn: (scope) => Effect.succeed([{ id: "seed", orgId: scope, createdAt: new Date(0) }]),
+          listFn: (scope) => Effect.map(DateTime.nowAsDate, (createdAt) => [{ id: "seed", orgId: scope, createdAt }]),
         })
         const collection = stamps("org-1")
         yield* Effect.promise(() => collection.preload())

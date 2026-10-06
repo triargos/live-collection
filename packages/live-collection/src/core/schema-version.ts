@@ -16,10 +16,14 @@ export type SchemaVersion = typeof SchemaVersion.Type
  * assembling a persisted collection by hand.
  *
  * The hash input is the JSON representation derived from `schema.ast` — the schema's
- * full structural shape, including fields, checks, and brands. It
- * folds in **types and brands**, not just field names, so changing `name: string` to
+ * full structural shape, including fields, types, and checks. It
+ * folds in **types and checks**, not just field names, so changing `name: string` to
  * `name: number` still changes the version. That matters because the library trusts the
  * local base: a missed type change would silently keep stale-typed rows.
+ *
+ * Brands are not part of the hash: `Schema.brand` is TypeScript-only and absent from the
+ * AST. A brand rejects nothing at runtime, so rows saved under one brand still decode under
+ * another, and a brand-only change keeps the version.
  *
  * A version change has **two** effects that must stay in lockstep: TanStack dumps and
  * rebuilds the persisted local table, and — because the version is part of the

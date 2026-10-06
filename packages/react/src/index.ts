@@ -9,7 +9,7 @@
  * and interrupts it on unmount.
  */
 import { useEffect, useState } from "react"
-import { Data, Effect, Fiber } from "effect"
+import { Data, Effect, Fiber, Schema } from "effect"
 import {
   HydrateFailed,
   loadByMethodName,
@@ -81,8 +81,8 @@ export const SubsetStatus = Data.taggedEnum<SubsetStatus>()
  * `Failed` rather than thrown — the UI keeps its retry handle either way.
  */
 export const statusFromRejection = (error: unknown, retry: () => void): SubsetStatus => {
-  if (error instanceof SubsetForbidden) return SubsetStatus.Forbidden({ error })
-  if (error instanceof HydrateFailed) return SubsetStatus.Failed({ error, retry })
+  if (Schema.is(SubsetForbidden)(error)) return SubsetStatus.Forbidden({ error })
+  if (Schema.is(HydrateFailed)(error)) return SubsetStatus.Failed({ error, retry })
   return SubsetStatus.Failed({ error: new HydrateFailed({ reason: String(error) }), retry })
 }
 

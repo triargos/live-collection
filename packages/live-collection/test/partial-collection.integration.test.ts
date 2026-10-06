@@ -136,10 +136,8 @@ describe("partial collection", () => {
           const _check: (value: string) => Promise<void> = collection.utils.loadByTemplateId
           void _check
 
-          yield* Effect.promise(async () => {
-            await collection.preload()
-            await collection.utils.loadByTemplateId("t1")
-          })
+          yield* Effect.promise(() => collection.preload())
+          yield* Effect.promise(() => collection.utils.loadByTemplateId("t1"))
           assert.isTrue(collection.has(key("v1")))
           assert.isTrue(collection.has(key("v2")))
           assert.isFalse(collection.has(key("x1"))) // t2 was never ensured
@@ -163,11 +161,9 @@ describe("partial collection", () => {
       ({ runtime, events }) =>
         Effect.gen(function* () {
           const collection = makeValues(runtime)()
-          yield* Effect.promise(async () => {
-            await collection.preload()
-            await collection.utils.loadByTemplateId("t1")
-            await collection.utils.loadByTemplateId("t2")
-          })
+          yield* Effect.promise(() => collection.preload())
+          yield* Effect.promise(() => collection.utils.loadByTemplateId("t1"))
+          yield* Effect.promise(() => collection.utils.loadByTemplateId("t2"))
 
           // covered → covered (t1 → t2): updated in place, stays present.
           yield* Queue.offer(events, upsert("3", value("v1", "t2", "moved"), "Update"))
@@ -195,10 +191,8 @@ describe("partial collection", () => {
       ({ runtime, events }) =>
         Effect.gen(function* () {
           const collection = makeValues(runtime)()
-          yield* Effect.promise(async () => {
-            await collection.preload()
-            await collection.utils.loadByTemplateId("t1")
-          })
+          yield* Effect.promise(() => collection.preload())
+          yield* Effect.promise(() => collection.utils.loadByTemplateId("t1"))
           assert.strictEqual(collection.get(key("v1"))?.label, "fresh")
 
           // syncId 3 ≤ mark 5: the slice already reflects a newer server state — drop.
@@ -216,10 +210,8 @@ describe("partial collection", () => {
       ({ runtime, events, server }) =>
         Effect.gen(function* () {
           const collection = makeValues(runtime)()
-          yield* Effect.promise(async () => {
-            await collection.preload()
-            await collection.utils.loadByTemplateId("t1")
-          })
+          yield* Effect.promise(() => collection.preload())
+          yield* Effect.promise(() => collection.utils.loadByTemplateId("t1"))
           yield* waitUntil(() => collection.has(key("v2")))
 
           // Server declares the timeline broken past 9 — all marks (2) go stale.

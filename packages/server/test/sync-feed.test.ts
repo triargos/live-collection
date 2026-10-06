@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
+import { DateTime, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import {
   compareSyncId,
   defineModelRegistry,
@@ -38,13 +38,15 @@ const noteEvent = (
 // A model whose schema carries a field that is not JSON-native in its plain
 // encoded form — the regression surface for the canonical-JSON encode edge.
 const Stamped = Schema.Struct({ id: Schema.String, createdAt: Schema.Date })
-const stampedRow = { id: "s1", createdAt: new Date("2026-07-23T12:12:08.434Z") }
 const stampedRegistry = Effect.succeed(
   defineModelRegistry({
     Stamped: {
       modelName: "Stamped",
       schema: Stamped,
-      hydrate: (id: ModelId) => Effect.succeed(id === "s1" ? Option.some(stampedRow) : Option.none())
+      hydrate: (id: ModelId) =>
+        id === "s1"
+          ? Effect.map(DateTime.nowAsDate, (createdAt) => Option.some({ id: "s1", createdAt }))
+          : Effect.succeedNone
     }
   })
 )
@@ -158,7 +160,7 @@ describe("SyncFeed.catchup", () => {
         // for JSON.stringify to improvise over.
         const data = event.data as { readonly createdAt: unknown }
         assert.strictEqual(typeof data.createdAt, "string")
-        assert.strictEqual(data.createdAt, "2026-07-23T12:12:08.434Z")
+        assert.strictEqual(data.createdAt, (yield* DateTime.nowAsDate).toISOString())
       }
     }).pipe(Effect.provide(makeKernelLayer(stampedRegistry))))
 

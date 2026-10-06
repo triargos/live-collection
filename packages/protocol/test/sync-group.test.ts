@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { deriveGroup, intersects, SyncGroup } from "../src/sync-group.js"
 
 const decode = Schema.decodeUnknownResult(SyncGroup)
-const g = (s: string): SyncGroup => Schema.decodeUnknownSync(SyncGroup)(s)
+const g = (s: string): SyncGroup => Schema.decodeSync(SyncGroup)(s)
 
 const groupsArb = Arbitrary.array(
   Arbitrary.schema(SyncGroup.check(Schema.isPattern(/^[a-z0-9:-]{1,32}$/))),
