@@ -84,7 +84,11 @@ export const makeLiveCollectionOptions = <T extends object>(config: {
             return params.commit()
           },
         }
-        provide(session)
+        // Hand out the session only once the persisted wrapper has hydrated. A sync commit made
+        // while the browser adapter's startup hydration is running never settles and wedges every
+        // collection on the shared persistence (TanStack db-sqlite-persistence-core 0.4.x); writes
+        // issued earlier simply wait on the session Deferred.
+        params.collection.onFirstReady(() => provide(session))
         params.markReady() // wrapper defers this until internal hydration completes
       },
     },
