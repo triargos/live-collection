@@ -19,7 +19,7 @@ describe("SyncId", () => {
 })
 
 describe("compareSyncId", () => {
-  const sid = (s: string) => Schema.decodeUnknownSync(SyncId)(s)
+  const sid = (s: string) => Schema.decodeSync(SyncId)(s)
 
   it("orders by numeric magnitude, not lexicographically", () => {
     // lexicographic would put "100" < "99"; numeric must not.

@@ -148,7 +148,7 @@ export const makeIngest = (deps: {
   const cycle = Effect.gen(function* () {
     const from = Option.getOrElse(yield* journal.getLastIngestedSyncId, () => zeroSyncId)
     const response = yield* catchup.fetch({ from }).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTag("CatchupFailed", (error) =>
         Effect.logWarning(`[SyncBroker] catchup failed, tailing anyway: ${error.reason}`).pipe(
           Effect.as(Option.none()),

@@ -197,7 +197,7 @@ export const applySlice = <T extends object>(deps: {
   Effect.gen(function* () {
     const decoded = yield* Effect.forEach(deps.rows, (raw) =>
       deps.decode(raw).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTag("SchemaError", (error) =>
           Effect.logWarning(
             `[defineCollection] skipping undecodable ${deps.entity} slice row: ${error.message}`,

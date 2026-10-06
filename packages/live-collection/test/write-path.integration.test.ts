@@ -108,7 +108,12 @@ const reloadUntilHas = (persistence: PersistedCollectionPersistence, services: S
         yield* Effect.sleep(Duration.millis(10)) // let hydration settle
         return coll.has(key)
       }),
-    ).pipe(Effect.flatMap((has) => (has === want ? Effect.succeed(has) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())))))
+    ).pipe(
+      Effect.filterOrElse(
+        (has) => has === want,
+        () => Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())),
+      ),
+    )
   return attempt().pipe(
     Effect.timeoutOrElse({
       duration: Duration.seconds(2),

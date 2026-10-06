@@ -60,9 +60,7 @@ const reloadUntil = <T extends object, A>(
 ): Effect.Effect<A> => {
   const attempt = (): Effect.Effect<A> =>
     withMount(persistence, opts, (c) => Effect.sync(() => read(c))).pipe(
-      Effect.flatMap((a) =>
-        predicate(a) ? Effect.succeed(a) : Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt())),
-      ),
+      Effect.filterOrElse(predicate, () => Effect.sleep(Duration.millis(5)).pipe(Effect.andThen(attempt()))),
     )
   return attempt().pipe(
     Effect.timeoutOrElse({

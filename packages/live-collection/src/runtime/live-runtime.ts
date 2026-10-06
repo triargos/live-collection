@@ -27,7 +27,7 @@ export const makeLiveRuntime = (config: {
   readonly sync: Layer.Layer<SyncDeps>
   readonly broker?: SyncBrokerOptions
 }): LiveRuntime => {
-  const scope = Effect.runSync(Scope.make())
+  const scope = Scope.makeUnsafe()
   const registry = Effect.runSync(Scope.provide(makeRegistry, scope))
   const runtime = ManagedRuntime.make(SyncBroker.layer(config.broker).pipe(Layer.provide(config.sync)))
   let syncFiber: Fiber.Fiber<void> | undefined

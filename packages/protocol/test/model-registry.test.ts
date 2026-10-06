@@ -28,7 +28,7 @@ describe("defineModelRegistry", () => {
     const mismatched = {
       modelName: "WRONG" as const,
       schema: Person,
-      hydrate: () => Effect.succeed(Option.none())
+      hydrate: () => Effect.succeedNone
     }
     // @ts-expect-error modelName literal "WRONG" must equal its key "Webhook"
     defineModelRegistry({ Webhook: mismatched })

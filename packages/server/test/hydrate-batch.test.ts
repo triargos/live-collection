@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Option, Schema } from "effect"
+import { DateTime, Effect, Layer, Option, Schema } from "effect"
 import {
   defineModelRegistry,
   deriveGroup,
@@ -37,8 +37,8 @@ const indexedRegistry = Effect.gen(function* () {
           keyValue === "secret"
             ? Effect.succeedNone
             : keyValue === "empty"
-              ? Effect.succeed(Option.some<ReadonlyArray<Note>>([]))
-              : Effect.succeed(Option.some<ReadonlyArray<Note>>([note("n1", keyValue), note("n2", keyValue)]))
+              ? Effect.succeedSome<ReadonlyArray<Note>>([])
+              : Effect.succeedSome<ReadonlyArray<Note>>([note("n1", keyValue), note("n2", keyValue)])
       }
     }
   })
@@ -110,7 +110,8 @@ describe("SyncFeed.hydrateBatch", () => {
   it.effect("rows encode through the descriptor schema — a Date lands on the wire as an ISO string", () =>
     Effect.gen(function* () {
       const Stamped = Schema.Struct({ id: Schema.String, createdAt: Schema.Date })
-      const stampedRow = { id: "s1", createdAt: new Date("2026-07-23T12:12:08.434Z") }
+      const createdAt = yield* DateTime.nowAsDate
+      const stampedRow = { id: "s1", createdAt }
       const registry = Effect.succeed(
         defineModelRegistry({
           Stamped: {
@@ -118,7 +119,7 @@ describe("SyncFeed.hydrateBatch", () => {
             schema: Stamped,
             hydrate: () => Effect.succeedNone,
             indexes: {
-              bucket: () => Effect.succeed(Option.some([stampedRow]))
+              bucket: () => Effect.succeedSome([stampedRow])
             }
           }
         })
@@ -130,7 +131,7 @@ describe("SyncFeed.hydrateBatch", () => {
         assert.strictEqual(result._tag, "Members")
         if (result._tag === "Members") {
           const wire = result.rows[0] as { readonly createdAt: unknown }
-          assert.strictEqual(wire.createdAt, "2026-07-23T12:12:08.434Z")
+          assert.strictEqual(wire.createdAt, createdAt.toISOString())
         }
       }).pipe(Effect.provide(makeKernelLayer(registry)))
     }))
@@ -162,9 +163,10 @@ describe("SyncFeed.hydrateBatch", () => {
         })
       })
       const infrastructure = Layer.mergeAll(SyncEventStore.layerMemory, SyncEventBus.layerMemory)
-      const layer = SyncFeed.layer
-        .pipe(Layer.provide(ModelRegistry.layer(registry)))
-        .pipe(Layer.provideMerge(infrastructure))
+      const layer = SyncFeed.layer.pipe(
+        Layer.provide(ModelRegistry.layer(registry)),
+        Layer.provideMerge(infrastructure)
+      )
 
       yield* Effect.gen(function* () {
         const feed = yield* SyncFeed

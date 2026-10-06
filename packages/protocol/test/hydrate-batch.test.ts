@@ -10,7 +10,7 @@ const request = {
 
 describe("HydrateBatchRequest", () => {
   it("round-trips a batch of index values", () => {
-    const decoded = Schema.decodeUnknownSync(HydrateBatchRequest)({ requests: [request] })
+    const decoded = Schema.decodeSync(HydrateBatchRequest)({ requests: [request] })
     assert.deepStrictEqual(Schema.encodeSync(HydrateBatchRequest)(decoded), { requests: [request] })
   })
 
@@ -21,7 +21,7 @@ describe("HydrateBatchRequest", () => {
 
 describe("HydrateBatchResponse", () => {
   it("keeps Forbidden distinct from empty Members", () => {
-    const decoded = Schema.decodeUnknownSync(HydrateBatchResponse)({
+    const decoded = Schema.decodeSync(HydrateBatchResponse)({
       results: [
         { _tag: "Members", request, rows: [] },
         { _tag: "Forbidden", request }
@@ -35,14 +35,14 @@ describe("HydrateBatchResponse", () => {
   })
 
   it("epoch is optional on the wire — absent decodes to None, present survives the round trip", () => {
-    const bare = Schema.decodeUnknownSync(HydrateBatchResponse)({ results: [], lastSyncId: "1" })
+    const bare = Schema.decodeSync(HydrateBatchResponse)({ results: [], lastSyncId: "1" })
     assert.isTrue(Option.isNone(bare.epoch))
     assert.deepStrictEqual(Schema.encodeSync(HydrateBatchResponse)(bare), {
       results: [],
       lastSyncId: "1"
     })
 
-    const stamped = Schema.decodeUnknownSync(HydrateBatchResponse)({
+    const stamped = Schema.decodeSync(HydrateBatchResponse)({
       results: [],
       lastSyncId: "1",
       epoch: "e-1"
@@ -57,7 +57,7 @@ describe("HydrateBatchResponse", () => {
 
   it("rows travel as opaque wire values", () => {
     const rows = [{ id: "v1", templateId: "t1", createdAt: "2026-06-01T00:00:00.000Z" }]
-    const decoded = Schema.decodeUnknownSync(HydrateBatchResponse)({
+    const decoded = Schema.decodeSync(HydrateBatchResponse)({
       results: [{ _tag: "Members", request, rows }],
       lastSyncId: "7"
     })
