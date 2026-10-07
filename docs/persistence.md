@@ -52,13 +52,13 @@ The persisted table's schema version is **derived automatically** from your Effe
 
 Tabs sharing one `databaseName` share one persisted state — fine when they're the same logical client. If you want tabs to act as independent clients (each with its own cursor and journal), give each a distinct `databaseName` for both the SQLite database and the `SyncJournal`.
 
-Pass a `BrowserCollectionCoordinator` (as in the setup above) whenever more than one tab can open the same database. It elects one writer tab with Web Locks and fans commits out to the other tabs over `BroadcastChannel`. Without it, tabs write to the shared OPFS database uncoordinated. The coordinator also avoids a TanStack bug in the default `SingleProcessCoordinator` (`db-sqlite-persistence-core` 0.4.x), where a sync commit made during startup hydration never settles. The library guards against that bug either way.
+Pass a `BrowserCollectionCoordinator` (as in the setup above) whenever more than one tab can open the same database. It elects one writer tab with Web Locks and fans commits out to the other tabs over `BroadcastChannel`. Without it, tabs write to the shared OPFS database uncoordinated.
 
 ## Outside the browser
 
 `persistedCollectionOptions` and the `PersistedCollectionPersistence` type come from `@tanstack/db-sqlite-persistence-core`; the browser package builds on it. In Node (e.g. tests) you can assemble a persistence value over any SQLite driver against the same core interface — the library only sees the value.
 
-The persistence packages pin `@tanstack/db` exactly (`db-sqlite-persistence-core@0.4.4` requires `@tanstack/db@0.12.0`), and the integration is alpha. Bump `@tanstack/db`, `@tanstack/react-db`, and both persistence packages together, deliberately.
+The persistence packages pin `@tanstack/db` exactly (`db-sqlite-persistence-core@0.4.5` requires `@tanstack/db@0.12.1`), and the integration is alpha. Bump `@tanstack/db`, `@tanstack/react-db`, and both persistence packages together, deliberately.
 
 ## See also
 
