@@ -70,9 +70,9 @@ const warnOnFailedReceipt = (collectionId: string, receipt: SyncAppliedReceipt):
 
 /**
  * Builds the utils-hosted {@link SyncWrite}, the handler-side {@link ReconcileWrite}, and the
- * `provide` the `sync` closure calls once the collection is first ready (hydrated). Both write paths
- * are constructed at config time, but the session is only handed out after hydration — so a one-shot
- * `Deferred` bridges them: a write issued before then simply waits. Sound because the collection is kept alive with
+ * `provide` the `sync` closure calls once on start. Both write paths are constructed at config time,
+ * but the session only exists once `sync()` runs — so a one-shot `Deferred` bridges them: a write
+ * issued before then simply waits. Sound because the collection is kept alive with
  * `gcTime: Infinity`, so `sync()` is captured exactly once and never restarts.
  */
 export const makeSyncWrite = <T>(): Effect.Effect<{

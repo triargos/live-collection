@@ -84,13 +84,7 @@ export const makeLiveCollectionOptions = <T extends object>(config: {
             return params.commit()
           },
         }
-        // Hand out the session only once the persisted wrapper has hydrated; writes issued earlier
-        // wait on the session Deferred. Guards a TanStack bug (db-sqlite-persistence-core 0.4.x):
-        // SingleProcessCoordinator.requestApplyCommittedTx drops the hydration-scoped adapter, so a
-        // sync commit made during startup hydration waits for the scheduler that hydration holds.
-        // It never settles and wedges every collection on the shared persistence.
-        // BrowserCollectionCoordinator passes the scoped adapter through and is unaffected.
-        params.collection.onFirstReady(() => provide(session))
+        provide(session)
         params.markReady() // wrapper defers this until internal hydration completes
       },
     },
